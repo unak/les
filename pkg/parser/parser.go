@@ -30,6 +30,7 @@ type Parser struct {
 	peekToken           lexer.Token
 	errors              []string
 	inParenOmissionCall bool
+	atStatementStart    bool
 }
 
 func NewParser(l *lexer.Lexer) *Parser {
@@ -282,11 +283,21 @@ func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 		return &ast.ReturnStmt{Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
+	if p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	} else if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else {
+		p.nextToken()
+	}
 	return &ast.ReturnStmt{Value: val}
 }
 
 func (p *Parser) parseExprStmt() *ast.ExprStmt {
+	p.atStatementStart = true
 	expr := p.parseExpr(PREC_LOWEST)
+	p.atStatementStart = false
 	if p.curTokenIs(lexer.TokenNewline) {
 		p.nextToken()
 	} else if p.peekTokenIs(lexer.TokenNewline) {
@@ -299,13 +310,16 @@ func (p *Parser) parseExprStmt() *ast.ExprStmt {
 }
 
 func (p *Parser) parseExpr(precedence int) ast.Expr {
+	isStmtStart := p.atStatementStart
+	p.atStatementStart = false // only top-level statement expression starts here
+
 	prefix := p.parsePrefix()
 	if prefix == nil {
 		return nil
 	}
 
-	// Paren-omitted call: only if callee is identifier and not already inside paren-free call
-	if precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {
+	// Paren-omitted call: only at statement start, not inside nested expressions
+	if isStmtStart && precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {
 		if _, isIdent := prefix.(*ast.Identifier); isIdent {
 			p.inParenOmissionCall = true
 			args := p.parseCallArgumentsWithoutParens()
@@ -333,11 +347,12 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 }
 
 func (p *Parser) canStartArgument() bool {
-	// If peek is on the same line and can start an expression without being an operator or separator
+	// If peek is on the same line and can start an argument expression
+	// Exclude '(' because 'f(...)' is standard call handled by parseInfix
 	t := p.peekToken.Type
 	switch t {
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool,
-		lexer.TokenLParen, lexer.TokenLBracket, lexer.TokenLBrace:
+		lexer.TokenLBracket, lexer.TokenLBrace:
 		return true
 	default:
 		return false
@@ -526,10 +541,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenQuestion:
 		// cond ? then : else
 		p.nextToken()
-		thenExpr := p.parseExpr(PREC_LOWEST)
+		thenExpr := p.parseExpr(PREC_TERNARY)
 		p.expectPeek(lexer.TokenColon)
 		p.nextToken()
-		elseExpr := p.parseExpr(PREC_LOWEST)
+		elseExpr := p.parseExpr(PREC_TERNARY - 1)
 		return &ast.TernaryExpr{
 			Cond: left,
 			Then: thenExpr,
