@@ -34,7 +34,7 @@ get_greeting = ||: "Hello from 0-arg lambda!"
 puts get_greeting()
 
 # 4. Higher-order function taking lambda
-def apply(fn, val):
+def apply(fn: (Int) -> Int, val: Int): Int:
     fn(val)
 
 result = apply(|n|: n * n, 9)
