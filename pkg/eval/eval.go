@@ -86,6 +86,43 @@ func (ev *Evaluator) registerBuiltins() {
 			}
 		},
 	})
+
+	// exit: terminates process with exit code (0 or 1 arg, Bool or Int).
+	ev.globalEnv.Set("exit", &BuiltinFunc{
+		Name: "exit",
+		Fn: func(args []Value) (Value, error) {
+			code := 0
+			if len(args) == 0 {
+				code = 0
+			} else if len(args) == 1 {
+				val := Force(args[0])
+				switch v := val.(type) {
+				case IntValue:
+					code = int(v)
+				case BoolValue:
+					if bool(v) {
+						code = 0
+					} else {
+						code = 1
+					}
+				default:
+					return nil, fmt.Errorf("exit expects Int or Bool, got %v", val)
+				}
+			} else {
+				return nil, fmt.Errorf("exit expects 0 or 1 argument, got %d", len(args))
+			}
+			panic(&ExitError{Code: code})
+		},
+	})
+}
+
+// ExitError indicates that exit() was called to terminate execution.
+type ExitError struct {
+	Code int
+}
+
+func (e *ExitError) Error() string {
+	return fmt.Sprintf("exit with code %d", e.Code)
 }
 
 func typeNameOf(val Value) string {
@@ -125,6 +162,10 @@ func typeNameWithDepth(val Value, depth int) string {
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			if exitErr, ok := r.(*ExitError); ok {
+				err = exitErr
+				return
+			}
 			err = fmt.Errorf("%v", r)
 		}
 	}()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -56,6 +57,10 @@ func main() {
 	evaluator.SetModuleLoader(loader.Load)
 
 	if _, err := evaluator.EvalProgram(prog); err != nil {
+		var exitErr *eval.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.Code)
+		}
 		fmt.Fprintf(os.Stderr, "Runtime Error: %v\n", err)
 		os.Exit(1)
 	}

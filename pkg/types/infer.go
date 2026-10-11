@@ -64,6 +64,11 @@ func NewInferencer() *Inferencer {
 		Arg: TypeAny,
 		Ret: TypeInt,
 	})
+	// Built-in exit: (Any) -> Nil
+	_ = rootScope.Declare("exit", &FuncType{
+		Arg: TypeAny,
+		Ret: TypeNil,
+	})
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,

@@ -241,6 +241,22 @@ Returns the string representation of the runtime type of the given value or argu
   t2 = type(1, 2)    # "(Int, Int)"
   ```
 
+#### `def exit(code: Int | Bool = 0)`
+Terminates the program execution immediately with the given exit status code.
+
+- **Arguments**: Optional 0 or 1 argument (`Int` or `Bool`).
+  - No arguments (`exit` or `exit()`): exits with code `0`.
+  - `Int`: exits with the given integer code (e.g. `exit 0`, `exit 42`).
+  - `Bool`: `True` exits with code `0`, `False` exits with code `1`.
+- **Usage**:
+  ```python
+  exit           # Bare statement auto-call: exits with 0
+  exit 0
+  exit True      # exits with 0
+  exit False     # exits with 1
+  exit 1
+  ```
+
 
 ### 9. Special Types: `Nil` and `Any`
 - **`Nil`**:

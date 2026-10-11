@@ -509,5 +509,81 @@ print adder(23), "\n"
 	}
 }
 
+func TestExitBuiltin(t *testing.T) {
+	testCases := []struct {
+		name     string
+		code     string
+		wantCode int
+		wantOut  string
+	}{
+		{
+			name:     "bare exit identifier",
+			code:     "exit",
+			wantCode: 0,
+		},
+		{
+			name:     "exit call 0 args",
+			code:     "exit()",
+			wantCode: 0,
+		},
+		{
+			name:     "exit with int",
+			code:     "exit 42",
+			wantCode: 42,
+		},
+		{
+			name:     "exit with True",
+			code:     "exit True",
+			wantCode: 0,
+		},
+		{
+			name:     "exit with False",
+			code:     "exit False",
+			wantCode: 1,
+		},
+		{
+			name: "exit halts execution immediately",
+			code: `
+print "before\n"
+exit 7
+print "after\n"
+`,
+			wantCode: 7,
+			wantOut:  "before\n",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			ev := NewEvaluator()
+			ev.SetOutput(&out)
+
+			l := lexer.NewLexer(tc.code)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+
+			_, err := ev.EvalProgram(prog)
+			if err == nil {
+				t.Fatalf("expected ExitError, got nil")
+			}
+			exitErr, ok := err.(*ExitError)
+			if !ok {
+				t.Fatalf("expected *ExitError, got %T (%v)", err, err)
+			}
+			if exitErr.Code != tc.wantCode {
+				t.Fatalf("expected exit code %d, got %d", tc.wantCode, exitErr.Code)
+			}
+			if tc.wantOut != "" && out.String() != tc.wantOut {
+				t.Fatalf("expected output %q, got %q", tc.wantOut, out.String())
+			}
+		})
+	}
+}
+
+
 
 
