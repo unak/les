@@ -9,7 +9,7 @@ Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated 
 |---|---|---|
 | `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
-| `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by integer `s[0]` (returns 1-character `String`). Supports negative index `s[-1]`. |
+| `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
 | `Bool` | `True`, `False` | Boolean value. |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Indexed by key `d["a"]`. |
@@ -168,9 +168,9 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 - Indexing `[]`:
-  - `String`: `s[i]` accesses character at 0-based index `i`, returning a 1-character `String`. Supports negative index `s[-1]` (last character).
-  - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`.
-  - `Dict`: `d[key]` accesses value by key (`d["a"]`).
+  - `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
+  - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
+  - `Dict`: `d[key]` accesses value by key (`d["a"]`). Non-existent key raises a runtime error.
 
 ### 6. Side Effects
 - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`).
