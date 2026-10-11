@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"les/pkg/ast"
@@ -274,11 +275,12 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 
 // Thunk implements aggressive lazy evaluation (memoized call-by-need).
 type Thunk struct {
-	Evaluated bool
-	Value     Value
-	Expr      ast.Expr
-	Env       *Environment
-	Evaluating bool // for detecting recursive blackholes/cycles
+	Evaluated  bool
+	Value      Value
+	Expr       ast.Expr
+	Env        *Environment
+	Producer   func() (Value, error) // for dynamic/I/O thunks not bound to AST Expr
+	Evaluating bool                  // for detecting recursive blackholes/cycles
 }
 
 func NewThunk(expr ast.Expr, env *Environment) *Thunk {
@@ -286,6 +288,14 @@ func NewThunk(expr ast.Expr, env *Environment) *Thunk {
 		Evaluated: false,
 		Expr:      expr,
 		Env:       env,
+	}
+}
+
+// NewActionThunk creates a lazy Thunk whose value is produced by an action when demanded.
+func NewActionThunk(producer func() (Value, error)) *Thunk {
+	return &Thunk{
+		Evaluated: false,
+		Producer:  producer,
 	}
 }
 
@@ -311,7 +321,15 @@ func Force(v Value) Value {
 			panic("blackhole: circular reference detected in lazy thunk")
 		}
 		thunk.Evaluating = true
-		val, err := thunk.Env.evalExpr(thunk.Expr)
+		var val Value
+		var err error
+		if thunk.Producer != nil {
+			val, err = thunk.Producer()
+		} else if thunk.Expr != nil && thunk.Env != nil {
+			val, err = thunk.Env.evalExpr(thunk.Expr)
+		} else {
+			val = &TupleValue{Elements: []Value{}}
+		}
 		if err != nil {
 			panic(fmt.Sprintf("runtime error in thunk: %v", err))
 		}
@@ -328,6 +346,7 @@ type Environment struct {
 	modules         map[string]*ModuleValue
 	parent          *Environment
 	Output          *strings.Builder                        // captures print output if specified
+	Input           io.Reader                               // custom standard input if specified
 	Loader          func(path string) (*ModuleValue, error) // module loader callback
 	EnclosingFuncID uint64                                  // 0 means top-level
 	ActiveClosureID uint64                                  // 0 means not directly inside a closure call
@@ -341,6 +360,7 @@ func NewEnvironment(parent *Environment) *Environment {
 	}
 	if parent != nil {
 		env.Output = parent.Output
+		env.Input = parent.Input
 		env.Loader = parent.Loader
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID

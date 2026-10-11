@@ -340,6 +340,60 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		return nil
 
 	case *ast.ImportStmt:
+		if s.Path == "io" {
+			// Register standard @io module interfaces in scope
+			readerIface := &InterfaceType{
+				Name: "Reader",
+				Methods: map[string]*FuncType{
+					"read": {
+						Arg: &TupleType{Elems: []Type{TypeInt}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+				},
+				Embedded: []*InterfaceType{},
+			}
+			writerIface := &InterfaceType{
+				Name: "Writer",
+				Methods: map[string]*FuncType{
+					"write": {
+						Arg: &TupleType{Elems: []Type{TypeString}},
+						Ret: TypeInt,
+					},
+				},
+				Embedded: []*InterfaceType{},
+			}
+			closerIface := &InterfaceType{
+				Name: "Closer",
+				Methods: map[string]*FuncType{
+					"close": {
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: &TupleType{Elems: []Type{}},
+					},
+				},
+				Embedded: []*InterfaceType{},
+			}
+			readCloserIface := &InterfaceType{
+				Name:     "ReadCloser",
+				Embedded: []*InterfaceType{readerIface, closerIface},
+				Methods: map[string]*FuncType{
+					"read":   readerIface.Methods["read"],
+					"close":  closerIface.Methods["close"],
+				},
+			}
+			writeCloserIface := &InterfaceType{
+				Name:     "WriteCloser",
+				Embedded: []*InterfaceType{writerIface, closerIface},
+				Methods: map[string]*FuncType{
+					"write":  writerIface.Methods["write"],
+					"close":  closerIface.Methods["close"],
+				},
+			}
+			_ = inf.scope.Declare("Reader", readerIface)
+			_ = inf.scope.Declare("Writer", writerIface)
+			_ = inf.scope.Declare("Closer", closerIface)
+			_ = inf.scope.Declare("ReadCloser", readCloserIface)
+			_ = inf.scope.Declare("WriteCloser", writeCloserIface)
+		}
 		return nil
 	case *ast.ModuleDecl:
 		return nil

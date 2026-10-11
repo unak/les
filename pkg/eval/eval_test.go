@@ -100,6 +100,79 @@ print line1, " ", line4
 	}
 }
 
+func TestIOModule(t *testing.T) {
+	code := `import io
+
+# Test ReadLine deferred action (only reads when demanded)
+l1 = @io.ReadLine()
+l2 = @io.ReadLine()
+
+# At this point, l1 and l2 are thunks.
+# Demand l1 first, then l2:
+print "Line1: ", l1, "\n"
+print "Line2: ", l2, "\n"
+
+# Test ReadAll
+allRest = @io.ReadAll()
+print "Rest: ", allRest, "\n"
+`
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	ev := NewEvaluator()
+	fakeInput := strings.NewReader("hello\nworld\nremaining text")
+	ev.SetInput(fakeInput)
+
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	expected := "Line1: hello\nLine2: world\nRest: remaining text\n"
+	if out.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
+func TestIOReaderInterface(t *testing.T) {
+	code := `import io
+
+stdin = @io.Stdin
+isReader = stdin is @io.Reader
+isCloser = stdin is @io.Closer
+isReadCloser = stdin is @io.ReadCloser
+
+print isReader, " ", isCloser, " ", isReadCloser
+`
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	expected := "True True True"
+	if out.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
 // MVP Test 2: Lazy Fibonacci stream and take n elements
 func TestMVP2_LazyFibonacciStream(t *testing.T) {
 	code := `def fib(a, b):

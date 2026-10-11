@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"sync/atomic"
 
@@ -23,11 +24,16 @@ func NewEvaluator() *Evaluator {
 	env := NewEnvironment(nil)
 	ev := &Evaluator{globalEnv: env}
 	ev.registerBuiltins()
+	ev.initIOModule()
 	return ev
 }
 
 func (ev *Evaluator) SetOutput(sb *strings.Builder) {
 	ev.globalEnv.Output = sb
+}
+
+func (ev *Evaluator) SetInput(r io.Reader) {
+	ev.globalEnv.Input = r
 }
 
 func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, error)) {
@@ -408,6 +414,17 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		return nil, nil
 
 	case *ast.ImportStmt:
+		alias := s.Alias
+		if existingMod, ok := env.GetModule(s.Path); ok {
+			if alias != "" && alias != existingMod.Name {
+				aliasedMod := &ModuleValue{
+					Name:    alias,
+					Exports: existingMod.Exports,
+				}
+				env.RegisterModule(aliasedMod)
+			}
+			return nil, nil
+		}
 		if env.Loader == nil {
 			return nil, fmt.Errorf("module loader not configured")
 		}
@@ -415,7 +432,6 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to import module '%s': %w", s.Path, err)
 		}
-		alias := s.Alias
 		if alias == "" {
 			alias = modVal.Name
 		}

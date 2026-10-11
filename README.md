@@ -191,9 +191,16 @@ Listed from highest to lowest precedence:
 - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
 - `Dict`: `d[key]` accesses value by key (`d["a"]`). Non-existent key raises a runtime error.
 
-### 6. Side Effects
-- Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`).
-- Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
+### 6. Side Effects & I/O Semantics
+- **Output is a Demand Boundary (Strict Evaluation)**:
+  - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`). Arguments are forced immediately when the statement executes.
+  - Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
+  - Ensures prompt output (e.g. `print "Name: "`) displays before subsequent reads.
+- **Input is a Deferred Thunk (Lazy Read)**:
+  - I/O read operations (e.g. `@io.ReadLine()`, `@io.ReadAll()`) return a deferred `Thunk` without blocking at invocation time.
+  - The actual I/O read / system call occurs only when the value is demanded (e.g., printed, compared, or concatenated). Unused inputs never block or perform reads.
+- **Evaluation Order**:
+  - Binary expressions, tuple elements, and arguments are strictly evaluated and forced **left-to-right**, guaranteeing predictable I/O sequence (e.g. `@io.ReadLine() + @io.ReadLine()`).
 - Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
 - User-defined functions cannot create raw side-effect primitives.
 
@@ -466,5 +473,42 @@ rc: ReadCloser = File(path: "/tmp/data")
 
 #### Dynamic Runtime Checks (`is`)
 - `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
+
+### 14. Standard I/O Module (`@io`)
+
+The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
+
+```python
+import io
+```
+
+#### Core Interfaces
+- **`Reader`**: `read(n: Int): String | Nil`
+- **`Writer`**: `write(s: String): Int`
+- **`Closer`**: `close(): ()`
+- **`ReadCloser`**: embeds `Reader`, `Closer`
+- **`WriteCloser`**: embeds `Writer`, `Closer`
+
+#### Standard Streams
+- **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
+  - `@io.Stdin.read(n)` reads up to `n` bytes.
+
+#### Convenience Functions
+- **`@io.ReadLine(): String | Nil`**:
+  Reads a single line from standard input (excluding trailing newline `\n` / `\r\n`). Returns `Nil` upon EOF.
+  Deferred as a lazy `Thunk`; only blocks on user input when the value is demanded.
+- **`@io.ReadAll(): String`**:
+  Reads all remaining contents from standard input until EOF. Deferred as a lazy `Thunk`.
+
+**Interactive Example**:
+```python
+import io
+
+print "What is your name? "
+name = @io.ReadLine() # Deferred: does not block yet!
+
+print "Hello, ", name, "!\n" # name is forced here; user is prompted
+```
+
 
 
