@@ -209,6 +209,16 @@ type BlockLiteral struct {
 func (b *BlockLiteral) node() {}
 func (b *BlockLiteral) expr() {}
 
+// LambdaExpr represents anonymous lambda function: |params|: expr or |params|: block
+type LambdaExpr struct {
+	Params []FuncParam
+	Body   []Stmt
+	Expr   Expr // single-line expression if non-nil
+}
+
+func (l *LambdaExpr) node() {}
+func (l *LambdaExpr) expr() {}
+
 // VarDecl represents variable assignment with optional type annotation.
 type VarDecl struct {
 	Name      string

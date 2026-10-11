@@ -264,3 +264,55 @@ puts "a", "b\n", 42
 	}
 }
 
+func TestParseLambdaExpr(t *testing.T) {
+	code := `
+f1 = |x|: x * 2
+f2 = |x, y|: x + y
+f3 = ||: 42
+f4 = |x: Int|: x + 1
+f5 = |x|:
+    y = x * 2
+    y + 1
+`
+	l := lexer.NewLexer(code)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 5 {
+		t.Fatalf("expected 5 statements, got %d", len(prog.Body))
+	}
+
+	// Verify f1
+	vd1, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[0])
+	}
+	lam1, ok := vd1.Value.(*ast.LambdaExpr)
+	if !ok {
+		t.Fatalf("expected LambdaExpr, got %T", vd1.Value)
+	}
+	if len(lam1.Params) != 1 || lam1.Params[0].Name != "x" {
+		t.Fatalf("unexpected params for lam1: %+v", lam1.Params)
+	}
+
+	// Verify f3 (0-arg)
+	vd3 := prog.Body[2].(*ast.VarDecl)
+	lam3 := vd3.Value.(*ast.LambdaExpr)
+	if len(lam3.Params) != 0 {
+		t.Fatalf("expected 0 params for f3, got %d", len(lam3.Params))
+	}
+
+	// Verify f5 (multi-line)
+	vd5 := prog.Body[4].(*ast.VarDecl)
+	lam5 := vd5.Value.(*ast.LambdaExpr)
+	if len(lam5.Params) != 1 {
+		t.Fatalf("expected 1 param for f5, got %d", len(lam5.Params))
+	}
+	if len(lam5.Body) != 2 {
+		t.Fatalf("expected 2 statements in f5 body, got %d", len(lam5.Body))
+	}
+}
+
+

@@ -1,0 +1,41 @@
+# Lambda Expressions Demo in Les
+# - 1-line inline lambda: |x|: expr
+# - Multi-line indented lambda block: |x|:\n ...
+# - 0-argument lambda: ||: expr
+
+def puts_each(items):
+    (head, ...tail) = items
+    print head
+    if head is String && len(head) > 0 && head[-1] == "\n":
+        ()
+    else:
+        print "\n"
+    if len(tail) > 0:
+        puts_each(tail)
+
+def puts(*args: Any):
+    if len(args) == 0:
+        print "\n"
+    else:
+        puts_each(args)
+
+# 1. Single-line inline lambda
+double = |x|: x * 2
+puts "double(21) =", double(21)
+
+# 2. Multi-line lambda block
+calc = |x|:
+    y = x * 2
+    y + 10
+puts "calc(5) =", calc(5)
+
+# 3. 0-argument lambda
+get_greeting = ||: "Hello from 0-arg lambda!"
+puts get_greeting()
+
+# 4. Higher-order function taking lambda
+def apply(fn, val):
+    fn(val)
+
+result = apply(|n|: n * n, 9)
+puts "apply square of 9 =", result

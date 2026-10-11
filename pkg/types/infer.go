@@ -338,6 +338,58 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			return TypeAny, nil
 		}
 		return NewUnionType(caseTypes...), nil
+	case *ast.LambdaExpr:
+		paramTypes := make([]Type, len(e.Params))
+		for i, p := range e.Params {
+			var elemType Type = TypeAny
+			if p.TypeAnnot != "" {
+				elemType = parseTypeAnnot(p.TypeAnnot)
+			}
+			if p.IsVariadic {
+				emptyTuple := &TupleType{Elems: []Type{}}
+				streamTuple := &TupleType{Elems: []Type{elemType}, IsVariadic: true}
+				paramTypes[i] = NewUnionType(emptyTuple, streamTuple)
+			} else {
+				paramTypes[i] = elemType
+			}
+		}
+
+		childScope := NewScope(inf.scope)
+		for i, p := range e.Params {
+			_ = childScope.Declare(p.Name, paramTypes[i])
+		}
+
+		prevScope := inf.scope
+		inf.scope = childScope
+		var lastT Type = TypeAny
+		for _, stmt := range e.Body {
+			if es, ok := stmt.(*ast.ExprStmt); ok {
+				t, err := inf.inferExpr(es.Value)
+				if err != nil {
+					inf.scope = prevScope
+					return nil, err
+				}
+				lastT = t
+			} else if rs, ok := stmt.(*ast.ReturnStmt); ok {
+				t, err := inf.inferExpr(rs.Value)
+				if err != nil {
+					inf.scope = prevScope
+					return nil, err
+				}
+				lastT = t
+			} else {
+				if err := inf.inferStmt(stmt); err != nil {
+					inf.scope = prevScope
+					return nil, err
+				}
+			}
+		}
+		inf.scope = prevScope
+		return &FuncType{
+			Arg: &TupleType{Elems: paramTypes},
+			Ret: lastT,
+		}, nil
+
 	default:
 		return TypeAny, nil
 	}

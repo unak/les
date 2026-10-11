@@ -483,6 +483,13 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		}
 		return val, nil
 
+	case *ast.LambdaExpr:
+		return &Closure{
+			Params: e.Params,
+			Body:   e.Body,
+			Env:    env,
+		}, nil
+
 	case *ast.IsExpr:
 		val := Force(NewThunk(e.Expr, env))
 		matches := checkValueMatchesType(val, strings.TrimSpace(e.TypeAnnot))

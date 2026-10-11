@@ -154,3 +154,20 @@ func TestAssignableAnyAndNil(t *testing.T) {
 	}
 }
 
+func TestLambdaTypeInference(t *testing.T) {
+	input := `
+f = |x: Int|: x + 1
+res = f(10)
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("expected lambda type inference to succeed, got %v", err)
+	}
+}
+
+

@@ -138,13 +138,23 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   ```
 - Semantics: The block is desugared into a closure / anonymous function passed as the final argument (or appended to the argument tuple).
 
-### 4. Future Lambda Syntax Harmony
-- Block: `do |x|: ...`
-- Inline lambda (harmonious design): `|x|: expr` or `|x, y|: expr`.
+### 4. Lambda Expressions
+Anonymous functions (lambdas) support both single-line expressions and multi-line indented blocks:
+
+- **Single-Line Inline Lambda**:
   ```python
-  # Future lambda compatibility:
-  doubled = map items, |x|: x * 2
+  inc = |x|: x + 1
+  add = |x, y|: x + y
+  get_const = ||: 42
+  doubled = map(items, |x|: x * 2)
   ```
+- **Multi-Line Indented Lambda Block**:
+  ```python
+  complex_fn = |x|:
+      y = x * 2
+      y + 10
+  ```
+- **Semantics**: Evaluates to a first-class `Closure` capturing lexical scope. Returns the evaluated expression or the last statement of the block.
 
 ### 5. Control Flow & Operators
 - Multi-line block `if / else`:

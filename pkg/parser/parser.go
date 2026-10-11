@@ -272,6 +272,12 @@ func (p *Parser) parseTypeAnnotString() string {
 			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) {
 				break
 			}
+			if p.peekTokenIs(lexer.TokenPipe) {
+				rest := strings.TrimSpace(p.l.PeekRestOfLine())
+				if strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, ",") {
+					break
+				}
+			}
 		}
 		p.nextToken()
 	}
@@ -536,7 +542,7 @@ func (p *Parser) consumeStmtEnd() {
 	} else if p.peekTokenIs(lexer.TokenNewline) {
 		p.nextToken()
 		p.nextToken()
-	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+	} else if p.peekTokenIs(lexer.TokenEOF) {
 		p.nextToken()
 	}
 }
@@ -546,14 +552,7 @@ func (p *Parser) parseVarDecl(typeAnnot string) *ast.VarDecl {
 	p.nextToken() // consume ident
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
-	if p.curTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-		p.nextToken()
-	} else {
-		p.nextToken()
-	}
+	p.consumeStmtEnd()
 	return &ast.VarDecl{
 		Name:      name,
 		TypeAnnot: typeAnnot,
@@ -580,14 +579,7 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 	}
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
-	if p.curTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-		p.nextToken()
-	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
-		p.nextToken()
-	}
+	p.consumeStmtEnd()
 	return &ast.VarDecl{
 		Name:      name,
 		TypeAnnot: typeAnnot,
@@ -749,8 +741,89 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return p.parseDict()
 	case lexer.TokenMatch:
 		return p.parseMatchExpr()
+	case lexer.TokenPipe, lexer.TokenOr:
+		return p.parseLambdaExpr()
 	default:
 		return nil
+	}
+}
+
+func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
+	var params []ast.FuncParam
+
+	if p.curTokenIs(lexer.TokenOr) {
+		// 0-argument lambda: ||:
+		p.nextToken() // consume '||'
+	} else if p.curTokenIs(lexer.TokenPipe) {
+		p.nextToken() // consume opening '|'
+		if p.curTokenIs(lexer.TokenPipe) {
+			// 0-argument lambda: | |:
+			p.nextToken() // consume closing '|'
+		} else {
+			// parse parameter list
+			for !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenEOF) {
+				isVariadic := false
+				if p.curTokenIs(lexer.TokenStar) {
+					isVariadic = true
+					p.nextToken() // consume '*'
+				}
+				if !p.curTokenIs(lexer.TokenIdent) {
+					break
+				}
+				paramName := p.curToken.Literal
+				typeAnnot := ""
+				if p.peekTokenIs(lexer.TokenColon) {
+					p.nextToken() // consume ':'
+					p.nextToken() // advance to type annot start
+					typeAnnot = p.parseTypeAnnotString()
+				}
+				params = append(params, ast.FuncParam{
+					Name:       paramName,
+					TypeAnnot:  typeAnnot,
+					IsVariadic: isVariadic,
+				})
+
+				if p.peekTokenIs(lexer.TokenComma) {
+					p.nextToken() // consume ','
+					p.nextToken() // advance to next param
+				} else {
+					break
+				}
+			}
+			if p.curTokenIs(lexer.TokenPipe) {
+				p.nextToken() // consume closing '|'
+			} else if p.peekTokenIs(lexer.TokenPipe) {
+				p.nextToken() // advance to closing '|'
+				p.nextToken() // consume closing '|'
+			}
+		}
+	}
+
+	// Expect ':'
+	if p.curTokenIs(lexer.TokenColon) {
+		// curToken is ':'
+	} else if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // advance to ':'
+	}
+
+	// Check if multi-line block (newline after colon) or single-line inline expression
+	if p.peekTokenIs(lexer.TokenNewline) {
+		body := p.parseBlockBody()
+		return &ast.LambdaExpr{
+			Params: params,
+			Body:   body,
+		}
+	}
+
+	// Single-line inline expression
+	if p.curTokenIs(lexer.TokenColon) {
+		p.nextToken() // consume ':'
+	}
+	expr := p.parseExpr(PREC_LOWEST)
+	return &ast.LambdaExpr{
+		Params: params,
+		Body:   []ast.Stmt{&ast.ExprStmt{Value: expr}},
+		Expr:   expr,
 	}
 }
 

@@ -462,4 +462,52 @@ print "apply=", res2, "\n"
 	}
 }
 
+func TestEvalLambdaExpr(t *testing.T) {
+	code := `
+# 1-line lambda
+inc = |x|: x + 1
+print inc(41), "\n"
+
+# multi-line lambda block
+complex_fn = |x|:
+    y = x * 2
+    y + 10
+print complex_fn(5), "\n"
+
+# 0-arg lambda
+thunk = ||: "magic"
+print thunk(), "\n"
+
+# passed directly into higher-order function
+def run(fn, a, b):
+    fn(a, b)
+
+print run(|x, y|: x * y, 6, 7), "\n"
+
+# closure capturing outer variable
+base = 100
+adder = |x|: base + x
+print adder(23), "\n"
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval lambda failed: %v", err)
+	}
+	expected := "42\n20\nmagic\n42\n123\n"
+	if out.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
+
 
