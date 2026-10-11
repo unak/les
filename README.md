@@ -305,6 +305,16 @@ Terminates the program execution immediately with the given exit status code.
   print tail  # (2, 3, 4)
   ```
 
-
-
-
+#### Control Flow: `return`, `break`, and `exit`
+- **`return [val]`** (Reserved Keyword):
+  - **Inside `def` function**: Immediately terminates the function and returns `val` (or empty tuple `()` if omitted).
+  - **Inside closure / lambda**: Performs **non-local return** — unwinds the call stack and exits the innermost enclosing `def` function lexical to the closure definition.
+  - **At top level**: Terminates the entire process like `exit [code]`.
+- **`break [val]`** (Reserved Keyword):
+  - Immediately exits the current closure (lambda or block) returning `val` (or `()` if omitted).
+  - Using `break` outside of a closure is a syntax / parser error.
+- **`exit([code])` / `exit`** (Built-in Function):
+  - Terminates the process immediately with an integer status code.
+  - Accepts 0 or 1 argument (`Int` or `Bool`).
+  - Without arguments or bare `exit`: exits with code `0`.
+  - With `True`: code `0`; with `False`: code `1`.

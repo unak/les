@@ -25,6 +25,7 @@ const (
 	TokenIf
 	TokenElse
 	TokenReturn
+	TokenBreak
 	TokenDo
 	TokenModule
 	TokenImport

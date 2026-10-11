@@ -421,6 +421,8 @@ func (l *Lexer) readIdentifier() Token {
 		tokType = TokenElse
 	case "return":
 		tokType = TokenReturn
+	case "break":
+		tokType = TokenBreak
 	case "do":
 		tokType = TokenDo
 	case "module":

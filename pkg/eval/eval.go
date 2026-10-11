@@ -3,9 +3,16 @@ package eval
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"les/pkg/ast"
 )
+
+var callIDCounter uint64
+
+func nextCallID() uint64 {
+	return atomic.AddUint64(&callIDCounter, 1)
+}
 
 // Evaluator runs Les AST nodes.
 type Evaluator struct {
@@ -166,6 +173,14 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 				err = exitErr
 				return
 			}
+			if _, ok := r.(*ReturnSignal); ok {
+				err = fmt.Errorf("return outside of function")
+				return
+			}
+			if _, ok := r.(*BreakSignal); ok {
+				err = fmt.Errorf("break outside of closure")
+				return
+			}
 			err = fmt.Errorf("%v", r)
 		}
 	}()
@@ -220,18 +235,72 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 	case *ast.FuncDef:
 		closure := &Closure{
-			Params: s.Params,
-			Body:   s.Body,
-			Env:    env,
+			Params:    s.Params,
+			Body:      s.Body,
+			Env:       env,
+			IsFuncDef: true,
 		}
 		env.Set(s.Name, closure)
 		return nil, nil
 
 	case *ast.ReturnStmt:
-		if s.Value == nil {
-			return &TupleValue{Elements: []Value{}}, nil
+		var retVal Value = &TupleValue{Elements: []Value{}}
+		if s.Value != nil {
+			v, err := env.evalExpr(s.Value)
+			if err != nil {
+				return nil, err
+			}
+			retVal = v
 		}
-		return NewThunk(s.Value, env), nil
+
+		if env.EnclosingFuncID == 0 {
+			// Top-level return behaves like exit()
+			code := 0
+			forced := Force(retVal)
+			switch v := forced.(type) {
+			case *TupleValue:
+				if len(v.Elements) == 0 {
+					code = 0
+				} else {
+					return nil, fmt.Errorf("return at top level expects Int or Bool, got %v", forced)
+				}
+			case IntValue:
+				code = int(v)
+			case BoolValue:
+				if bool(v) {
+					code = 0
+				} else {
+					code = 1
+				}
+			default:
+				return nil, fmt.Errorf("return at top level expects Int or Bool, got %v", forced)
+			}
+			panic(&ExitError{Code: code})
+		}
+
+		panic(&ReturnSignal{
+			FuncID: env.EnclosingFuncID,
+			Value:  retVal,
+		})
+
+	case *ast.BreakStmt:
+		var brkVal Value = &TupleValue{Elements: []Value{}}
+		if s.Value != nil {
+			v, err := env.evalExpr(s.Value)
+			if err != nil {
+				return nil, err
+			}
+			brkVal = v
+		}
+
+		if env.ActiveClosureID == 0 {
+			return nil, fmt.Errorf("break outside of closure")
+		}
+
+		panic(&BreakSignal{
+			ClosureID: env.ActiveClosureID,
+			Value:     brkVal,
+		})
 
 	case *ast.IfStmt:
 		condVal := Force(NewThunk(s.Cond, env))
@@ -308,8 +377,22 @@ func (env *Environment) evalBlock(body []ast.Stmt) (Value, error) {
 	return lastVal, nil
 }
 
-func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (Value, error) {
+func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (val Value, err error) {
 	callEnv := NewEnvironment(fn.Env)
+	var myCallID uint64
+
+	if fn.IsFuncDef {
+		// Regular function call (def)
+		myCallID = nextCallID()
+		callEnv.EnclosingFuncID = myCallID
+		callEnv.ActiveClosureID = 0
+	} else {
+		// Closure / lambda / block call
+		myCallID = nextCallID()
+		callEnv.EnclosingFuncID = fn.EnclosingFuncID
+		callEnv.ActiveClosureID = myCallID
+	}
+
 	for i, p := range fn.Params {
 		if p.IsVariadic {
 			var rest []Value
@@ -325,6 +408,32 @@ func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (Value, er
 			callEnv.Set(p.Name, &TupleValue{Elements: []Value{}})
 		}
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			if fn.IsFuncDef {
+				if ret, ok := r.(*ReturnSignal); ok {
+					if ret.FuncID == myCallID {
+						val = ret.Value
+						err = nil
+						return
+					}
+					panic(ret)
+				}
+			} else {
+				if brk, ok := r.(*BreakSignal); ok {
+					if brk.ClosureID == myCallID {
+						val = brk.Value
+						err = nil
+						return
+					}
+					panic(brk)
+				}
+			}
+			panic(r)
+		}
+	}()
+
 	return callEnv.evalBlock(fn.Body)
 }
 
@@ -490,9 +599,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		// Trailing block as closure argument
 		if e.Block != nil {
 			blockClosure := &Closure{
-				Params: e.Block.Params,
-				Body:   e.Block.Body,
-				Env:    env,
+				Params:          e.Block.Params,
+				Body:            e.Block.Body,
+				Env:             env,
+				IsFuncDef:       false,
+				EnclosingFuncID: env.EnclosingFuncID,
 			}
 			argValues = append(argValues, blockClosure)
 		}
@@ -526,9 +637,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.LambdaExpr:
 		return &Closure{
-			Params: e.Params,
-			Body:   e.Body,
-			Env:    env,
+			Params:          e.Params,
+			Body:            e.Body,
+			Env:             env,
+			IsFuncDef:       false,
+			EnclosingFuncID: env.EnclosingFuncID,
 		}, nil
 
 	case *ast.IsExpr:

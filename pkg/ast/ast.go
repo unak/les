@@ -246,6 +246,14 @@ type ReturnStmt struct {
 func (r *ReturnStmt) node() {}
 func (r *ReturnStmt) stmt() {}
 
+// BreakStmt represents breaking out of a closure (lambda/block).
+type BreakStmt struct {
+	Value Expr
+}
+
+func (b *BreakStmt) node() {}
+func (b *BreakStmt) stmt() {}
+
 // ExprStmt represents expression evaluated as statement.
 type ExprStmt struct {
 	Value Expr

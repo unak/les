@@ -315,4 +315,42 @@ f5 = |x|:
 	}
 }
 
+func TestParseReturnAndBreak(t *testing.T) {
+	// Top-level break should fail with parser error
+	inputErr := `break 10`
+	pErr := NewParser(lexer.NewLexer(inputErr))
+	pErr.ParseProgram()
+	if len(pErr.Errors()) == 0 {
+		t.Fatalf("expected parse error for break outside closure, got none")
+	}
 
+	// Break in def without closure should also fail
+	inputDefErr := "def foo():\n    break 10\n"
+	pDefErr := NewParser(lexer.NewLexer(inputDefErr))
+	pDefErr.ParseProgram()
+	if len(pDefErr.Errors()) == 0 {
+		t.Fatalf("expected parse error for break inside def (outside closure), got none")
+	}
+
+	// Break inside lambda should succeed
+	inputOk := "f = |x|:\n    if x > 0:\n        break x\n    0\n"
+	pOk := NewParser(lexer.NewLexer(inputOk))
+	progOk := pOk.ParseProgram()
+	if len(pOk.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", pOk.Errors())
+	}
+	if len(progOk.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(progOk.Body))
+	}
+
+	// Return inside def and top-level return
+	inputRet := "return 1\ndef bar():\n    return 2\n"
+	pRet := NewParser(lexer.NewLexer(inputRet))
+	progRet := pRet.ParseProgram()
+	if len(pRet.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors for return: %v", pRet.Errors())
+	}
+	if len(progRet.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(progRet.Body))
+	}
+}

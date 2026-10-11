@@ -173,6 +173,20 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		_, err := inf.inferExpr(s.Value)
 		return err
 
+	case *ast.ReturnStmt:
+		if s.Value != nil {
+			_, err := inf.inferExpr(s.Value)
+			return err
+		}
+		return nil
+
+	case *ast.BreakStmt:
+		if s.Value != nil {
+			_, err := inf.inferExpr(s.Value)
+			return err
+		}
+		return nil
+
 	case *ast.ImportStmt:
 		return nil
 	case *ast.ModuleDecl:
@@ -377,6 +391,13 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 				lastT = t
 			} else if rs, ok := stmt.(*ast.ReturnStmt); ok {
 				t, err := inf.inferExpr(rs.Value)
+				if err != nil {
+					inf.scope = prevScope
+					return nil, err
+				}
+				lastT = t
+			} else if bs, ok := stmt.(*ast.BreakStmt); ok {
+				t, err := inf.inferExpr(bs.Value)
 				if err != nil {
 					inf.scope = prevScope
 					return nil, err

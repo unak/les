@@ -33,6 +33,7 @@ type Parser struct {
 	errors              []string
 	inParenOmissionCall bool
 	atStatementStart    bool
+	inClosureDepth      int
 }
 
 func NewParser(l *lexer.Lexer) *Parser {
@@ -115,6 +116,11 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseIfStmt()
 	case lexer.TokenReturn:
 		return p.parseReturnStmt()
+	case lexer.TokenBreak:
+		if p.inClosureDepth <= 0 {
+			p.errors = append(p.errors, fmt.Sprintf("break outside of closure at line %d col %d", p.curToken.Line, p.curToken.Col))
+		}
+		return p.parseBreakStmt()
 	case lexer.TokenLParen:
 		if p.isUnpackParenDeclStart() {
 			return p.parseUnpackDeclWithParen()
@@ -593,16 +599,20 @@ func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 		return &ast.ReturnStmt{Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
-	if p.curTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-		p.nextToken()
-	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
-		p.nextToken()
-	}
+	p.consumeStmtEnd()
 	return &ast.ReturnStmt{Value: val}
 }
+
+func (p *Parser) parseBreakStmt() *ast.BreakStmt {
+	p.nextToken() // consume 'break'
+	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
+		return &ast.BreakStmt{Value: nil}
+	}
+	val := p.parseExpr(PREC_LOWEST)
+	p.consumeStmtEnd()
+	return &ast.BreakStmt{Value: val}
+}
+
 
 func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	p.atStatementStart = true
@@ -652,6 +662,10 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 				Block:  block,
 			}
 		}
+	}
+
+	if lam, isLam := prefix.(*ast.LambdaExpr); isLam && lam.Expr == nil {
+		return prefix
 	}
 
 	for !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenEOF) && precedence < p.peekPrecedence() {
@@ -749,6 +763,9 @@ func (p *Parser) parsePrefix() ast.Expr {
 }
 
 func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
+	p.inClosureDepth++
+	defer func() { p.inClosureDepth-- }()
+
 	var params []ast.FuncParam
 
 	if p.curTokenIs(lexer.TokenOr) {
@@ -1072,6 +1089,9 @@ func (p *Parser) parseCallArguments() []ast.Expr {
 }
 
 func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
+	p.inClosureDepth++
+	defer func() { p.inClosureDepth-- }()
+
 	// 'do' already consumed or at 'do'
 	params := make([]ast.FuncParam, 0)
 	if p.peekTokenIs(lexer.TokenPipe) {

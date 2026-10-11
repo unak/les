@@ -584,6 +584,260 @@ print "after\n"
 	}
 }
 
+func TestReturnInFunction(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		wantVal string
+	}{
+		{
+			name: "return with value",
+			code: `
+def foo():
+    return 42
+    100
+foo()
+`,
+			wantVal: "42",
+		},
+		{
+			name: "return without value returns empty tuple",
+			code: `
+def bar():
+    return
+    100
+bar()
+`,
+			wantVal: "()",
+		},
+		{
+			name: "early return inside if",
+			code: `
+def check(x):
+    if x > 0:
+        return "positive"
+    "non-positive"
+(check(5), check(-2))
+`,
+			wantVal: `(positive, non-positive)`,
+		},
+	}
 
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.code)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
 
+			ev := NewEvaluator()
+			val, err := ev.EvalProgram(prog)
+			if err != nil {
+				t.Fatalf("eval error: %v", err)
+			}
+			if val.String() != tt.wantVal {
+				t.Fatalf("expected %q, got %q", tt.wantVal, val.String())
+			}
+		})
+	}
+}
 
+func TestBreakInClosure(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		wantVal string
+	}{
+		{
+			name: "break with value in lambda",
+			code: `
+f = |x|:
+    if x == 1:
+        break 100
+    200
+(f(1), f(2))
+`,
+			wantVal: "(100, 200)",
+		},
+		{
+			name: "break without value",
+			code: `
+f = ||:
+    break
+f()
+`,
+			wantVal: "()",
+		},
+		{
+			name: "nested closures inner break",
+			code: `
+outer = ||:
+    inner = ||:
+        break "inner"
+    (inner(), "outer")
+outer()
+`,
+			wantVal: `(inner, outer)`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.code)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+
+			ev := NewEvaluator()
+			val, err := ev.EvalProgram(prog)
+			if err != nil {
+				t.Fatalf("eval error: %v", err)
+			}
+			if val.String() != tt.wantVal {
+				t.Fatalf("expected %q, got %q", tt.wantVal, val.String())
+			}
+		})
+	}
+}
+
+func TestNonLocalReturn(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		wantVal string
+	}{
+		{
+			name: "return inside closure exits enclosing def",
+			code: `
+def outer():
+    fn = |x|:
+        if x == 1:
+            return 999
+        0
+    fn(1)
+    100
+outer()
+`,
+			wantVal: "999",
+		},
+		{
+			name: "non-local return passes through higher-order function",
+			code: `
+def runTwice(f):
+    f(1)
+    f(2)
+    10
+
+def caller():
+    runTwice() do |x|:
+        if x == 1:
+            return 777
+        0
+    20
+caller()
+`,
+			wantVal: "777",
+		},
+		{
+			name: "nested lambda non-local return to def",
+			code: `
+def test():
+    f1 = ||:
+        f2 = ||:
+            return 42
+        f2()
+        1
+    f1()
+    2
+test()
+`,
+			wantVal: "42",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.code)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+
+			ev := NewEvaluator()
+			val, err := ev.EvalProgram(prog)
+			if err != nil {
+				t.Fatalf("eval error: %v", err)
+			}
+			if val.String() != tt.wantVal {
+				t.Fatalf("expected %q, got %q", tt.wantVal, val.String())
+			}
+		})
+	}
+}
+
+func TestTopLevelReturn(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     string
+		wantCode int
+	}{
+		{
+			name:     "bare return is exit 0",
+			code:     "return\n",
+			wantCode: 0,
+		},
+		{
+			name:     "return with int code",
+			code:     "return 42\n",
+			wantCode: 42,
+		},
+		{
+			name:     "return True is exit 0",
+			code:     "return True\n",
+			wantCode: 0,
+		},
+		{
+			name:     "return False is exit 1",
+			code:     "return False\n",
+			wantCode: 1,
+		},
+		{
+			name: "top-level lambda non-local return acts as exit",
+			code: `
+f = ||:
+    return 123
+f()
+`,
+			wantCode: 123,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.code)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+
+			ev := NewEvaluator()
+			_, err := ev.EvalProgram(prog)
+			if err == nil {
+				t.Fatalf("expected ExitError, got nil")
+			}
+			exitErr, ok := err.(*ExitError)
+			if !ok {
+				t.Fatalf("expected *ExitError, got %T (%v)", err, err)
+			}
+			if exitErr.Code != tt.wantCode {
+				t.Fatalf("expected exit code %d, got %d", tt.wantCode, exitErr.Code)
+			}
+		})
+	}
+}

@@ -92,9 +92,11 @@ func (d *DictValue) String() string {
 
 // Closure represents user defined function with closure environment.
 type Closure struct {
-	Params []ast.FuncParam
-	Body   []ast.Stmt
-	Env    *Environment
+	Params          []ast.FuncParam
+	Body            []ast.Stmt
+	Env             *Environment
+	IsFuncDef       bool
+	EnclosingFuncID uint64
 }
 
 func (c *Closure) String() string { return "<function>" }
@@ -167,11 +169,13 @@ func Force(v Value) Value {
 
 // Environment stores bindings in current scope.
 type Environment struct {
-	store   map[string]Value
-	modules map[string]*ModuleValue
-	parent  *Environment
-	Output  *strings.Builder // captures print output if specified
-	Loader  func(path string) (*ModuleValue, error) // module loader callback
+	store           map[string]Value
+	modules         map[string]*ModuleValue
+	parent          *Environment
+	Output          *strings.Builder                        // captures print output if specified
+	Loader          func(path string) (*ModuleValue, error) // module loader callback
+	EnclosingFuncID uint64                                  // 0 means top-level
+	ActiveClosureID uint64                                  // 0 means not directly inside a closure call
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -183,8 +187,22 @@ func NewEnvironment(parent *Environment) *Environment {
 	if parent != nil {
 		env.Output = parent.Output
 		env.Loader = parent.Loader
+		env.EnclosingFuncID = parent.EnclosingFuncID
+		env.ActiveClosureID = parent.ActiveClosureID
 	}
 	return env
+}
+
+// ReturnSignal carries the returned value and the target function call ID.
+type ReturnSignal struct {
+	FuncID uint64
+	Value  Value
+}
+
+// BreakSignal carries the break value and the target closure call ID.
+type BreakSignal struct {
+	ClosureID uint64
+	Value     Value
 }
 
 func (env *Environment) Get(name string) (Value, bool) {
