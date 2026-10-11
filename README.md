@@ -700,10 +700,11 @@ Rich numeric literal representations with full radix symmetry and visual separat
 - **Hexadecimal Floating-Point Literals**:
   - Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
     - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
-    - The binary exponent `p` / `P` is required, preventing lexical ambiguity with integer dot accesses.
+    - Disambiguation strategy: Since built-in types have a closed set of methods (no user monkey-patching), the lexer attempts to interpret `0x...` followed by `.` as a floating-point literal first. If it satisfies float syntax, it is treated as a float; otherwise, it falls back to integer dot/method access.
 - **Built-in Methods on Numeric Literals & Disambiguation**:
   - Direct method invocation on literals (e.g., `42.ToString()`, `3.14.ToString()`).
   - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.ToString()`) is disambiguated as a method call on integer `42`.
+
 
 
 
