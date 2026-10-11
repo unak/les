@@ -437,6 +437,8 @@ func (l *Lexer) readIdentifier() Token {
 		tokType = TokenCase
 	case "struct":
 		tokType = TokenStruct
+	case "interface":
+		tokType = TokenInterface
 	case "True", "False":
 		tokType = TokenBool
 	case "Nil":

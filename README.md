@@ -378,3 +378,51 @@ print rc is Reader      # True
 #### Static Ambiguous Selector Detection
 When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
 
+### 12. Interfaces (`interface`) & Structural Typing
+
+Les provides Go-style implicit structural typing (duck typing) via interface declarations.
+
+#### Definition
+- Defined using `interface <Name>:` followed by an indented block.
+- Contains only method signatures: `<name>(<params...>): <ReturnType>`.
+- Receiver (`self`) is omitted from interface method signatures.
+- Interfaces can embed other interfaces.
+
+```python
+interface Reader:
+    read(n: Int): String
+
+interface Closer:
+    close(): ()
+
+interface ReadCloser:
+    Reader
+    Closer
+```
+
+#### Implicit Satisfaction (Duck Typing)
+- Types (`struct`) automatically satisfy an interface if they provide all required methods matching the signature.
+- No `implements` keyword required.
+
+```python
+struct File:
+    path: String
+
+    def read(n: Int):
+        "read bytes"
+
+    def close():
+        ()
+
+# Statically assignable to ReadCloser
+rc: ReadCloser = File(path: "/tmp/data")
+```
+
+#### Composition & Conflict Resolution
+- Embedding multiple interfaces that declare identical method signatures is valid (unified into one).
+- Conflicting signatures (same method name but differing parameter or return types) produce a static compilation / type error at interface definition time.
+
+#### Dynamic Runtime Checks (`is`)
+- `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
+
+

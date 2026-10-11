@@ -327,3 +327,20 @@ type StructDef struct {
 func (s *StructDef) node() {}
 func (s *StructDef) stmt() {}
 
+// MethodSig represents a method signature in an interface definition.
+type MethodSig struct {
+	Name       string
+	Params     []FuncParam
+	ReturnType string
+}
+
+// InterfaceDef represents interface definition block: interface Name: ...
+type InterfaceDef struct {
+	Name     string
+	Embedded []string // Embedded interface names
+	Methods  []MethodSig
+}
+
+func (i *InterfaceDef) node() {}
+func (i *InterfaceDef) stmt() {}
+

@@ -131,6 +131,17 @@ func (s *StructDefValue) String() string {
 	return fmt.Sprintf("<struct %s>", s.Name)
 }
 
+// InterfaceDefValue represents interface type definition.
+type InterfaceDefValue struct {
+	Name     string
+	Embedded []string
+	Methods  map[string]ast.MethodSig
+}
+
+func (i *InterfaceDefValue) String() string {
+	return fmt.Sprintf("<interface %s>", i.Name)
+}
+
 // StructInstance represents an instantiated struct value.
 type StructInstance struct {
 	Def      *StructDefValue

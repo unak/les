@@ -33,6 +33,7 @@ const (
 	TokenMatch
 	TokenCase
 	TokenStruct
+	TokenInterface
 
 	// Punctuation
 	TokenAssign    // =

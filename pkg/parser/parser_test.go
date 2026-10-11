@@ -454,3 +454,47 @@ print p.name
 		t.Fatalf("expected MemberAccessExpr 'name', got %+v", call3.Args[0])
 	}
 }
+
+func TestParseInterfaceDef(t *testing.T) {
+	input := `
+interface Reader:
+    read(n: Int): String
+
+interface Closer:
+    close(): ()
+
+interface ReadCloser:
+    Reader
+    Closer
+    reset(): Bool
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	i1, ok := prog.Body[0].(*ast.InterfaceDef)
+	if !ok || i1.Name != "Reader" || len(i1.Methods) != 1 {
+		t.Fatalf("unexpected Reader interface: %+v", prog.Body[0])
+	}
+	if i1.Methods[0].Name != "read" || len(i1.Methods[0].Params) != 1 || i1.Methods[0].ReturnType != "String" {
+		t.Fatalf("unexpected method signature: %+v", i1.Methods[0])
+	}
+
+	i3, ok := prog.Body[2].(*ast.InterfaceDef)
+	if !ok || i3.Name != "ReadCloser" {
+		t.Fatalf("unexpected ReadCloser interface: %+v", prog.Body[2])
+	}
+	if len(i3.Embedded) != 2 || i3.Embedded[0] != "Reader" || i3.Embedded[1] != "Closer" {
+		t.Fatalf("unexpected embedded interfaces: %v", i3.Embedded)
+	}
+	if len(i3.Methods) != 1 || i3.Methods[0].Name != "reset" || i3.Methods[0].ReturnType != "Bool" {
+		t.Fatalf("unexpected ReadCloser methods: %+v", i3.Methods)
+	}
+}
+

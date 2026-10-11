@@ -242,18 +242,92 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 			prevScope := inf.scope
 			inf.scope = methodScope
+			var lastExprType Type = TypeAny
 			for _, bStmt := range m.Body {
 				_ = inf.inferStmt(bStmt)
+				if es, ok := bStmt.(*ast.ExprStmt); ok {
+					if et, err := inf.inferExpr(es.Value); err == nil {
+						lastExprType = et
+					}
+				} else if rs, ok := bStmt.(*ast.ReturnStmt); ok {
+					if rs.Value != nil {
+						if et, err := inf.inferExpr(rs.Value); err == nil {
+							lastExprType = et
+						}
+					}
+				}
 			}
 			inf.scope = prevScope
 
+			var retType Type = TypeAny
+			if m.ReturnType != "" {
+				retType = inf.parseTypeAnnot(m.ReturnType)
+			} else if lastExprType != nil {
+				retType = lastExprType
+			}
+
 			mType := &FuncType{
 				Arg: &TupleType{Elems: paramTypes},
-				Ret: TypeAny,
+				Ret: retType,
 			}
 			st.Methods[m.Name] = mType
 		}
 
+		return nil
+
+	case *ast.InterfaceDef:
+		iface := &InterfaceType{
+			Name:     s.Name,
+			Methods:  make(map[string]*FuncType),
+			Embedded: make([]*InterfaceType, 0),
+		}
+
+		// First, collect methods and check for conflicts from embedded interfaces
+		for _, embName := range s.Embedded {
+			embType, ok := inf.scope.Lookup(embName)
+			if !ok {
+				return fmt.Errorf("undefined embedded interface '%s' in interface '%s'", embName, s.Name)
+			}
+			embIface, ok := embType.(*InterfaceType)
+			if !ok {
+				return fmt.Errorf("cannot embed non-interface type '%s' in interface '%s'", embName, s.Name)
+			}
+			iface.Embedded = append(iface.Embedded, embIface)
+
+			for mName, mSig := range embIface.Methods {
+				if existingSig, exists := iface.Methods[mName]; exists {
+					if !existingSig.Equals(mSig) {
+						return fmt.Errorf("conflicting method signatures for '%s' in embedded interface '%s' of '%s'", mName, embName, s.Name)
+					}
+				} else {
+					iface.Methods[mName] = mSig
+				}
+			}
+		}
+
+		// Next, process direct methods on interface
+		for _, m := range s.Methods {
+			paramTypes := make([]Type, len(m.Params))
+			for i, p := range m.Params {
+				paramTypes[i] = inf.parseTypeAnnot(p.TypeAnnot)
+			}
+			retType := inf.parseTypeAnnot(m.ReturnType)
+			mSig := &FuncType{
+				Arg: &TupleType{Elems: paramTypes},
+				Ret: retType,
+			}
+
+			if existingSig, exists := iface.Methods[m.Name]; exists {
+				if !existingSig.Equals(mSig) {
+					return fmt.Errorf("method '%s' in interface '%s' conflicts with embedded method signature", m.Name, s.Name)
+				}
+			}
+			iface.Methods[m.Name] = mSig
+		}
+
+		if err := inf.scope.Declare(s.Name, iface); err != nil {
+			return err
+		}
 		return nil
 
 	case *ast.ImportStmt:
@@ -365,10 +439,16 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		if st, ok := targetT.(*StructType); ok {
 			return st.LookupMember(e.Member)
 		}
+		if it, ok := targetT.(*InterfaceType); ok {
+			if mSig, ok := it.LookupMethod(e.Member); ok {
+				return mSig, nil
+			}
+			return nil, fmt.Errorf("interface %s has no method '%s'", it.Name, e.Member)
+		}
 		if targetT == TypeAny {
 			return TypeAny, nil
 		}
-		return nil, fmt.Errorf("cannot access member '%s' on non-struct type %s", e.Member, targetT)
+		return nil, fmt.Errorf("cannot access member '%s' on non-struct/interface type %s", e.Member, targetT)
 	case *ast.NamedArgExpr:
 		return inf.inferExpr(e.Value)
 	case *ast.IndexExpr:

@@ -977,3 +977,63 @@ d = Dog(Animal(species: "Canine"), bark: "Woof")
 		})
 	}
 }
+
+func TestEvalInterface(t *testing.T) {
+	code := `
+interface Stringer:
+    to_string(): String
+
+interface Greeter:
+    greet(): String
+
+interface PersonProtocol:
+    Stringer
+    Greeter
+
+struct Person:
+    name: String
+
+    def to_string():
+        name
+
+    def greet():
+        "hello, " + name
+
+struct Anonymous:
+    id: Int
+
+    def to_string():
+        "anon"
+
+p = Person(name: "Bob")
+anon = Anonymous(id: 1)
+
+# Dynamic is checks
+pIsStringer = p is Stringer
+pIsGreeter = p is Greeter
+pIsProtocol = p is PersonProtocol
+
+anonIsStringer = anon is Stringer
+anonIsGreeter = anon is Greeter
+
+(pIsStringer, pIsGreeter, pIsProtocol, anonIsStringer, anonIsGreeter)
+`
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	ev := NewEvaluator()
+	val, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	expected := "(True, True, True, True, False)"
+	if val.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, val.String())
+	}
+}
+

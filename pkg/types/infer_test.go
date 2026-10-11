@@ -277,4 +277,65 @@ res = c.Talk()
 	}
 }
 
+func TestInterfaceTypeInferenceAndDuckTyping(t *testing.T) {
+	input := `
+interface Reader:
+    read(n: Int): String
+
+interface Closer:
+    close(): ()
+
+interface ReadCloser:
+    Reader
+    Closer
+
+struct File:
+    path: String
+
+    def read(n: Int):
+        "data"
+
+    def close():
+        ()
+
+f: File = File(path: "/tmp/foo")
+# Structural assignability: File implements ReadCloser without 'implements' keyword
+rc: ReadCloser = f
+r: Reader = rc
+res = r.read(10)
+`
+	prog := parser.NewParser(lexer.NewLexer(input)).ParseProgram()
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error for interface duck typing: %v", err)
+	}
+
+	resT, ok := inf.scope.Lookup("res")
+	if !ok || resT != TypeString {
+		t.Fatalf("expected res to be String, got %v", resT)
+	}
+}
+
+func TestInterfaceConflictingSignatures(t *testing.T) {
+	inputConflict := `
+interface A:
+    test(): Int
+
+interface B:
+    test(): String
+
+interface C:
+    A
+    B
+`
+	prog := parser.NewParser(lexer.NewLexer(inputConflict)).ParseProgram()
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err == nil {
+		t.Fatalf("expected conflict error when embedding interfaces with different signatures for test()")
+	}
+}
+
+
 

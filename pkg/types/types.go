@@ -212,6 +212,11 @@ func IsAssignableTo(src, target Type) bool {
 	if target.Equals(src) {
 		return true
 	}
+	// If target is InterfaceType, check if src implements it
+	if ifaceTarget, ok := target.(*InterfaceType); ok {
+		return ImplementsInterface(src, ifaceTarget)
+	}
+
 	// If target is UnionType, src must match at least one member
 	if uTarget, ok := target.(*UnionType); ok {
 		// If src is also UnionType, every member of src must be assignable to target
@@ -230,6 +235,71 @@ func IsAssignableTo(src, target Type) bool {
 		}
 		return false
 	}
+	return false
+}
+
+// InterfaceType represents an interface type with method signatures.
+type InterfaceType struct {
+	Name     string
+	Methods  map[string]*FuncType
+	Embedded []*InterfaceType
+}
+
+func (i *InterfaceType) String() string {
+	return i.Name
+}
+
+func (i *InterfaceType) Equals(other Type) bool {
+	oi, ok := other.(*InterfaceType)
+	return ok && i.Name == oi.Name
+}
+
+func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
+	if m, ok := i.Methods[name]; ok {
+		return m, true
+	}
+	return nil, false
+}
+
+// ImplementsInterface checks if src type satisfies target interface.
+func ImplementsInterface(src Type, target *InterfaceType) bool {
+	// If src is itself an interface, check if it contains all required methods
+	if srcIface, ok := src.(*InterfaceType); ok {
+		for mName, targetSig := range target.Methods {
+			srcSig, ok := srcIface.LookupMethod(mName)
+			if !ok {
+				return false
+			}
+			if !targetSig.Equals(srcSig) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// If src is a StructType, check all methods via LookupMember
+	if srcStruct, ok := src.(*StructType); ok {
+		for mName, targetSig := range target.Methods {
+			memberT, err := srcStruct.LookupMember(mName)
+			if err != nil {
+				return false
+			}
+			fnT, ok := memberT.(*FuncType)
+			if !ok {
+				return false
+			}
+			if !targetSig.Equals(fnT) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Other types (e.g. primitives) could implement interfaces if empty or built-in
+	if len(target.Methods) == 0 {
+		return true
+	}
+
 	return false
 }
 

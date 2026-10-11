@@ -276,6 +276,18 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		env.Set(s.Name, sDef)
 		return nil, nil
 
+	case *ast.InterfaceDef:
+		iDef := &InterfaceDefValue{
+			Name:     s.Name,
+			Embedded: s.Embedded,
+			Methods:  make(map[string]ast.MethodSig),
+		}
+		for _, m := range s.Methods {
+			iDef.Methods[m.Name] = m
+		}
+		env.Set(s.Name, iDef)
+		return nil, nil
+
 	case *ast.ReturnStmt:
 		var retVal Value = &TupleValue{Elements: []Value{}}
 		if s.Value != nil {
@@ -949,9 +961,54 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 					return true
 				}
 			}
+			// Check if typeAnnot is an Interface in the struct's definition env
+			if ifaceVal, found := si.Def.Env.Get(typeAnnot); found {
+				if ifaceDef, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
+					return structImplementsInterfaceValue(si, ifaceDef)
+				}
+			}
 			return false
 		}
 		return false
 	}
+}
+
+func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue) bool {
+	// Check all direct methods required by the interface
+	for mName, sig := range iface.Methods {
+		memberVal, err := si.LookupMember(mName)
+		if err != nil {
+			return false
+		}
+		closure, isClosure := Force(memberVal).(*Closure)
+		if !isClosure {
+			return false
+		}
+		// Check param count (excluding self)
+		nonSelfCount := 0
+		for _, p := range closure.Params {
+			if p.Name != "self" {
+				nonSelfCount++
+			}
+		}
+		if nonSelfCount != len(sig.Params) {
+			return false
+		}
+	}
+	// Check embedded interfaces
+	for _, embName := range iface.Embedded {
+		if embVal, found := si.Def.Env.Get(embName); found {
+			if embDef, isIface := Force(embVal).(*InterfaceDefValue); isIface {
+				if !structImplementsInterfaceValue(si, embDef) {
+					return false
+				}
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+	return true
 }
 

@@ -115,6 +115,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseFuncDef()
 	case lexer.TokenStruct:
 		return p.parseStructDef()
+	case lexer.TokenInterface:
+		return p.parseInterfaceDef()
 	case lexer.TokenIf:
 		return p.parseIfStmt()
 	case lexer.TokenReturn:
@@ -268,6 +270,79 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 		Name:    name,
 		Fields:  fields,
 		Methods: methods,
+	}
+}
+
+func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
+	p.nextToken() // consume 'interface'
+	if !p.curTokenIs(lexer.TokenIdent) {
+		p.errors = append(p.errors, "expected interface name after interface")
+		return nil
+	}
+	name := p.curToken.Literal
+
+	if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // advance to ':'
+	} else {
+		p.errors = append(p.errors, "expected ':' after interface name")
+		return nil
+	}
+
+	p.nextToken() // consume ':'
+	p.skipNewlines()
+
+	if !p.curTokenIs(lexer.TokenIndent) {
+		p.errors = append(p.errors, fmt.Sprintf("expected indent after interface declaration at line %d", p.curToken.Line))
+		return nil
+	}
+	p.nextToken() // consume TokenIndent
+
+	var embedded []string
+	var methods []ast.MethodSig
+
+	p.skipNewlines()
+	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+		if p.curTokenIs(lexer.TokenIdent) {
+			ident := p.curToken.Literal
+			if p.peekTokenIs(lexer.TokenLParen) {
+				// Method signature: ident(params...): ReturnType
+				p.nextToken() // advance to '('
+				params := p.parseFuncParams()
+				retType := "()"
+				if p.curTokenIs(lexer.TokenColon) {
+					p.nextToken() // consume ':'
+					retType = p.parseTypeAnnotString()
+				} else if p.peekTokenIs(lexer.TokenColon) {
+					p.nextToken() // advance to ':'
+					p.nextToken() // consume ':'
+					retType = p.parseTypeAnnotString()
+				}
+				methods = append(methods, ast.MethodSig{
+					Name:       ident,
+					Params:     params,
+					ReturnType: strings.TrimSpace(retType),
+				})
+				p.consumeStmtEnd()
+			} else {
+				// Embedded interface: e.g. Reader
+				embedded = append(embedded, ident)
+				p.nextToken() // consume ident
+				p.consumeStmtEnd()
+			}
+		} else {
+			p.nextToken()
+		}
+		p.skipNewlines()
+	}
+
+	if p.curTokenIs(lexer.TokenDedent) {
+		p.nextToken()
+	}
+
+	return &ast.InterfaceDef{
+		Name:     name,
+		Embedded: embedded,
+		Methods:  methods,
 	}
 }
 
