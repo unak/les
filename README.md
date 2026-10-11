@@ -9,7 +9,7 @@ Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated 
 |---|---|---|
 | `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
-| `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded byte sequence (treated purely as raw UTF-8 byte stream for now). |
+| `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by integer `s[0]` (returns 1-character `String`). Supports negative index `s[-1]`. |
 | `Bool` | `True`, `False` | Boolean value. |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Indexed by key `d["a"]`. |
@@ -167,7 +167,10 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
 - Inline ternary: C-style only (`cond ? then_expr : else_expr`).
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
-- Indexing: `[]` for both tuples and dicts (`t[0]`, `d["a"]`).
+- Indexing `[]`:
+  - `String`: `s[i]` accesses character at 0-based index `i`, returning a 1-character `String`. Supports negative index `s[-1]` (last character).
+  - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`.
+  - `Dict`: `d[key]` accesses value by key (`d["a"]`).
 
 ### 6. Side Effects
 - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`).
