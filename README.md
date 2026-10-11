@@ -40,32 +40,47 @@ d: Dict[String, Int] = {"count": 42}
 - All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
 - Future user-defined structs will automatically satisfy any matching interface structurally.
 
-## Package & Module System and Visibility
+## Module System & Variable Scope
 
 ### 1. Identifier Visibility (Go-style)
-- **Public (Exported)**: Starts with an uppercase ASCII letter (`[A-Z]`). Accessible outside the defining package.
+- **Public (Exported)**: Starts with uppercase letter (`[A-Z]`). Accessible outside the module.
   ```python
   def Add(a, b):  # Exported
       a + b
 
   MaxVal = 100    # Exported
   ```
-- **Private (Package-Internal)**: Starts with a lowercase letter or underscore (`[a-z_]`). Accessible only within the same package.
+- **Private (Module-Internal)**: Starts with lowercase letter or underscore (`[a-z_]`). Accessible only within the module.
   ```python
   def helper(x):  # Private
       x * 2
   ```
 
-### 2. Package / Module Organization
-- **Default Package**: Directory name becomes the package/module name implicitly.
-- **Explicit Declaration**: Optional `package <name>` statement at file top overrides directory-based default:
+### 2. Module Organization
+- Terminology: Called **Module** in Les.
+- **Default Module**: Directory name becomes module name implicitly.
+- **Explicit Declaration**: Optional `module <name>` statement at file top overrides directory-based default:
   ```python
-  package math
+  module math
   ```
 - **Importing**:
   ```python
   import math
   math.Add(1, 2)
+  ```
+
+### 3. Scope & Rebinding Rules
+- **Same Scope Rebinding**: **Forbidden (Error)**. A variable cannot be redeclared or rebound within the same lexical scope:
+  ```python
+  x = 10
+  x = 20  # Compile / Type Error: duplicate definition of 'x' in same scope
+  ```
+- **Nested / Closure Scope Shadowing**: **Allowed**. Inner scopes (such as inside a function, block, or closure) may define a variable that shadows an outer scope variable:
+  ```python
+  x = 10
+  def f():
+      x = 20  # OK: shadows outer 'x' within f's local scope
+      x
   ```
 
 ## Core Language Semantics
