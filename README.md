@@ -63,11 +63,15 @@ d: Dict[String, Int] = {"count": 42}
   ```python
   module math
   ```
-- **Importing**:
-  ```python
-  import math
-  math.Add(1, 2)
-  ```
+- **Importing & Module References**:
+  - `import` declaration without `@`: `import math`
+  - Referencing module members uses `@` prefix to clearly distinguish from variables:
+    ```python
+    import math
+
+    result = @math.Add(1, 2)
+    val = user.name  # Cleanly distinguished: variable/struct access does NOT use '@'
+    ```
 
 ### 3. Scope & Rebinding Rules
 - **Same Scope Rebinding**: **Forbidden (Error)**. A variable cannot be redeclared or rebound within the same lexical scope:

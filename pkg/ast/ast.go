@@ -41,6 +41,15 @@ type Identifier struct {
 func (i *Identifier) node() {}
 func (i *Identifier) expr() {}
 
+// ModuleAccessExpr represents @module.Member expression.
+type ModuleAccessExpr struct {
+	Module string
+	Member string
+}
+
+func (m *ModuleAccessExpr) node() {}
+func (m *ModuleAccessExpr) expr() {}
+
 // IntLit represents integer literal.
 type IntLit struct {
 	Value int64

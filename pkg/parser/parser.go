@@ -348,7 +348,9 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 
 	// Paren-omitted call: only at statement start, not inside nested expressions
 	if isStmtStart && precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {
-		if _, isIdent := prefix.(*ast.Identifier); isIdent {
+		_, isIdent := prefix.(*ast.Identifier)
+		_, isModAccess := prefix.(*ast.ModuleAccessExpr)
+		if isIdent || isModAccess {
 			p.inParenOmissionCall = true
 			args := p.parseCallArgumentsWithoutParens()
 			p.inParenOmissionCall = false
@@ -380,7 +382,7 @@ func (p *Parser) canStartArgument() bool {
 	t := p.peekToken.Type
 	switch t {
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool,
-		lexer.TokenLBracket, lexer.TokenLBrace:
+		lexer.TokenLBracket, lexer.TokenLBrace, lexer.TokenAt:
 		return true
 	default:
 		return false
@@ -426,6 +428,27 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenLBracket:
 		// Could be list or index, but in Les: arrays are tuple or dict. Allow bracketed tuples/lists if needed
 		return p.parseTuple(lexer.TokenRBracket)
+	case lexer.TokenAt:
+		// @module.Member
+		p.nextToken() // consume '@'
+		if !p.curTokenIs(lexer.TokenIdent) {
+			p.errors = append(p.errors, fmt.Sprintf("expected module identifier after '@', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+			return nil
+		}
+		modName := p.curToken.Literal
+		if !p.expectPeek(lexer.TokenDot) {
+			return nil
+		}
+		p.nextToken() // consume '.'
+		if !p.curTokenIs(lexer.TokenIdent) {
+			p.errors = append(p.errors, fmt.Sprintf("expected member identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+			return nil
+		}
+		memberName := p.curToken.Literal
+		return &ast.ModuleAccessExpr{
+			Module: modName,
+			Member: memberName,
+		}
 	case lexer.TokenLBrace:
 		return p.parseDict()
 	default:

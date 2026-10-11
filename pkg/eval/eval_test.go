@@ -78,3 +78,54 @@ print choose(42, 1 / 0)`
 		t.Fatalf("expected '42', got %q", out)
 	}
 }
+
+func TestModuleAccessEvaluation(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	// Register dummy module 'math' with public Add and private sub
+	mathMod := &ModuleValue{
+		Name: "math",
+		Exports: map[string]Value{
+			"Add": &BuiltinFunc{
+				Name: "Add",
+				Fn: func(args []Value) (Value, error) {
+					a := Force(args[0]).(IntValue)
+					b := Force(args[1]).(IntValue)
+					return a + b, nil
+				},
+			},
+			"sub": &BuiltinFunc{
+				Name: "sub",
+				Fn: func(args []Value) (Value, error) {
+					return IntValue(0), nil
+				},
+			},
+		},
+	}
+	ev.globalEnv.RegisterModule(mathMod)
+
+	// 1. Access public member @math.Add
+	code := `print @math.Add(10, 20)`
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval public module member failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "30" {
+		t.Fatalf("expected 30, got %q", out.String())
+	}
+
+	// 2. Access private member @math.sub should fail with error
+	codeErr := `print @math.sub(10, 20)`
+	l2 := lexer.NewLexer(codeErr)
+	p2 := parser.NewParser(l2)
+	prog2 := p2.ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 == nil {
+		t.Fatalf("expected error accessing private member @math.sub, got nil")
+	}
+}

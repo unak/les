@@ -113,3 +113,35 @@ def Add(a, b):
 		t.Fatalf("expected moduleName 'math', got %q", prog.ModuleName)
 	}
 }
+
+func TestParseModuleAccessExpr(t *testing.T) {
+	input := `res = @math.Add(1, 2)
+print @math.Pi`
+
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
+
+	varDecl, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[0])
+	}
+	call, ok := varDecl.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", varDecl.Value)
+	}
+	modAccess, ok := call.Callee.(*ast.ModuleAccessExpr)
+	if !ok {
+		t.Fatalf("expected ModuleAccessExpr as callee, got %T", call.Callee)
+	}
+	if modAccess.Module != "math" || modAccess.Member != "Add" {
+		t.Fatalf("unexpected modAccess: %+v", modAccess)
+	}
+}

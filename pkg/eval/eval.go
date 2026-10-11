@@ -44,12 +44,18 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 }
 
-func (ev *Evaluator) EvalProgram(prog *ast.Program) (Value, error) {
+func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("%v", r)
+		}
+	}()
+
 	var lastVal Value = &TupleValue{Elements: []Value{}}
 	for _, stmt := range prog.Body {
-		v, err := ev.globalEnv.evalStmt(stmt)
-		if err != nil {
-			return nil, err
+		v, e := ev.globalEnv.evalStmt(stmt)
+		if e != nil {
+			return nil, e
 		}
 		if v != nil {
 			lastVal = v
@@ -258,6 +264,22 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		default:
 			return nil, fmt.Errorf("cannot call non-function value: %v", calleeVal)
 		}
+
+	case *ast.ModuleAccessExpr:
+		mod, ok := env.GetModule(e.Module)
+		if !ok {
+			return nil, fmt.Errorf("module '@%s' not found or not imported", e.Module)
+		}
+		// Enforce Go-style visibility: member must start with Uppercase letter to be public
+		firstChar := e.Member[0]
+		if firstChar < 'A' || firstChar > 'Z' {
+			return nil, fmt.Errorf("cannot access private member '%s' from module '@%s'", e.Member, e.Module)
+		}
+		val, ok := mod.Exports[e.Member]
+		if !ok {
+			return nil, fmt.Errorf("member '%s' not exported by module '@%s'", e.Member, e.Module)
+		}
+		return val, nil
 
 	default:
 		return nil, fmt.Errorf("unknown expression: %T", expr)

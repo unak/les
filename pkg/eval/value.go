@@ -92,6 +92,14 @@ type BuiltinFunc struct {
 
 func (b *BuiltinFunc) String() string { return fmt.Sprintf("<builtin %s>", b.Name) }
 
+// ModuleValue represents an imported or registered module namespace.
+type ModuleValue struct {
+	Name    string
+	Exports map[string]Value
+}
+
+func (m *ModuleValue) String() string { return fmt.Sprintf("<module %s>", m.Name) }
+
 // Thunk implements aggressive lazy evaluation (memoized call-by-need).
 type Thunk struct {
 	Evaluated bool
@@ -144,15 +152,17 @@ func Force(v Value) Value {
 
 // Environment stores bindings in current scope.
 type Environment struct {
-	store  map[string]Value
-	parent *Environment
-	Output *strings.Builder // captures print output if specified
+	store   map[string]Value
+	modules map[string]*ModuleValue
+	parent  *Environment
+	Output  *strings.Builder // captures print output if specified
 }
 
 func NewEnvironment(parent *Environment) *Environment {
 	env := &Environment{
-		store:  make(map[string]Value),
-		parent: parent,
+		store:   make(map[string]Value),
+		modules: make(map[string]*ModuleValue),
+		parent:  parent,
 	}
 	if parent != nil {
 		env.Output = parent.Output
@@ -172,4 +182,18 @@ func (env *Environment) Get(name string) (Value, bool) {
 
 func (env *Environment) Set(name string, val Value) {
 	env.store[name] = val
+}
+
+func (env *Environment) RegisterModule(mod *ModuleValue) {
+	env.modules[mod.Name] = mod
+}
+
+func (env *Environment) GetModule(name string) (*ModuleValue, bool) {
+	if m, ok := env.modules[name]; ok {
+		return m, true
+	}
+	if env.parent != nil {
+		return env.parent.GetModule(name)
+	}
+	return nil, false
 }

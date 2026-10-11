@@ -202,6 +202,12 @@ func (l *Lexer) NextToken() Token {
 		case ',':
 			tok.Type = TokenComma
 			tok.Literal = ","
+		case '@':
+			tok.Type = TokenAt
+			tok.Literal = "@"
+		case '.':
+			tok.Type = TokenDot
+			tok.Literal = "."
 		case '?':
 			tok.Type = TokenQuestion
 			tok.Literal = "?"

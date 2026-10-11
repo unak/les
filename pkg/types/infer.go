@@ -233,6 +233,8 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			return dt.Value, nil
 		}
 		return TypeAny, nil
+	case *ast.ModuleAccessExpr:
+		return TypeAny, nil // type of module member (flexible/Any for dynamic module lookup)
 	default:
 		return TypeAny, nil
 	}

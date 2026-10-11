@@ -31,6 +31,8 @@ const (
 	TokenAssign    // =
 	TokenColon     // :
 	TokenComma     // ,
+	TokenDot       // .
+	TokenAt        // @
 	TokenQuestion  // ?
 	TokenPipe      // |
 	TokenLParen    // (
