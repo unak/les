@@ -17,6 +17,7 @@ const (
 	PREC_LOGICAL_OR   // ||
 	PREC_LOGICAL_AND  // &&
 	PREC_EQUALITY     // == !=
+	PREC_IS           // is
 	PREC_COMPARISON   // < <= > >=
 	PREC_SUM          // + -
 	PREC_PRODUCT      // * / %
@@ -284,6 +285,64 @@ func (p *Parser) parseIfStmt() *ast.IfStmt {
 	}
 }
 
+func (p *Parser) parseMatchExpr() *ast.MatchExpr {
+	p.nextToken() // consume 'match'
+	target := p.parseExpr(PREC_LOWEST)
+
+	if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // consume ':'
+	}
+
+	p.skipNewlines()
+	for p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	}
+	if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	}
+	if !p.expectPeek(lexer.TokenIndent) {
+		return nil
+	}
+	p.nextToken() // consume TokenIndent
+
+	var cases []ast.MatchCase
+	p.skipNewlines()
+
+	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+		if p.curTokenIs(lexer.TokenCase) {
+			p.nextToken() // consume 'case'
+			// pattern can be ident, or '_'
+			pattern := p.curToken.Literal
+			p.nextToken() // consume pattern
+
+			if p.curTokenIs(lexer.TokenColon) {
+				// curToken is ':'
+			} else if p.peekTokenIs(lexer.TokenColon) {
+				p.nextToken() // advance to ':'
+			}
+
+			// Parse case body statements
+			body := p.parseBlockBody()
+			cases = append(cases, ast.MatchCase{
+				Pattern: pattern,
+				Body:    body,
+			})
+			p.skipNewlines()
+		} else {
+			p.nextToken()
+		}
+	}
+
+	if p.curTokenIs(lexer.TokenDedent) {
+		p.nextToken()
+	}
+
+	return &ast.MatchExpr{
+		Target: target,
+		Cases:  cases,
+	}
+}
+
 func (p *Parser) parseVarDecl(typeAnnot string) *ast.VarDecl {
 	name := p.curToken.Literal
 	p.nextToken() // consume ident
@@ -328,7 +387,7 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 	} else if p.peekTokenIs(lexer.TokenNewline) {
 		p.nextToken()
 		p.nextToken()
-	} else {
+	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
 		p.nextToken()
 	}
 	return &ast.VarDecl{
@@ -349,7 +408,7 @@ func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 	} else if p.peekTokenIs(lexer.TokenNewline) {
 		p.nextToken()
 		p.nextToken()
-	} else {
+	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
 		p.nextToken()
 	}
 	return &ast.ReturnStmt{Value: val}
@@ -364,7 +423,7 @@ func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	} else if p.peekTokenIs(lexer.TokenNewline) {
 		p.nextToken()
 		p.nextToken()
-	} else {
+	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
 		p.nextToken()
 	}
 	return &ast.ExprStmt{Value: expr}
@@ -415,7 +474,7 @@ func (p *Parser) canStartArgument() bool {
 	t := p.peekToken.Type
 	switch t {
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool,
-		lexer.TokenLBracket, lexer.TokenLBrace, lexer.TokenAt:
+		lexer.TokenLBracket, lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
 		return true
 	default:
 		return false
@@ -484,6 +543,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 		}
 	case lexer.TokenLBrace:
 		return p.parseDict()
+	case lexer.TokenMatch:
+		return p.parseMatchExpr()
 	default:
 		return nil
 	}
@@ -580,6 +641,8 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_LOGICAL_AND
 	case lexer.TokenEq, lexer.TokenNotEq:
 		return PREC_EQUALITY
+	case lexer.TokenIs:
+		return PREC_IS
 	case lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
 		return PREC_COMPARISON
 	case lexer.TokenPlus, lexer.TokenMinus:
@@ -605,6 +668,8 @@ func (p *Parser) curPrecedence() int {
 		return PREC_LOGICAL_AND
 	case lexer.TokenEq, lexer.TokenNotEq:
 		return PREC_EQUALITY
+	case lexer.TokenIs:
+		return PREC_IS
 	case lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
 		return PREC_COMPARISON
 	case lexer.TokenPlus, lexer.TokenMinus:
@@ -633,6 +698,27 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			Cond: left,
 			Then: thenExpr,
 			Else: elseExpr,
+		}
+	case lexer.TokenIs:
+		p.nextToken() // consume 'is'
+		// Type could be Ident (Int) or compound: collect type tokens on same line
+		var typeParts []string
+		for !p.curTokenIs(lexer.TokenNewline) && !p.curTokenIs(lexer.TokenEOF) &&
+			!p.curTokenIs(lexer.TokenQuestion) && !p.curTokenIs(lexer.TokenColon) &&
+			!p.curTokenIs(lexer.TokenRParen) && !p.curTokenIs(lexer.TokenRBracket) &&
+			!p.curTokenIs(lexer.TokenComma) {
+			typeParts = append(typeParts, p.curToken.Literal)
+			if p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) ||
+				p.peekTokenIs(lexer.TokenQuestion) || p.peekTokenIs(lexer.TokenColon) ||
+				p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenRBracket) ||
+				p.peekTokenIs(lexer.TokenComma) {
+				break
+			}
+			p.nextToken()
+		}
+		return &ast.IsExpr{
+			Expr:      left,
+			TypeAnnot: strings.Join(typeParts, ""),
 		}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,

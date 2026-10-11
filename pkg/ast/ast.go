@@ -151,6 +151,30 @@ type TernaryExpr struct {
 func (t *TernaryExpr) node() {}
 func (t *TernaryExpr) expr() {}
 
+// IsExpr represents type check expression: expr is Type.
+type IsExpr struct {
+	Expr      Expr
+	TypeAnnot string
+}
+
+func (i *IsExpr) node() {}
+func (i *IsExpr) expr() {}
+
+// MatchCase represents a single case in a match expression: case Pattern: Body
+type MatchCase struct {
+	Pattern string // type name, e.g. "Int", "String", or "_" for wildcard
+	Body    []Stmt
+}
+
+// MatchExpr represents pattern match expression: match expr: case ...
+type MatchExpr struct {
+	Target Expr
+	Cases  []MatchCase
+}
+
+func (m *MatchExpr) node() {}
+func (m *MatchExpr) expr() {}
+
 // CallExpr represents function call. Arg is always a TupleLit expression (or single expr desugared).
 type CallExpr struct {
 	Callee Expr

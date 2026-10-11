@@ -85,7 +85,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		targetType := valType
 		if s.TypeAnnot != "" {
 			expected := parseTypeAnnot(s.TypeAnnot)
-			if !expected.Equals(valType) {
+			if !IsAssignableTo(valType, expected) {
 				return fmt.Errorf("type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
 			}
 			targetType = expected
@@ -216,7 +216,14 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		return thenT, nil
+		elseT, err := inf.inferExpr(e.Else)
+		if err != nil {
+			return nil, err
+		}
+		if thenT.Equals(elseT) {
+			return thenT, nil
+		}
+		return NewUnionType(thenT, elseT), nil
 	case *ast.CallExpr:
 		calleeT, err := inf.inferExpr(e.Callee)
 		if err != nil {
@@ -241,6 +248,45 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		return TypeAny, nil
 	case *ast.ModuleAccessExpr:
 		return TypeAny, nil // type of module member (flexible/Any for dynamic module lookup)
+	case *ast.IsExpr:
+		_, err := inf.inferExpr(e.Expr)
+		if err != nil {
+			return nil, err
+		}
+		return TypeBool, nil
+	case *ast.MatchExpr:
+		_, err := inf.inferExpr(e.Target)
+		if err != nil {
+			return nil, err
+		}
+		var caseTypes []Type
+		for _, c := range e.Cases {
+			var lastT Type = TypeAny
+			for _, stmt := range c.Body {
+				if es, ok := stmt.(*ast.ExprStmt); ok {
+					t, err := inf.inferExpr(es.Value)
+					if err != nil {
+						return nil, err
+					}
+					lastT = t
+				} else if rs, ok := stmt.(*ast.ReturnStmt); ok {
+					t, err := inf.inferExpr(rs.Value)
+					if err != nil {
+						return nil, err
+					}
+					lastT = t
+				} else {
+					if err := inf.inferStmt(stmt); err != nil {
+						return nil, err
+					}
+				}
+			}
+			caseTypes = append(caseTypes, lastT)
+		}
+		if len(caseTypes) == 0 {
+			return TypeAny, nil
+		}
+		return NewUnionType(caseTypes...), nil
 	default:
 		return TypeAny, nil
 	}
@@ -248,6 +294,41 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 
 func parseTypeAnnot(annot string) Type {
 	annot = strings.TrimSpace(annot)
+	if annot == "" {
+		return TypeAny
+	}
+
+	// Check top-level Union: A | B
+	// Careful not to split inside parentheses or brackets
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	start := 0
+	runes := []rune(annot)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 {
+			parts = append(parts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	if len(parts) > 0 {
+		parts = append(parts, string(runes[start:]))
+		var memberTypes []Type
+		for _, p := range parts {
+			memberTypes = append(memberTypes, parseTypeAnnot(p))
+		}
+		return NewUnionType(memberTypes...)
+	}
+
 	switch annot {
 	case "Int":
 		return TypeInt

@@ -170,3 +170,63 @@ import "utils/helpers"`
 		t.Fatalf("expected import utils/helpers, got %+v", prog.Body[1])
 	}
 }
+
+func TestParseIsExpr(t *testing.T) {
+	input := `res = (x is Int) ? 1 : 0`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	varDecl, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[0])
+	}
+	tern, ok := varDecl.Value.(*ast.TernaryExpr)
+	if !ok {
+		t.Fatalf("expected TernaryExpr, got %T", varDecl.Value)
+	}
+	isExpr, ok := tern.Cond.(*ast.IsExpr)
+	if !ok {
+		t.Fatalf("expected IsExpr, got %T", tern.Cond)
+	}
+	if isExpr.TypeAnnot != "Int" {
+		t.Fatalf("expected TypeAnnot Int, got %q", isExpr.TypeAnnot)
+	}
+}
+
+func TestParseMatchExpr(t *testing.T) {
+	input := `
+res = match x:
+    case Int:
+        10
+    case String:
+        20
+    case _:
+        0
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	varDecl, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[0])
+	}
+	matchExpr, ok := varDecl.Value.(*ast.MatchExpr)
+	if !ok {
+		t.Fatalf("expected MatchExpr, got %T", varDecl.Value)
+	}
+	if len(matchExpr.Cases) != 3 {
+		t.Fatalf("expected 3 cases, got %d", len(matchExpr.Cases))
+	}
+	if matchExpr.Cases[0].Pattern != "Int" || matchExpr.Cases[1].Pattern != "String" || matchExpr.Cases[2].Pattern != "_" {
+		t.Fatalf("unexpected cases: %+v", matchExpr.Cases)
+	}
+}
+

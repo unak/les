@@ -148,3 +148,30 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 ### 6. Side Effects
 - Demand-driven strict evaluation at built-in effect points (e.g. `print`).
 - User-defined functions cannot create raw side-effect primitives.
+
+### 7. Union Types & Pattern Matching
+- **Union Type Syntax**: `A | B` (e.g., `Int | String`, `Int | None`).
+- **Branch Type Inference**: When branches (such as `? :`) return different types, the expression is inferred as a union type (`Int | String`).
+- **Type Test Operator `is`**:
+  - Binary operator testing dynamic value type: `expr is Type`.
+  - Evaluates to `Bool` (`True` or `False`).
+  ```python
+  x = 10
+  if x is Int:
+      print "an integer"
+  ```
+- **Pattern Match Expression `match ... case`**:
+  ```python
+  def classify(v):
+      match v:
+          case Int:
+              print "number:", v
+          case String:
+              print "string:", v
+          case _:
+              print "other"
+
+  classify 100
+  classify "les"
+  ```
+

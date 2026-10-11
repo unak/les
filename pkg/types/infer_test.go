@@ -96,3 +96,36 @@ func TestInfiniteTupleTypeAnnotation(t *testing.T) {
 		t.Fatalf("expected variadic (Int, ...), got %v", tt)
 	}
 }
+
+func TestUnionTypeAnnotation(t *testing.T) {
+	input := `
+x: Int | String = 42
+y: Int | String = "hello"
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("expected Int | String annotation to succeed, got %v", err)
+	}
+}
+
+func TestTernaryUnionInference(t *testing.T) {
+	input := `
+res = True ? 42 : "hello"
+val: Int | String = res
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("expected ternary union inference to succeed, got %v", err)
+	}
+}
+

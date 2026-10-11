@@ -129,3 +129,64 @@ func TestModuleAccessEvaluation(t *testing.T) {
 		t.Fatalf("expected error accessing private member @math.sub, got nil")
 	}
 }
+
+func TestEvalIsExpr(t *testing.T) {
+	code := `
+x = 42
+y = "hello"
+r1 = (x is Int) ? 1 : 0
+r2 = (y is Int) ? 1 : 0
+r3 = (x is Int | String) ? 1 : 0
+print r1, r2, r3
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval is expr failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "1 0 1" {
+		t.Fatalf("expected '1 0 1', got %q", out.String())
+	}
+}
+
+func TestEvalMatchExpr(t *testing.T) {
+	code := `
+def classify(v):
+    match v:
+        case Int:
+            print "number:", v
+        case String:
+            print "string:", v
+        case _:
+            print "other"
+
+classify 100
+classify "les"
+classify True
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval match expr failed: %v", err)
+	}
+	expected := "number: 100\nstring: les\nother"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+

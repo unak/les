@@ -27,6 +27,9 @@ const (
 	TokenDo
 	TokenModule
 	TokenImport
+	TokenIs
+	TokenMatch
+	TokenCase
 
 	// Punctuation
 	TokenAssign    // =

@@ -415,6 +415,12 @@ func (l *Lexer) readIdentifier() Token {
 		tokType = TokenModule
 	case "import":
 		tokType = TokenImport
+	case "is":
+		tokType = TokenIs
+	case "match":
+		tokType = TokenMatch
+	case "case":
+		tokType = TokenCase
 	case "True", "False":
 		tokType = TokenBool
 	}

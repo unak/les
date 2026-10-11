@@ -302,6 +302,21 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		}
 		return val, nil
 
+	case *ast.IsExpr:
+		val := Force(NewThunk(e.Expr, env))
+		matches := checkValueMatchesType(val, strings.TrimSpace(e.TypeAnnot))
+		return BoolValue(matches), nil
+
+	case *ast.MatchExpr:
+		val := Force(NewThunk(e.Target, env))
+		for _, c := range e.Cases {
+			pattern := strings.TrimSpace(c.Pattern)
+			if pattern == "_" || checkValueMatchesType(val, pattern) {
+				return env.evalBlock(c.Body)
+			}
+		}
+		return &TupleValue{Elements: []Value{}}, nil
+
 	default:
 		return nil, fmt.Errorf("unknown expression: %T", expr)
 	}
@@ -373,3 +388,45 @@ func evalBinary(op string, left, right Value) (Value, error) {
 
 	return nil, fmt.Errorf("unsupported binary operation %v %s %v", left, op, right)
 }
+
+func checkValueMatchesType(val Value, typeAnnot string) bool {
+	typeAnnot = strings.TrimSpace(typeAnnot)
+	if typeAnnot == "" || typeAnnot == "Any" {
+		return true
+	}
+	// Check if union: A | B
+	if strings.Contains(typeAnnot, "|") {
+		parts := strings.Split(typeAnnot, "|")
+		for _, p := range parts {
+			if checkValueMatchesType(val, strings.TrimSpace(p)) {
+				return true
+			}
+		}
+		return false
+	}
+
+	switch typeAnnot {
+	case "Int":
+		_, ok := val.(IntValue)
+		return ok
+	case "Float":
+		_, ok := val.(FloatValue)
+		return ok
+	case "String":
+		_, ok := val.(StringValue)
+		return ok
+	case "Bool":
+		_, ok := val.(BoolValue)
+		return ok
+	case "Tuple":
+		_, ok := val.(*TupleValue)
+		return ok
+	case "Dict":
+		_, ok := val.(*DictValue)
+		return ok
+	default:
+		// Unknown or custom type
+		return true
+	}
+}
+
