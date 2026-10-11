@@ -19,6 +19,12 @@ Type annotations are optional (full HM-style type inference):
 x: Int = 10
 p: (Int, String) = (1, "ok")
 d: Dict[String, Int] = {"count": 42}
+
+# Infinite / stream Tuple: ellipsis '...' repeats the last specified element type indefinitely
+fib_stream: (Int, ...) = fib(0, 1)
+
+# Leading distinct types followed by infinite stream:
+header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 ```
 
 ## Advanced Type System & Polymorphism

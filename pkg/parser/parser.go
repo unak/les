@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"les/pkg/ast"
 	"les/pkg/lexer"
@@ -307,8 +308,15 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 	name := p.curToken.Literal
 	p.nextToken() // consume ident
 	p.nextToken() // consume ':'
-	typeAnnot := p.curToken.Literal
-	p.nextToken() // consume type
+
+	// Collect type annotation tokens until '='
+	var typeAnnotParts []string
+	for !p.curTokenIs(lexer.TokenAssign) && !p.curTokenIs(lexer.TokenEOF) && !p.curTokenIs(lexer.TokenNewline) {
+		typeAnnotParts = append(typeAnnotParts, p.curToken.Literal)
+		p.nextToken()
+	}
+	typeAnnot := strings.Join(typeAnnotParts, "")
+
 	if !p.curTokenIs(lexer.TokenAssign) {
 		p.errors = append(p.errors, "expected '=' in variable declaration")
 		return nil

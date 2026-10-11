@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strings"
 
 	"les/pkg/ast"
 )
@@ -246,6 +247,7 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 }
 
 func parseTypeAnnot(annot string) Type {
+	annot = strings.TrimSpace(annot)
 	switch annot {
 	case "Int":
 		return TypeInt
@@ -255,7 +257,33 @@ func parseTypeAnnot(annot string) Type {
 		return TypeString
 	case "Bool":
 		return TypeBool
-	default:
-		return TypeAny
 	}
+
+	// Tuple annotation: (Int, ...) or (Int, String)
+	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner == "" {
+			return &TupleType{Elems: []Type{}}
+		}
+		rawParts := strings.Split(inner, ",")
+		var elems []Type
+		isVariadic := false
+
+		for _, p := range rawParts {
+			part := strings.TrimSpace(p)
+			if part == "..." {
+				isVariadic = true
+				break
+			}
+			if part != "" {
+				elems = append(elems, parseTypeAnnot(part))
+			}
+		}
+		return &TupleType{
+			Elems:      elems,
+			IsVariadic: isVariadic,
+		}
+	}
+
+	return TypeAny
 }

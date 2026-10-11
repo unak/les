@@ -28,9 +28,10 @@ func (p PrimType) Equals(other Type) bool {
 	return ok && p == op
 }
 
-// TupleType represents (T1, T2, ...).
+// TupleType represents (T1, T2, ...) or infinite stream (T1, ...).
 type TupleType struct {
-	Elems []Type
+	Elems      []Type
+	IsVariadic bool // if true, the last element type repeats indefinitely (T, ...)
 }
 
 func (t *TupleType) String() string {
@@ -41,6 +42,13 @@ func (t *TupleType) String() string {
 		}
 		res += e.String()
 	}
+	if t.IsVariadic {
+		if len(t.Elems) > 0 {
+			res += ", ..."
+		} else {
+			res += "..."
+		}
+	}
 	res += ")"
 	return res
 }
@@ -50,7 +58,23 @@ func (t *TupleType) Equals(other Type) bool {
 		return true
 	}
 	ot, ok := other.(*TupleType)
-	if !ok || len(t.Elems) != len(ot.Elems) {
+	if !ok {
+		return false
+	}
+	if t.IsVariadic {
+		lastIdx := len(t.Elems) - 1
+		for i, el := range ot.Elems {
+			expected := t.Elems[lastIdx]
+			if i < len(t.Elems) {
+				expected = t.Elems[i]
+			}
+			if !expected.Equals(el) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(t.Elems) != len(ot.Elems) {
 		return false
 	}
 	for i := range t.Elems {

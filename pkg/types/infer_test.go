@@ -75,3 +75,24 @@ def f():
 		t.Fatalf("expected nested shadowing to succeed, got error: %v", err)
 	}
 }
+
+func TestInfiniteTupleTypeAnnotation(t *testing.T) {
+	input := `t: (Int, ...) = (1, 2, 3)`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("expected (Int, ...) annotation to succeed, got %v", err)
+	}
+	tt, ok := inf.scope.Lookup("t")
+	if !ok {
+		t.Fatalf("variable t not found")
+	}
+	tType, ok := tt.(*TupleType)
+	if !ok || !tType.IsVariadic || len(tType.Elems) != 1 || tType.Elems[0] != TypeInt {
+		t.Fatalf("expected variadic (Int, ...), got %v", tt)
+	}
+}
