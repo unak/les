@@ -40,6 +40,34 @@ d: Dict[String, Int] = {"count": 42}
 - All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
 - Future user-defined structs will automatically satisfy any matching interface structurally.
 
+## Package & Module System and Visibility
+
+### 1. Identifier Visibility (Go-style)
+- **Public (Exported)**: Starts with an uppercase ASCII letter (`[A-Z]`). Accessible outside the defining package.
+  ```python
+  def Add(a, b):  # Exported
+      a + b
+
+  MaxVal = 100    # Exported
+  ```
+- **Private (Package-Internal)**: Starts with a lowercase letter or underscore (`[a-z_]`). Accessible only within the same package.
+  ```python
+  def helper(x):  # Private
+      x * 2
+  ```
+
+### 2. Package / Module Organization
+- **Default Package**: Directory name becomes the package/module name implicitly.
+- **Explicit Declaration**: Optional `package <name>` statement at file top overrides directory-based default:
+  ```python
+  package math
+  ```
+- **Importing**:
+  ```python
+  import math
+  math.Add(1, 2)
+  ```
+
 ## Core Language Semantics
 
 ### 1. Function Application and Tuple Semantics
