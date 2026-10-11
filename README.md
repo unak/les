@@ -176,12 +176,17 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   ```
 
 ### 8. Built-in Functions
-Currently, Les provides the following built-in function:
 
-- `print(*args)`:
-  - **Description**: Outputs string representations of arguments separated by spaces, followed by a newline.
-  - **Effect / Evaluation**: Acts as a demand-driven effect boundary. Forces evaluation of its lazy arguments (`Thunk`s).
-  - **Return Value**: An empty tuple `()`.
-  - **Syntax**: Can be invoked with or without parentheses (e.g. `print "Hello, world!"` or `print(x, y)`).
+#### `def print(*args: Any): ()`
+Outputs string representations of arguments separated by spaces, followed by a newline.
+
+- **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
+- **Arguments**: `*args: Any` — variable number of values to print.
+- **Returns**: `()` (empty tuple).
+- **Usage**:
+  ```python
+  print "Hello, world!"
+  print(1, "two", True)
+  ```
 
 
