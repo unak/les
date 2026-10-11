@@ -21,6 +21,25 @@ p: (Int, String) = (1, "ok")
 d: Dict[String, Int] = {"count": 42}
 ```
 
+## Advanced Type System & Polymorphism
+
+### 1. Union Types (`A | B`)
+- Types can be composed as unions:
+  ```python
+  x: Int | String = cond ? 42 : "error"
+  ```
+- Exhaustive pattern matching or type narrowing resolves concrete types safely.
+
+### 2. Structural Typing & Interfaces (Go-style Duck Typing)
+- Types implicitly satisfy interfaces if they possess matching method/protocol signatures (no explicit `implements` keyword needed).
+- Ad-hoc polymorphism: Built-in functions like `print` accept any type implementing the `Show` / stringifiable interface:
+  ```python
+  interface Show:
+      to_string(): String
+  ```
+- All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
+- Future user-defined structs will automatically satisfy any matching interface structurally.
+
 ## Core Language Semantics
 
 ### 1. Function Application and Tuple Semantics
