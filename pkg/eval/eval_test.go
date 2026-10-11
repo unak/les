@@ -1267,3 +1267,60 @@ print t[0] + t[1] + t[2], " ", d["a"] + d["b"]
 	}
 }
 
+func TestEvalSemicolonAndLineContinuation(t *testing.T) {
+	code := `
+a = 1; b = 2; c = 3
+
+total = 10 + \
+        20 + \
+        30
+
+def calc():
+    x = 100; y = 200
+    x + y
+
+msg = \
+    "hello " + \
+    "world"
+
+print a + b + c, " ", total, " ", calc(), " ", msg
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+	expected := "6 60 300 hello world"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestEvalSemicolonAndLineContinuationVariants(t *testing.T) {
+	code := `
+;
+x = 10;;
+y = 20;
+
+def f():
+    return;
+    999
+
+def add(a: Int, \
+        b: Int): Int:
+    a + b
+
+if 1 + \
+   2 == 3:
+    ans = add(x, y); print ans
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+	expected := "30"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+

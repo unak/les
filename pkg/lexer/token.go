@@ -40,6 +40,7 @@ const (
 	// Punctuation
 	TokenAssign    // =
 	TokenColon     // :
+	TokenSemicolon // ;
 	TokenComma     // ,
 	TokenDot       // .
 	TokenAt        // @

@@ -35,7 +35,7 @@ func (l *Lexer) PeekRestOfLine() string {
 	var sb strings.Builder
 	for i := l.pos; i < len(l.source); i++ {
 		r := l.source[i]
-		if r == '\n' || r == '\r' {
+		if r == '\n' || r == '\r' || r == ';' {
 			break
 		}
 		sb.WriteRune(r)
@@ -59,6 +59,26 @@ func (l *Lexer) NextToken() Token {
 				l.advance()
 			}
 			continue
+		}
+
+		// Handle line continuation: '\' must be followed immediately by newline
+		if r == '\\' {
+			startLine := l.line
+			startCol := l.col
+			l.advance() // consume '\\'
+			if l.pos < len(l.source) && l.source[l.pos] == '\r' {
+				l.advance()
+			}
+			if l.pos < len(l.source) && l.source[l.pos] == '\n' {
+				l.advance() // consume '\n'
+				continue
+			}
+			return Token{
+				Type:    TokenError,
+				Literal: "unexpected character '\\': line continuation must be followed by newline",
+				Line:    startLine,
+				Col:     startCol,
+			}
 		}
 
 		// Handle newlines and indentation
@@ -216,6 +236,9 @@ func (l *Lexer) NextToken() Token {
 		case ':':
 			tok.Type = TokenColon
 			tok.Literal = ":"
+		case ';':
+			tok.Type = TokenSemicolon
+			tok.Literal = ";"
 		case ',':
 			tok.Type = TokenComma
 			tok.Literal = ","

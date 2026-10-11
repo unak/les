@@ -67,7 +67,7 @@ func (p *Parser) expectPeek(t lexer.TokenType) bool {
 }
 
 func (p *Parser) skipNewlines() {
-	for p.curTokenIs(lexer.TokenNewline) {
+	for p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) {
 		p.nextToken()
 	}
 }
@@ -447,7 +447,7 @@ func (p *Parser) parseTypeAnnotString() string {
 	bracketDepth := 0
 	for {
 		if parenDepth == 0 && bracketDepth == 0 {
-			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
+			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
 				break
 			}
 		}
@@ -753,12 +753,12 @@ func (p *Parser) parseUnpackDeclWithoutParen() *ast.UnpackDecl {
 }
 
 func (p *Parser) consumeStmtEnd() {
-	if p.curTokenIs(lexer.TokenNewline) {
+	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) {
 		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenNewline) {
+	} else if p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenSemicolon) {
 		p.nextToken()
 		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenEOF) {
+	} else if p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenDedent) {
 		p.nextToken()
 	}
 }
@@ -783,7 +783,7 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 
 	// Collect type annotation tokens until '='
 	var typeAnnotParts []string
-	for !p.curTokenIs(lexer.TokenAssign) && !p.curTokenIs(lexer.TokenEOF) && !p.curTokenIs(lexer.TokenNewline) {
+	for !p.curTokenIs(lexer.TokenAssign) && !p.curTokenIs(lexer.TokenEOF) && !p.curTokenIs(lexer.TokenNewline) && !p.curTokenIs(lexer.TokenSemicolon) {
 		typeAnnotParts = append(typeAnnotParts, p.curToken.Literal)
 		p.nextToken()
 	}
@@ -805,7 +805,10 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 
 func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 	p.nextToken() // consume 'return'
-	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
+	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
+		if p.curTokenIs(lexer.TokenSemicolon) {
+			p.nextToken()
+		}
 		return &ast.ReturnStmt{Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
@@ -815,7 +818,10 @@ func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 
 func (p *Parser) parseBreakStmt() *ast.BreakStmt {
 	p.nextToken() // consume 'break'
-	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
+	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
+		if p.curTokenIs(lexer.TokenSemicolon) {
+			p.nextToken()
+		}
 		return &ast.BreakStmt{Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
@@ -832,9 +838,9 @@ func (p *Parser) parseExprStmt() *ast.ExprStmt {
 		p.skipNewlines()
 		return &ast.ExprStmt{Value: expr}
 	}
-	if p.curTokenIs(lexer.TokenNewline) {
+	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) {
 		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenNewline) {
+	} else if p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenSemicolon) {
 		p.nextToken()
 		p.nextToken()
 	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
@@ -878,7 +884,7 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 		return prefix
 	}
 
-	for !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenEOF) && precedence < p.peekPrecedence() {
+	for !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenSemicolon) && !p.peekTokenIs(lexer.TokenEOF) && precedence < p.peekPrecedence() {
 		p.nextToken()
 		prefix = p.parseInfix(prefix)
 	}

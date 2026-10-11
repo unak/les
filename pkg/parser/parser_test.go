@@ -756,3 +756,52 @@ res = add(
 	}
 }
 
+func TestParseSemicolonAndLineContinuation(t *testing.T) {
+	input := `
+a = 1; b = 2; c = 3
+
+x = 10 + \
+    20 + \
+    30
+
+struct Point:
+    px: Int; py: Int
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 5 {
+		t.Fatalf("expected 5 statements, got %d", len(prog.Body))
+	}
+
+	// Stmt 0, 1, 2 are a, b, c
+	vdA, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok || vdA.Name != "a" {
+		t.Fatalf("expected VarDecl a, got %+v", prog.Body[0])
+	}
+	vdB, ok := prog.Body[1].(*ast.VarDecl)
+	if !ok || vdB.Name != "b" {
+		t.Fatalf("expected VarDecl b, got %+v", prog.Body[1])
+	}
+	vdC, ok := prog.Body[2].(*ast.VarDecl)
+	if !ok || vdC.Name != "c" {
+		t.Fatalf("expected VarDecl c, got %+v", prog.Body[2])
+	}
+
+	// Stmt 3 is x with binary expression
+	vdX, ok := prog.Body[3].(*ast.VarDecl)
+	if !ok || vdX.Name != "x" {
+		t.Fatalf("expected VarDecl x, got %+v", prog.Body[3])
+	}
+
+	// Stmt 4 is StructDef Point
+	sd, ok := prog.Body[4].(*ast.StructDef)
+	if !ok || sd.Name != "Point" || len(sd.Fields) != 2 {
+		t.Fatalf("expected StructDef Point with 2 fields, got %+v", prog.Body[4])
+	}
+}
+
+

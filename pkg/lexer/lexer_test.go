@@ -81,3 +81,47 @@ func TestLexerArrowToken(t *testing.T) {
 		}
 	}
 }
+
+func TestLexerSemicolon(t *testing.T) {
+	input := `a = 1; b = 2;`
+	l := NewLexer(input)
+	expected := []TokenType{
+		TokenIdent, TokenAssign, TokenInt, TokenSemicolon,
+		TokenIdent, TokenAssign, TokenInt, TokenSemicolon,
+		TokenEOF,
+	}
+	for _, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp {
+			t.Fatalf("expected token %v, got %v (%s)", exp, tok.Type, tok.Literal)
+		}
+	}
+}
+
+func TestLexerLineContinuation(t *testing.T) {
+	input := "x = 10 + \\\n    20\n"
+	l := NewLexer(input)
+	expected := []TokenType{
+		TokenIdent, TokenAssign, TokenInt, TokenPlus, TokenInt, TokenEOF,
+	}
+	for _, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp {
+			t.Fatalf("expected token %v, got %v (%s)", exp, tok.Type, tok.Literal)
+		}
+	}
+}
+
+func TestLexerLineContinuationError(t *testing.T) {
+	// '\' not followed by newline is an error
+	input := "x = 10 \\ 20"
+	l := NewLexer(input)
+	_ = l.NextToken() // x
+	_ = l.NextToken() // =
+	_ = l.NextToken() // 10
+	tok := l.NextToken() // should be error
+	if tok.Type != TokenError {
+		t.Fatalf("expected TokenError for invalid line continuation, got %v (%s)", tok.Type, tok.Literal)
+	}
+}
+

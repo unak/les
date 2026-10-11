@@ -187,6 +187,25 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 
+### 6. Statement Separator (`;`) & Line Continuation (`\`)
+- **Statement Separator (`;`)**:
+  Allows writing multiple statements on the same line:
+  ```python
+  x = 10; y = 20; print x + y
+  ```
+  Trailing semicolons (e.g. `x = 10;`), multiple consecutive semicolons, and semicolons inside blocks or struct declarations are fully supported.
+- **Line Continuation (`\`)**:
+  Allows a statement to span multiple physical lines. The backslash `\` must be followed immediately by a newline:
+  ```python
+  total = 10 + \
+          20 + \
+          30
+
+  def add(a: Int, \
+          b: Int): Int:
+      a + b
+  ```
+
 #### Operators and Precedence
 Listed from highest to lowest precedence:
 
