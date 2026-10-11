@@ -3,6 +3,24 @@
 ## Overview
 Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated scripting language implemented in Go.
 
+## Built-in Types
+
+| Type | Syntax / Examples | Description |
+|---|---|---|
+| `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
+| `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
+| `String` | `"hello"`, `'world'` | UTF-8 encoded string. |
+| `Bool` | `True`, `False` | Boolean value. |
+| `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. |
+| `Dict` | `{"a": 1, "b": 2}`, `{}` | Hash table mapping string keys to lazily evaluated values. Indexed by key `d["a"]`. |
+
+Type annotations are optional (full HM-style type inference):
+```python
+x: Int = 10
+p: (Int, String) = (1, "ok")
+d: Dict[String, Int] = {"count": 42}
+```
+
 ## Core Language Semantics
 
 ### 1. Function Application and Tuple Semantics
