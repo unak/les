@@ -32,6 +32,7 @@ const (
 	TokenIs
 	TokenMatch
 	TokenCase
+	TokenStruct
 
 	// Punctuation
 	TokenAssign    // =

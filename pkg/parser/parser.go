@@ -24,6 +24,7 @@ const (
 	PREC_UNARY        // - !
 	PREC_CALL         // f()
 	PREC_INDEX        // []
+	PREC_DOT          // .
 )
 
 type Parser struct {
@@ -112,6 +113,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseImportStmt()
 	case lexer.TokenDef:
 		return p.parseFuncDef()
+	case lexer.TokenStruct:
+		return p.parseStructDef()
 	case lexer.TokenIf:
 		return p.parseIfStmt()
 	case lexer.TokenReturn:
@@ -182,6 +185,90 @@ func (p *Parser) parseModuleDecl() *ast.ModuleDecl {
 		p.nextToken()
 	}
 	return &ast.ModuleDecl{Name: name}
+}
+
+func (p *Parser) parseStructDef() *ast.StructDef {
+	p.nextToken() // consume 'struct'
+	if !p.curTokenIs(lexer.TokenIdent) {
+		p.errors = append(p.errors, "expected struct name after struct")
+		return nil
+	}
+	name := p.curToken.Literal
+
+	if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // advance to ':'
+	} else {
+		p.errors = append(p.errors, "expected ':' after struct name")
+		return nil
+	}
+
+	p.nextToken() // consume ':'
+	p.skipNewlines()
+
+	if !p.curTokenIs(lexer.TokenIndent) {
+		p.errors = append(p.errors, fmt.Sprintf("expected indent after struct declaration at line %d", p.curToken.Line))
+		return nil
+	}
+	p.nextToken() // consume TokenIndent
+
+	var fields []ast.StructField
+	var methods []*ast.FuncDef
+
+	p.skipNewlines()
+	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+		if p.curTokenIs(lexer.TokenDef) {
+			m := p.parseFuncDef()
+			if m != nil {
+				methods = append(methods, m)
+			}
+		} else if p.curTokenIs(lexer.TokenIdent) {
+			ident := p.curToken.Literal
+			if p.peekTokenIs(lexer.TokenColon) {
+				// field with type: x: Int [= expr]
+				p.nextToken() // advance to ':'
+				p.nextToken() // consume ':', advance to type start
+				typeAnnot := p.parseTypeAnnotString()
+				var defaultVal ast.Expr
+				if p.curTokenIs(lexer.TokenAssign) {
+					p.nextToken() // consume '='
+					defaultVal = p.parseExpr(PREC_LOWEST)
+				} else if p.peekTokenIs(lexer.TokenAssign) {
+					p.nextToken() // advance to '='
+					p.nextToken() // consume '='
+					defaultVal = p.parseExpr(PREC_LOWEST)
+				}
+				fields = append(fields, ast.StructField{
+					Name:         ident,
+					TypeAnnot:    typeAnnot,
+					DefaultValue: defaultVal,
+					IsEmbedded:   false,
+				})
+				p.consumeStmtEnd()
+			} else {
+				// Embedded struct type: e.g. Person
+				fields = append(fields, ast.StructField{
+					Name:       ident,
+					TypeAnnot:  ident,
+					IsEmbedded: true,
+				})
+				p.nextToken() // consume ident
+				p.consumeStmtEnd()
+			}
+		} else {
+			p.nextToken()
+		}
+		p.skipNewlines()
+	}
+
+	if p.curTokenIs(lexer.TokenDedent) {
+		p.nextToken()
+	}
+
+	return &ast.StructDef{
+		Name:    name,
+		Fields:  fields,
+		Methods: methods,
+	}
 }
 
 func (p *Parser) parseFuncDef() *ast.FuncDef {
@@ -260,7 +347,7 @@ func (p *Parser) parseTypeAnnotString() string {
 	bracketDepth := 0
 	for {
 		if parenDepth == 0 && bracketDepth == 0 {
-			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) {
+			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) {
 				break
 			}
 		}
@@ -275,7 +362,7 @@ func (p *Parser) parseTypeAnnotString() string {
 		}
 		parts = append(parts, p.curToken.Literal)
 		if parenDepth == 0 && bracketDepth == 0 {
-			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) {
+			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) {
 				break
 			}
 			if p.peekTokenIs(lexer.TokenPipe) {
@@ -947,6 +1034,8 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_CALL
 	case lexer.TokenLBracket:
 		return PREC_INDEX
+	case lexer.TokenDot:
+		return PREC_DOT
 	default:
 		return PREC_LOWEST
 	}
@@ -974,6 +1063,8 @@ func (p *Parser) curPrecedence() int {
 		return PREC_CALL
 	case lexer.TokenLBracket:
 		return PREC_INDEX
+	case lexer.TokenDot:
+		return PREC_DOT
 	default:
 		return PREC_LOWEST
 	}
@@ -981,6 +1072,17 @@ func (p *Parser) curPrecedence() int {
 
 func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	switch p.curToken.Type {
+	case lexer.TokenDot:
+		p.nextToken() // consume '.'
+		if !p.curTokenIs(lexer.TokenIdent) {
+			p.errors = append(p.errors, fmt.Sprintf("expected identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+			return nil
+		}
+		member := p.curToken.Literal
+		return &ast.MemberAccessExpr{
+			Target: left,
+			Member: member,
+		}
 	case lexer.TokenQuestion:
 		// cond ? then : else
 		p.nextToken()
@@ -1068,6 +1170,20 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	}
 }
 
+func (p *Parser) parseCallArgumentItem() ast.Expr {
+	if p.curTokenIs(lexer.TokenIdent) && p.peekTokenIs(lexer.TokenColon) {
+		name := p.curToken.Literal
+		p.nextToken() // consume ident
+		p.nextToken() // consume ':'
+		val := p.parseExpr(PREC_LOWEST)
+		return &ast.NamedArgExpr{
+			Name:  name,
+			Value: val,
+		}
+	}
+	return p.parseExpr(PREC_LOWEST)
+}
+
 func (p *Parser) parseCallArguments() []ast.Expr {
 	args := make([]ast.Expr, 0)
 	if p.peekTokenIs(lexer.TokenRParen) {
@@ -1076,12 +1192,12 @@ func (p *Parser) parseCallArguments() []ast.Expr {
 	}
 
 	p.nextToken()
-	args = append(args, p.parseExpr(PREC_LOWEST))
+	args = append(args, p.parseCallArgumentItem())
 
 	for p.peekTokenIs(lexer.TokenComma) {
 		p.nextToken() // consume ','
 		p.nextToken()
-		args = append(args, p.parseExpr(PREC_LOWEST))
+		args = append(args, p.parseCallArgumentItem())
 	}
 
 	p.expectPeek(lexer.TokenRParen)

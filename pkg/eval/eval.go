@@ -159,6 +159,10 @@ func typeNameWithDepth(val Value, depth int) string {
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *DictValue:
 		return "Dict"
+	case *StructInstance:
+		return v.Def.Name
+	case *StructDefValue:
+		return "Type"
 	case *Closure, *BuiltinFunc:
 		return "Function"
 	default:
@@ -241,6 +245,35 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			IsFuncDef: true,
 		}
 		env.Set(s.Name, closure)
+		return nil, nil
+
+	case *ast.StructDef:
+		sDef := &StructDefValue{
+			Name:          s.Name,
+			FieldOrder:    make([]string, 0),
+			FieldDefaults: make(map[string]ast.Expr),
+			EmbeddedNames: make([]string, 0),
+			Methods:       make(map[string]*ast.FuncDef),
+			Env:           env,
+		}
+
+		for _, f := range s.Fields {
+			if f.IsEmbedded {
+				sDef.EmbeddedNames = append(sDef.EmbeddedNames, f.Name)
+				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
+			} else {
+				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
+				if f.DefaultValue != nil {
+					sDef.FieldDefaults[f.Name] = f.DefaultValue
+				}
+			}
+		}
+
+		for _, m := range s.Methods {
+			sDef.Methods[m.Name] = m
+		}
+
+		env.Set(s.Name, sDef)
 		return nil, nil
 
 	case *ast.ReturnStmt:
@@ -615,9 +648,22 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		case *Closure:
 			return env.invokeClosure(fn, argValues)
 
+		case *StructDefValue:
+			return env.instantiateStruct(fn, e.Args)
+
 		default:
 			return nil, fmt.Errorf("cannot call non-function value: %v", calleeVal)
 		}
+
+	case *ast.MemberAccessExpr:
+		targetVal := Force(NewThunk(e.Target, env))
+		if si, ok := targetVal.(*StructInstance); ok {
+			return si.LookupMember(e.Member)
+		}
+		return nil, fmt.Errorf("cannot access member '%s' on non-struct value: %v", e.Member, targetVal)
+
+	case *ast.NamedArgExpr:
+		return env.evalExpr(e.Value)
 
 	case *ast.ModuleAccessExpr:
 		mod, ok := env.GetModule(e.Module)
@@ -692,6 +738,97 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	default:
 		return nil, fmt.Errorf("unknown expression: %T", expr)
 	}
+}
+
+func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr) (*StructInstance, error) {
+	fields := make(map[string]Value)
+	embedded := make(map[string]*StructInstance)
+
+	var baseInstance *StructInstance
+	argStartIdx := 0
+
+	// Check if 1st argument is a copy-update base instance (e.g. Person(p, x: 30))
+	if len(args) > 0 {
+		if _, isNamed := args[0].(*ast.NamedArgExpr); !isNamed {
+			val := Force(NewThunk(args[0], env))
+			if si, ok := val.(*StructInstance); ok && si.Def.Name == sDef.Name {
+				baseInstance = si
+				argStartIdx = 1
+			}
+		}
+	}
+
+	if baseInstance != nil {
+		for k, v := range baseInstance.Fields {
+			fields[k] = v
+		}
+		for k, v := range baseInstance.Embedded {
+			embedded[k] = v
+		}
+	}
+
+	// Positional index for non-named arguments
+	posIdx := 0
+
+	for i := argStartIdx; i < len(args); i++ {
+		arg := args[i]
+		if named, ok := arg.(*ast.NamedArgExpr); ok {
+			fields[named.Name] = NewThunk(named.Value, env)
+		} else {
+			// Positional argument
+			if posIdx < len(sDef.FieldOrder) {
+				fName := sDef.FieldOrder[posIdx]
+				fields[fName] = NewThunk(arg, env)
+				posIdx++
+			}
+		}
+	}
+
+	isEmbeddedField := make(map[string]bool)
+	for _, embName := range sDef.EmbeddedNames {
+		isEmbeddedField[embName] = true
+	}
+
+	// For any fields not yet populated:
+	for _, fName := range sDef.FieldOrder {
+		if isEmbeddedField[fName] {
+			continue
+		}
+		if _, ok := fields[fName]; !ok {
+			if defExpr, hasDef := sDef.FieldDefaults[fName]; hasDef {
+				fields[fName] = NewThunk(defExpr, sDef.Env)
+			} else {
+				fields[fName] = &TupleValue{Elements: []Value{}}
+			}
+		}
+	}
+
+	// Populate embedded struct instances
+	for _, embName := range sDef.EmbeddedNames {
+		if fVal, ok := fields[embName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				embedded[embName] = si
+			}
+		} else {
+			// Auto-instantiate embedded struct if defined in environment
+			if embDefVal, ok := env.Get(embName); ok {
+				if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
+					subInst, err := env.instantiateStruct(embDef, []ast.Expr{})
+					if err == nil {
+						embedded[embName] = subInst
+						fields[embName] = subInst
+					}
+				}
+			}
+		}
+	}
+
+	return &StructInstance{
+		Def:      sDef,
+		Fields:   fields,
+		Embedded: embedded,
+	}, nil
 }
 
 func evalBinary(op string, left, right Value) (Value, error) {
@@ -802,8 +939,19 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 		_, ok := val.(*DictValue)
 		return ok
 	default:
-		// Unknown or custom type
-		return true
+		// Check struct type or embedded struct type
+		if si, ok := val.(*StructInstance); ok {
+			if si.Def.Name == typeAnnot {
+				return true
+			}
+			for _, emb := range si.Embedded {
+				if checkValueMatchesType(emb, typeAnnot) {
+					return true
+				}
+			}
+			return false
+		}
+		return false
 	}
 }
 

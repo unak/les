@@ -841,3 +841,139 @@ f()
 		})
 	}
 }
+
+func TestEvalStruct(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		wantVal string
+	}{
+		{
+			name: "basic struct with named args and default value",
+			code: `
+struct Point:
+    x: Int
+    y: Int = 100
+
+p = Point(x: 10)
+(p.x, p.y)
+`,
+			wantVal: "(10, 100)",
+		},
+		{
+			name: "struct with positional arguments",
+			code: `
+struct Point:
+    x: Int
+    y: Int
+
+p = Point(10, 20)
+(p.x, p.y)
+`,
+			wantVal: "(10, 20)",
+		},
+		{
+			name: "struct method with implicit receiver and direct field access",
+			code: `
+struct Counter:
+    count: Int
+
+    def Inc(delta):
+        count + delta
+
+    def GetSelf():
+        self.count
+
+c = Counter(count: 42)
+(c.Inc(8), c.GetSelf())
+`,
+			wantVal: "(50, 42)",
+		},
+		{
+			name: "functional copy-on-write update",
+			code: `
+struct Point:
+    x: Int
+    y: Int
+
+p1 = Point(1, 2)
+p2 = Point(p1, x: 10)
+(p1.x, p1.y, p2.x, p2.y)
+`,
+			wantVal: "(1, 2, 10, 2)",
+		},
+		{
+			name: "struct embedding with promoted fields and methods",
+			code: `
+struct Person:
+    name: String
+    age: Int
+
+    def Greet():
+        "Hello " + name
+
+struct Employee:
+    Person
+    role: String
+
+    def Details():
+        name + ": " + role
+
+e = Employee(Person(name: "Alice", age: 30), role: "Engineer")
+(e.name, e.age, e.role, e.Greet(), e.Details())
+`,
+			wantVal: `(Alice, 30, Engineer, Hello Alice, Alice: Engineer)`,
+		},
+		{
+			name: "struct auto-instantiates default embedded struct",
+			code: `
+struct Tag:
+    label: String = "default"
+
+struct Item:
+    Tag
+    value: Int
+
+it = Item(value: 99)
+(it.label, it.value)
+`,
+			wantVal: "(default, 99)",
+		},
+		{
+			name: "struct type test with is operator and subtyping via embedding",
+			code: `
+struct Animal:
+    species: String
+
+struct Dog:
+    Animal
+    bark: String
+
+a = Animal(species: "Cat")
+d = Dog(Animal(species: "Canine"), bark: "Woof")
+(a is Animal, d is Dog, d is Animal, a is Dog)
+`,
+			wantVal: "(True, True, True, False)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.code)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+
+			ev := NewEvaluator()
+			val, err := ev.EvalProgram(prog)
+			if err != nil {
+				t.Fatalf("eval error: %v", err)
+			}
+			if val.String() != tt.wantVal {
+				t.Fatalf("expected %q, got %q", tt.wantVal, val.String())
+			}
+		})
+	}
+}

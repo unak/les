@@ -59,6 +59,25 @@ type ModuleAccessExpr struct {
 func (m *ModuleAccessExpr) node() {}
 func (m *ModuleAccessExpr) expr() {}
 
+// MemberAccessExpr represents dot access on an expression: target.member.
+type MemberAccessExpr struct {
+	Target Expr
+	Member string
+}
+
+func (m *MemberAccessExpr) node() {}
+func (m *MemberAccessExpr) expr() {}
+
+// NamedArgExpr represents name: expr keyword argument in call / struct constructor.
+type NamedArgExpr struct {
+	Name  string
+	Value Expr
+}
+
+func (n *NamedArgExpr) node() {}
+func (n *NamedArgExpr) expr() {}
+
+
 // IntLit represents integer literal.
 type IntLit struct {
 	Value int64
@@ -289,3 +308,22 @@ type IfStmt struct {
 
 func (i *IfStmt) node() {}
 func (i *IfStmt) stmt() {}
+
+// StructField represents a field or embedded struct in a struct definition.
+type StructField struct {
+	Name         string
+	TypeAnnot    string
+	DefaultValue Expr
+	IsEmbedded   bool
+}
+
+// StructDef represents struct definition block: struct Name: ...
+type StructDef struct {
+	Name    string
+	Fields  []StructField
+	Methods []*FuncDef
+}
+
+func (s *StructDef) node() {}
+func (s *StructDef) stmt() {}
+

@@ -354,3 +354,103 @@ func TestParseReturnAndBreak(t *testing.T) {
 		t.Fatalf("expected 2 statements, got %d", len(progRet.Body))
 	}
 }
+
+func TestParseStructDefAndMemberAccess(t *testing.T) {
+	code := `
+struct Person:
+    name: String
+    age: Int = 0
+
+    def Greet():
+        "Hello"
+
+struct Employee:
+    Person
+    salary: Int
+
+p = Person(name: "Alice", age: 30)
+p2 = Person(p, age: 31)
+print p.name
+`
+	l := lexer.NewLexer(code)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	if len(prog.Body) != 5 {
+		t.Fatalf("expected 5 statements, got %d", len(prog.Body))
+	}
+
+	// 1: Person
+	sd1, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[0])
+	}
+	if sd1.Name != "Person" || len(sd1.Fields) != 2 || len(sd1.Methods) != 1 {
+		t.Fatalf("unexpected StructDef Person: %+v", sd1)
+	}
+	if sd1.Fields[0].Name != "name" || sd1.Fields[0].TypeAnnot != "String" {
+		t.Fatalf("unexpected field 0: %+v", sd1.Fields[0])
+	}
+	if sd1.Fields[1].Name != "age" || sd1.Fields[1].DefaultValue == nil {
+		t.Fatalf("unexpected field 1: %+v", sd1.Fields[1])
+	}
+
+	// 2: Employee (embedded Person)
+	sd2, ok := prog.Body[1].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[1])
+	}
+	if sd2.Name != "Employee" || len(sd2.Fields) != 2 {
+		t.Fatalf("unexpected StructDef Employee: %+v", sd2)
+	}
+	if !sd2.Fields[0].IsEmbedded || sd2.Fields[0].Name != "Person" {
+		t.Fatalf("expected embedded Person field, got %+v", sd2.Fields[0])
+	}
+
+	// 3: Named args call
+	vd1, ok := prog.Body[2].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[2])
+	}
+	call1, ok := vd1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", vd1.Value)
+	}
+	if len(call1.Args) != 2 {
+		t.Fatalf("expected 2 args, got %d", len(call1.Args))
+	}
+	named1, ok := call1.Args[0].(*ast.NamedArgExpr)
+	if !ok || named1.Name != "name" {
+		t.Fatalf("expected named arg 'name', got %+v", call1.Args[0])
+	}
+
+	// 4: Copy update
+	vd2, ok := prog.Body[3].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[3])
+	}
+	call2, ok := vd2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", vd2.Value)
+	}
+	if len(call2.Args) != 2 {
+		t.Fatalf("expected 2 args for copy update, got %d", len(call2.Args))
+	}
+
+	// 5: Member access p.name
+	es, ok := prog.Body[4].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected ExprStmt, got %T", prog.Body[4])
+	}
+	call3, ok := es.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for print, got %T", es.Value)
+	}
+	ma, ok := call3.Args[0].(*ast.MemberAccessExpr)
+	if !ok || ma.Member != "name" {
+		t.Fatalf("expected MemberAccessExpr 'name', got %+v", call3.Args[0])
+	}
+}

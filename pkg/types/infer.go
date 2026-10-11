@@ -99,7 +99,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		targetType := valType
 		if s.TypeAnnot != "" {
-			expected := parseTypeAnnot(s.TypeAnnot)
+			expected := inf.parseTypeAnnot(s.TypeAnnot)
 			if !IsAssignableTo(valType, expected) {
 				return fmt.Errorf("type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
 			}
@@ -131,7 +131,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		for i, p := range s.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
-				elemType = parseTypeAnnot(p.TypeAnnot)
+				elemType = inf.parseTypeAnnot(p.TypeAnnot)
 			}
 			if p.IsVariadic {
 				emptyTuple := &TupleType{Elems: []Type{}}
@@ -185,6 +185,75 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			_, err := inf.inferExpr(s.Value)
 			return err
 		}
+		return nil
+
+	case *ast.StructDef:
+		st := &StructType{
+			Name:       s.Name,
+			Fields:     make(map[string]Type),
+			FieldOrder: make([]string, 0),
+			Embedded:   make([]*StructType, 0),
+			Methods:    make(map[string]*FuncType),
+		}
+
+		// Declare struct type in current scope so methods/self can reference it
+		if err := inf.scope.Declare(s.Name, st); err != nil {
+			return err
+		}
+
+		// Process fields
+		for _, f := range s.Fields {
+			if f.IsEmbedded {
+				embType, ok := inf.scope.Lookup(f.TypeAnnot)
+				if !ok {
+					return fmt.Errorf("undefined embedded struct '%s' in struct '%s'", f.TypeAnnot, s.Name)
+				}
+				embStruct, ok := embType.(*StructType)
+				if !ok {
+					return fmt.Errorf("cannot embed non-struct type '%s' in struct '%s'", f.TypeAnnot, s.Name)
+				}
+				st.Embedded = append(st.Embedded, embStruct)
+				st.Fields[f.Name] = embStruct
+				st.FieldOrder = append(st.FieldOrder, f.Name)
+			} else {
+				fieldType := inf.parseTypeAnnot(f.TypeAnnot)
+				st.Fields[f.Name] = fieldType
+				st.FieldOrder = append(st.FieldOrder, f.Name)
+			}
+		}
+
+		// Process methods
+		for _, m := range s.Methods {
+			methodScope := NewScope(inf.scope)
+			_ = methodScope.Declare("self", st)
+			for fName, fType := range st.Fields {
+				_ = methodScope.Declare(fName, fType)
+			}
+
+			paramTypes := make([]Type, 0, len(m.Params))
+			for _, p := range m.Params {
+				if p.Name == "self" {
+					continue
+				}
+				pType := inf.parseTypeAnnot(p.TypeAnnot)
+				paramTypes = append(paramTypes, pType)
+				_ = methodScope.Declare(p.Name, pType)
+			}
+
+			prevScope := inf.scope
+			inf.scope = methodScope
+			for _, bStmt := range m.Body {
+				_ = inf.inferStmt(bStmt)
+			}
+			inf.scope = prevScope
+
+			mType := &FuncType{
+				Arg: &TupleType{Elems: paramTypes},
+				Ret: TypeAny,
+			}
+			st.Methods[m.Name] = mType
+		}
+
 		return nil
 
 	case *ast.ImportStmt:
@@ -281,10 +350,27 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		if st, ok := calleeT.(*StructType); ok {
+			return st, nil
+		}
 		if fnT, ok := calleeT.(*FuncType); ok {
 			return fnT.Ret, nil
 		}
 		return TypeAny, nil
+	case *ast.MemberAccessExpr:
+		targetT, err := inf.inferExpr(e.Target)
+		if err != nil {
+			return nil, err
+		}
+		if st, ok := targetT.(*StructType); ok {
+			return st.LookupMember(e.Member)
+		}
+		if targetT == TypeAny {
+			return TypeAny, nil
+		}
+		return nil, fmt.Errorf("cannot access member '%s' on non-struct type %s", e.Member, targetT)
+	case *ast.NamedArgExpr:
+		return inf.inferExpr(e.Value)
 	case *ast.IndexExpr:
 		targetT, err := inf.inferExpr(e.Target)
 		if err != nil {
@@ -362,7 +448,7 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		for i, p := range e.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
-				elemType = parseTypeAnnot(p.TypeAnnot)
+				elemType = inf.parseTypeAnnot(p.TypeAnnot)
 			}
 			if p.IsVariadic {
 				emptyTuple := &TupleType{Elems: []Type{}}
@@ -422,6 +508,10 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 }
 
 func parseTypeAnnot(annot string) Type {
+	return (*Inferencer)(nil).parseTypeAnnot(annot)
+}
+
+func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 	annot = strings.TrimSpace(annot)
 	if annot == "" {
 		return TypeAny
@@ -453,7 +543,7 @@ func parseTypeAnnot(annot string) Type {
 		parts = append(parts, string(runes[start:]))
 		var memberTypes []Type
 		for _, p := range parts {
-			memberTypes = append(memberTypes, parseTypeAnnot(p))
+			memberTypes = append(memberTypes, inf.parseTypeAnnot(p))
 		}
 		return NewUnionType(memberTypes...)
 	}
@@ -490,12 +580,18 @@ func parseTypeAnnot(annot string) Type {
 				break
 			}
 			if part != "" {
-				elems = append(elems, parseTypeAnnot(part))
+				elems = append(elems, inf.parseTypeAnnot(part))
 			}
 		}
 		return &TupleType{
 			Elems:      elems,
 			IsVariadic: isVariadic,
+		}
+	}
+
+	if inf != nil && inf.scope != nil {
+		if t, ok := inf.scope.Lookup(annot); ok {
+			return t
 		}
 	}
 

@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Type represents a Les static type.
 type Type interface {
@@ -229,3 +232,86 @@ func IsAssignableTo(src, target Type) bool {
 	}
 	return false
 }
+
+// StructFieldInfo holds type info of a struct field.
+type StructFieldInfo struct {
+	Name       string
+	Type       Type
+	IsEmbedded bool
+}
+
+// StructType represents user-defined struct type with fields, embedded structs, and methods.
+type StructType struct {
+	Name       string
+	Fields     map[string]Type
+	FieldOrder []string
+	Embedded   []*StructType
+	Methods    map[string]*FuncType
+}
+
+func (s *StructType) String() string {
+	return s.Name
+}
+
+func (s *StructType) Equals(other Type) bool {
+	os, ok := other.(*StructType)
+	return ok && s.Name == os.Name
+}
+
+type memberCandidate struct {
+	typ    Type
+	origin string
+}
+
+// LookupMember searches for field or method on StructType with Go-style promotion rules.
+// Returns member type, or error if not found or ambiguous.
+func (s *StructType) LookupMember(name string) (Type, error) {
+	// 1. Direct fields & methods on self (depth 0)
+	if ft, ok := s.Fields[name]; ok {
+		return ft, nil
+	}
+	if mt, ok := s.Methods[name]; ok {
+		return mt, nil
+	}
+
+	// 2. BFS on embedded structs depth by depth
+	currentLevel := s.Embedded
+	visited := make(map[string]bool)
+	visited[s.Name] = true
+
+	for len(currentLevel) > 0 {
+		var candidates []memberCandidate
+		var nextLevel []*StructType
+
+		for _, emb := range currentLevel {
+			if visited[emb.Name] {
+				continue
+			}
+			visited[emb.Name] = true
+
+			if ft, ok := emb.Fields[name]; ok {
+				candidates = append(candidates, memberCandidate{typ: ft, origin: emb.Name})
+			}
+			if mt, ok := emb.Methods[name]; ok {
+				candidates = append(candidates, memberCandidate{typ: mt, origin: emb.Name})
+			}
+			nextLevel = append(nextLevel, emb.Embedded...)
+		}
+
+		if len(candidates) == 1 {
+			return candidates[0].typ, nil
+		}
+		if len(candidates) > 1 {
+			origins := make([]string, len(candidates))
+			for i, c := range candidates {
+				origins[i] = c.origin
+			}
+			return nil, fmt.Errorf("ambiguous selector '%s' on type %s (candidates in %s)", name, s.Name, strings.Join(origins, ", "))
+		}
+
+		currentLevel = nextLevel
+	}
+
+	return nil, fmt.Errorf("type %s has no field or method '%s'", s.Name, name)
+}
+

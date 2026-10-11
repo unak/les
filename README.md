@@ -320,3 +320,61 @@ Terminates the program execution immediately with the given exit status code.
   - Accepts 0 or 1 argument (`Int` or `Bool`).
   - Without arguments or bare `exit`: exits with code `0`.
   - With `True`: code `0`; with `False`: code `1`.
+
+### 11. Structs (`struct`)
+
+Les provides immutable records with methods, Go-style struct embedding, and static ambiguous selector detection.
+
+#### Definition
+- Defined using `struct <Name>:` followed by an indented block.
+- Closed class: Methods must be defined inside the struct body.
+- Fields can have optional type annotations and default values.
+- Identifiers starting with uppercase letters (`[A-Z]`) are public; lowercase (`[a-z_]`) are private.
+- Methods have an implicit receiver `self` (can be omitted in method parameter list, fields directly accessible in scope; or specified explicitly).
+
+```python
+struct Point:
+    x: Int = 0
+    y: Int = 0
+
+    def dist_sq():
+        x * x + y * y
+
+    def Add(self, other: Point):
+        Point(x: self.x + other.x, y: self.y + other.y)
+```
+
+#### Instantiation & Functional Updates
+- **Positional Arguments**: `p = Point(10, 20)`
+- **Named Arguments**: `p = Point(y: 20, x: 10)`
+- **Defaults**: Unspecified fields use default expressions or `()`.
+- **Immutable Copy-on-Write Update**: Pass an existing instance as the first positional argument followed by updated named arguments:
+  ```python
+  p2 = Point(p, x: 30)  # y is preserved from p
+  ```
+
+#### Dot Access
+- Member access: `p.x`, `p.dist_sq()`
+- Struct fields are lazily evaluated thunks.
+
+#### Go-style Struct Embedding & Promotion
+- Structs can embed other structs anonymously by listing their type name in the struct body.
+- Embedded fields and methods are automatically promoted to the outer struct.
+- An embedded type also participates in subtyping: an outer instance satisfies `is Inner`.
+
+```python
+struct Reader:
+    def read(): "read data"
+
+struct ReadCloser:
+    Reader
+    def close(): "closed"
+
+rc = ReadCloser()
+print rc.read()         # "read data" (promoted method)
+print rc is Reader      # True
+```
+
+#### Static Ambiguous Selector Detection
+When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
+
