@@ -39,3 +39,24 @@ def apply(fn: (Int) -> Int, val: Int): Int:
 
 result = apply(|n|: n * n, 9)
 puts "apply square of 9 =", result
+
+# 5. Ruby-like trailing do block passing (bound to trailing function parameter)
+def apply_block(val: Int, fn: (Int) -> Int): Int:
+    fn(val)
+
+block_result = apply_block(10) do |x|:
+    y = x * 3
+    y + 5
+puts "apply_block with do block =", block_result
+
+# 6. Trailing block iterating a tuple
+def each_int(items, fn: (Int) -> ()): ():
+    (head, ...tail) = items
+    fn(head)
+    if len(tail) > 0:
+        each_int(tail, fn)
+
+puts "each_int do block:"
+each_int((1, 2, 3)) do |x|:
+    print "  item: ", x, "\n"
+
