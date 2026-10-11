@@ -99,6 +99,9 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		// Otherwise, statements can remain unforced or evaluated.
 		return env.evalExpr(s.Value)
 
+	case *ast.ModuleDecl:
+		return nil, nil
+
 	default:
 		return nil, fmt.Errorf("unknown statement: %T", stmt)
 	}

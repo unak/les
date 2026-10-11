@@ -405,6 +405,8 @@ func (l *Lexer) readIdentifier() Token {
 		tokType = TokenReturn
 	case "do":
 		tokType = TokenDo
+	case "module":
+		tokType = TokenModule
 	case "True", "False":
 		tokType = TokenBool
 	}

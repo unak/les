@@ -95,3 +95,21 @@ func TestParseBlockArgument(t *testing.T) {
 		t.Fatalf("expected block param x, got %+v", call.Block.Params)
 	}
 }
+
+func TestParseModuleDeclaration(t *testing.T) {
+	input := `module math
+
+def Add(a, b):
+    a + b`
+
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if prog.ModuleName != "math" {
+		t.Fatalf("expected moduleName 'math', got %q", prog.ModuleName)
+	}
+}

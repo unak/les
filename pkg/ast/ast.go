@@ -19,10 +19,19 @@ type Stmt interface {
 
 // Program is the root of the AST.
 type Program struct {
-	Body []Stmt
+	ModuleName string
+	Body       []Stmt
 }
 
 func (p *Program) node() {}
+
+// ModuleDecl represents explicit module declaration at file top: module <name>.
+type ModuleDecl struct {
+	Name string
+}
+
+func (m *ModuleDecl) node() {}
+func (m *ModuleDecl) stmt() {}
 
 // Identifier represents variable or function name.
 type Identifier struct {

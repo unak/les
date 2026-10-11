@@ -72,6 +72,16 @@ func (p *Parser) ParseProgram() *ast.Program {
 	prog := &ast.Program{Body: make([]ast.Stmt, 0)}
 	p.skipNewlines()
 
+	// Check optional file-level module declaration
+	if p.curTokenIs(lexer.TokenModule) {
+		modStmt := p.parseModuleDecl()
+		if modStmt != nil {
+			prog.ModuleName = modStmt.Name
+			prog.Body = append(prog.Body, modStmt)
+		}
+		p.skipNewlines()
+	}
+
 	for !p.curTokenIs(lexer.TokenEOF) {
 		stmt := p.parseStmt()
 		if stmt != nil {
@@ -90,6 +100,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 	}
 
 	switch p.curToken.Type {
+	case lexer.TokenModule:
+		return p.parseModuleDecl()
 	case lexer.TokenDef:
 		return p.parseFuncDef()
 	case lexer.TokenIf:
@@ -109,6 +121,22 @@ func (p *Parser) parseStmt() ast.Stmt {
 	default:
 		return p.parseExprStmt()
 	}
+}
+
+func (p *Parser) parseModuleDecl() *ast.ModuleDecl {
+	p.nextToken() // consume 'module'
+	if !p.curTokenIs(lexer.TokenIdent) {
+		p.errors = append(p.errors, fmt.Sprintf("expected identifier after module, got %v (%s)", p.curToken.Type, p.curToken.Literal))
+		return nil
+	}
+	name := p.curToken.Literal
+	if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else {
+		p.nextToken()
+	}
+	return &ast.ModuleDecl{Name: name}
 }
 
 func (p *Parser) parseFuncDef() *ast.FuncDef {
