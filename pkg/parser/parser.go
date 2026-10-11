@@ -112,7 +112,16 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseIfStmt()
 	case lexer.TokenReturn:
 		return p.parseReturnStmt()
+	case lexer.TokenLParen:
+		if p.isUnpackParenDeclStart() {
+			return p.parseUnpackDeclWithParen()
+		}
+		return p.parseExprStmt()
 	case lexer.TokenIdent:
+		// Check for unpacked assignment without paren: h, ...t = expr
+		if p.peekTokenIs(lexer.TokenComma) && p.hasAssignOnCurrentLine() {
+			return p.parseUnpackDeclWithoutParen()
+		}
 		// Check for assignment: `x = val` or `x: Int = val`
 		if p.peekTokenIs(lexer.TokenAssign) {
 			return p.parseVarDecl("")
@@ -205,14 +214,22 @@ func (p *Parser) parseFuncParams() []ast.FuncParam {
 
 	p.nextToken()
 	for {
+		isVariadic := false
+		if p.curTokenIs(lexer.TokenStar) {
+			isVariadic = true
+			p.nextToken() // consume '*'
+		}
 		if !p.curTokenIs(lexer.TokenIdent) {
 			break
 		}
-		param := ast.FuncParam{Name: p.curToken.Literal}
+		param := ast.FuncParam{
+			Name:       p.curToken.Literal,
+			IsVariadic: isVariadic,
+		}
 		if p.peekTokenIs(lexer.TokenColon) {
 			p.nextToken() // consume ':'
-			p.nextToken() // consume type
-			param.TypeAnnot = p.curToken.Literal
+			p.nextToken() // advance to type annot start
+			param.TypeAnnot = p.parseTypeAnnotString()
 		}
 		params = append(params, param)
 
@@ -226,6 +243,36 @@ func (p *Parser) parseFuncParams() []ast.FuncParam {
 
 	p.expectPeek(lexer.TokenRParen)
 	return params
+}
+
+func (p *Parser) parseTypeAnnotString() string {
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	for {
+		if parenDepth == 0 && bracketDepth == 0 {
+			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) {
+				break
+			}
+		}
+		if p.curTokenIs(lexer.TokenLParen) {
+			parenDepth++
+		} else if p.curTokenIs(lexer.TokenRParen) {
+			parenDepth--
+		} else if p.curTokenIs(lexer.TokenLBracket) {
+			bracketDepth++
+		} else if p.curTokenIs(lexer.TokenRBracket) {
+			bracketDepth--
+		}
+		parts = append(parts, p.curToken.Literal)
+		if parenDepth == 0 && bracketDepth == 0 {
+			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) {
+				break
+			}
+		}
+		p.nextToken()
+	}
+	return strings.Join(parts, " ")
 }
 
 func (p *Parser) parseBlockBody() []ast.Stmt {
@@ -311,9 +358,15 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
 		if p.curTokenIs(lexer.TokenCase) {
 			p.nextToken() // consume 'case'
-			// pattern can be ident, or '_'
-			pattern := p.curToken.Literal
-			p.nextToken() // consume pattern
+			var pattern string
+			var tuplePat *ast.TuplePattern
+
+			if p.curTokenIs(lexer.TokenLParen) {
+				tuplePat, pattern = p.parseTuplePattern()
+			} else {
+				pattern = p.curToken.Literal
+				p.nextToken() // consume pattern
+			}
 
 			if p.curTokenIs(lexer.TokenColon) {
 				// curToken is ':'
@@ -324,8 +377,9 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			// Parse case body statements
 			body := p.parseBlockBody()
 			cases = append(cases, ast.MatchCase{
-				Pattern: pattern,
-				Body:    body,
+				Pattern:      pattern,
+				TuplePattern: tuplePat,
+				Body:         body,
 			})
 			p.skipNewlines()
 		} else {
@@ -340,6 +394,148 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 	return &ast.MatchExpr{
 		Target: target,
 		Cases:  cases,
+	}
+}
+
+func (p *Parser) parseTuplePattern() (*ast.TuplePattern, string) {
+	p.nextToken() // consume '('
+	var rawParts []string
+	rawParts = append(rawParts, "(")
+	var elems []string
+	var restName string
+
+	for !p.curTokenIs(lexer.TokenRParen) && !p.curTokenIs(lexer.TokenEOF) {
+		if p.curTokenIs(lexer.TokenDot) {
+			// check for ...
+			for p.curTokenIs(lexer.TokenDot) {
+				p.nextToken()
+			}
+			rawParts = append(rawParts, "...")
+			if p.curTokenIs(lexer.TokenIdent) {
+				restName = p.curToken.Literal
+				rawParts = append(rawParts, restName)
+				p.nextToken()
+			} else {
+				restName = "_"
+			}
+			if p.curTokenIs(lexer.TokenComma) {
+				p.nextToken()
+			}
+			break
+		}
+
+		if p.curTokenIs(lexer.TokenIdent) {
+			name := p.curToken.Literal
+			elems = append(elems, name)
+			rawParts = append(rawParts, name)
+			p.nextToken()
+		} else {
+			p.nextToken()
+		}
+
+		if p.curTokenIs(lexer.TokenComma) {
+			rawParts = append(rawParts, ",")
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	if p.curTokenIs(lexer.TokenRParen) {
+		rawParts = append(rawParts, ")")
+		p.nextToken() // consume ')'
+	}
+
+	return &ast.TuplePattern{
+		Elements: elems,
+		RestName: restName,
+	}, strings.Join(rawParts, "")
+}
+
+func (p *Parser) hasAssignOnCurrentLine() bool {
+	rest := p.l.PeekRestOfLine()
+	return strings.Contains(rest, "=")
+}
+
+func (p *Parser) isUnpackParenDeclStart() bool {
+	rest := p.l.PeekRestOfLine()
+	idxClose := strings.Index(rest, ")")
+	if idxClose == -1 {
+		return false
+	}
+	idxAssign := strings.Index(rest[idxClose:], "=")
+	return idxAssign != -1
+}
+
+func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {
+	tuplePat, _ := p.parseTuplePattern()
+	if p.peekTokenIs(lexer.TokenAssign) {
+		p.nextToken()
+	}
+	if p.curTokenIs(lexer.TokenAssign) {
+		p.nextToken() // consume '='
+	}
+	val := p.parseExpr(PREC_LOWEST)
+	p.consumeStmtEnd()
+	return &ast.UnpackDecl{
+		Pattern: tuplePat,
+		Value:   val,
+	}
+}
+
+func (p *Parser) parseUnpackDeclWithoutParen() *ast.UnpackDecl {
+	var elems []string
+	var restName string
+	for {
+		if p.curTokenIs(lexer.TokenDot) {
+			for p.curTokenIs(lexer.TokenDot) {
+				p.nextToken()
+			}
+			if p.curTokenIs(lexer.TokenIdent) {
+				restName = p.curToken.Literal
+				p.nextToken()
+			} else {
+				restName = "_"
+			}
+			if p.curTokenIs(lexer.TokenComma) {
+				p.nextToken()
+			}
+			break
+		}
+		if p.curTokenIs(lexer.TokenIdent) {
+			elems = append(elems, p.curToken.Literal)
+			p.nextToken()
+		} else {
+			break
+		}
+		if p.curTokenIs(lexer.TokenComma) {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+	if p.curTokenIs(lexer.TokenAssign) {
+		p.nextToken() // consume '='
+	}
+	val := p.parseExpr(PREC_LOWEST)
+	p.consumeStmtEnd()
+	return &ast.UnpackDecl{
+		Pattern: &ast.TuplePattern{
+			Elements: elems,
+			RestName: restName,
+		},
+		Value: val,
+	}
+}
+
+func (p *Parser) consumeStmtEnd() {
+	if p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	} else if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+		p.nextToken()
 	}
 }
 
@@ -418,6 +614,10 @@ func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	p.atStatementStart = true
 	expr := p.parseExpr(PREC_LOWEST)
 	p.atStatementStart = false
+	if _, isMatch := expr.(*ast.MatchExpr); isMatch {
+		p.skipNewlines()
+		return &ast.ExprStmt{Value: expr}
+	}
 	if p.curTokenIs(lexer.TokenNewline) {
 		p.nextToken()
 	} else if p.peekTokenIs(lexer.TokenNewline) {

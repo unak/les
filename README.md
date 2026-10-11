@@ -200,5 +200,45 @@ Outputs string representations of arguments separated by spaces, followed by a n
   - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
   - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
 
+### 10. Variadic Arguments & Tuple Unpacking
+
+#### Variadic Parameters (`*args`)
+- Function parameters can accept 0 or more arguments by prefixing with `*`:
+  ```python
+  def log(prefix: String, *args: Any):
+      print prefix, args
+  ```
+- **Type Representation**: A variadic parameter `*args: T` corresponds to the union type `() | (T, ...)`.
+
+#### Tuple Destructuring in Pattern Matching
+- Extract head and lazy tail stream elements via `(h, ...t)`:
+  ```python
+  def fib(a: Int, b: Int):
+      (a, fib(b, a + b))
+
+  stream = fib(0, 1)
+
+  match stream:
+      case (first, rest):
+          print "first:", first
+          match rest:
+              case (second, ...):
+                  print "second:", second
+  ```
+
+#### Unpack Assignment
+- Unpack fixed-length or stream tuples using either parenthesized or splat syntax:
+  ```python
+  # Cons-cell stream unpacking
+  (f0, s1) = fib(0, 1)
+  (f1, s2) = s1
+
+  # Splat unpack assignment
+  head, ...tail = (1, 2, 3, 4)
+  print head  # 1
+  print tail  # (2, 3, 4)
+  ```
+
+
 
 

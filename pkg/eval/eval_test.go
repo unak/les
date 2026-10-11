@@ -221,3 +221,110 @@ match x:
 	}
 }
 
+func TestEvalVariadicFunction(t *testing.T) {
+	code := `
+def my_print(prefix: String, *args: Any):
+    print prefix, args
+
+my_print "zero:"
+my_print "two:", 1, 2
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval variadic func failed: %v", err)
+	}
+	expected := "zero: ()\ntwo: (1, 2)"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
+func TestEvalTuplePatternMatching(t *testing.T) {
+	code := `
+def fib(a: Int, b: Int):
+    (a, fib(b, a + b))
+
+s = fib(0, 1)
+
+match s:
+    case (first, rest):
+        print "first:", first
+        match rest:
+            case (second, rest2):
+                print "second:", second
+                match rest2:
+                    case (third, _):
+                        print "third:", third
+
+nums = (10, 20, 30, 40)
+match nums:
+    case (h, second, ...tail):
+        print "head:", h, "second:", second, "tail:", tail
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval tuple pattern matching failed: %v", err)
+	}
+	expected := "first: 0\nsecond: 1\nthird: 1\nhead: 10 second: 20 tail: (30, 40)"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
+func TestEvalUnpackAssignment(t *testing.T) {
+	code := `
+def fib(a: Int, b: Int):
+    (a, fib(b, a + b))
+
+s = fib(0, 1)
+
+# Paren unpacked assignment on stream
+(f0, s1) = s
+(f1, s2) = s1
+(f2, _) = s2
+print "fibs:", f0, f1, f2
+
+# Splat unpack assignment without parens
+h, ...tail = (100, 200, 300)
+print "splat:", h, tail
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval unpack assignment failed: %v", err)
+	}
+	expected := "fibs: 0 1 1\nsplat: 100 (200, 300)"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+

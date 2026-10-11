@@ -166,10 +166,19 @@ type IsExpr struct {
 func (i *IsExpr) node() {}
 func (i *IsExpr) expr() {}
 
+// TuplePattern represents unpacked tuple pattern, e.g. (h, ...t) or (a, b).
+type TuplePattern struct {
+	Elements []string // variable names before rest, e.g. ["h"]
+	RestName string   // variable name after '...', e.g. "t", or empty if no rest
+}
+
+func (tp *TuplePattern) node() {}
+
 // MatchCase represents a single case in a match expression: case Pattern: Body
 type MatchCase struct {
-	Pattern string // type name, e.g. "Int", "String", or "_" for wildcard
-	Body    []Stmt
+	Pattern      string        // type name ("Int", "_") or representation
+	TuplePattern *TuplePattern // non-nil if tuple unpacking pattern (e.g. (h, ...t))
+	Body         []Stmt
 }
 
 // MatchExpr represents pattern match expression: match expr: case ...
@@ -210,6 +219,15 @@ type VarDecl struct {
 func (v *VarDecl) node() {}
 func (v *VarDecl) stmt() {}
 
+// UnpackDecl represents unpacked tuple assignment, e.g. (h, ...t) = stream.
+type UnpackDecl struct {
+	Pattern *TuplePattern
+	Value   Expr
+}
+
+func (u *UnpackDecl) node() {}
+func (u *UnpackDecl) stmt() {}
+
 // ReturnStmt represents explicit return.
 type ReturnStmt struct {
 	Value Expr
@@ -228,8 +246,9 @@ func (e *ExprStmt) stmt() {}
 
 // FuncParam represents function parameter with optional type annotation.
 type FuncParam struct {
-	Name      string
-	TypeAnnot string
+	Name       string
+	TypeAnnot  string
+	IsVariadic bool
 }
 
 // FuncDef represents function definition block: def name(params): body.

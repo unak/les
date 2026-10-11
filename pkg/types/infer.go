@@ -96,13 +96,34 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		return nil
 
+	case *ast.UnpackDecl:
+		_, err := inf.inferExpr(s.Value)
+		if err != nil {
+			return err
+		}
+		for _, name := range s.Pattern.Elements {
+			if name != "_" {
+				_ = inf.scope.Declare(name, TypeAny)
+			}
+		}
+		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
+			_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeAny}, IsVariadic: true})
+		}
+		return nil
+
 	case *ast.FuncDef:
 		paramTypes := make([]Type, len(s.Params))
 		for i, p := range s.Params {
+			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
-				paramTypes[i] = parseTypeAnnot(p.TypeAnnot)
+				elemType = parseTypeAnnot(p.TypeAnnot)
+			}
+			if p.IsVariadic {
+				emptyTuple := &TupleType{Elems: []Type{}}
+				streamTuple := &TupleType{Elems: []Type{elemType}, IsVariadic: true}
+				paramTypes[i] = NewUnionType(emptyTuple, streamTuple)
 			} else {
-				paramTypes[i] = TypeAny // default flexible for MVP inference
+				paramTypes[i] = elemType
 			}
 		}
 		fnType := &FuncType{
@@ -263,26 +284,44 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		}
 		var caseTypes []Type
 		for _, c := range e.Cases {
+			caseScope := NewScope(inf.scope)
+			if c.TuplePattern != nil {
+				for _, name := range c.TuplePattern.Elements {
+					if name != "_" {
+						_ = caseScope.Declare(name, TypeAny)
+					}
+				}
+				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeAny}, IsVariadic: true})
+				}
+			}
+			prevScope := inf.scope
+			inf.scope = caseScope
+
 			var lastT Type = TypeAny
 			for _, stmt := range c.Body {
 				if es, ok := stmt.(*ast.ExprStmt); ok {
 					t, err := inf.inferExpr(es.Value)
 					if err != nil {
+						inf.scope = prevScope
 						return nil, err
 					}
 					lastT = t
 				} else if rs, ok := stmt.(*ast.ReturnStmt); ok {
 					t, err := inf.inferExpr(rs.Value)
 					if err != nil {
+						inf.scope = prevScope
 						return nil, err
 					}
 					lastT = t
 				} else {
 					if err := inf.inferStmt(stmt); err != nil {
+						inf.scope = prevScope
 						return nil, err
 					}
 				}
 			}
+			inf.scope = prevScope
 			caseTypes = append(caseTypes, lastT)
 		}
 		if len(caseTypes) == 0 {

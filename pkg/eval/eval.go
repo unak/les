@@ -76,6 +76,33 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		env.Set(s.Name, thunk)
 		return nil, nil
 
+	case *ast.UnpackDecl:
+		val := Force(NewThunk(s.Value, env))
+		tVal, ok := val.(*TupleValue)
+		if !ok {
+			return nil, fmt.Errorf("cannot unpack non-tuple value: %v", val)
+		}
+		reqCount := len(s.Pattern.Elements)
+		if s.Pattern.RestName != "" {
+			if len(tVal.Elements) < reqCount {
+				return nil, fmt.Errorf("not enough elements to unpack into tuple pattern: got %d, need at least %d", len(tVal.Elements), reqCount)
+			}
+		} else {
+			if len(tVal.Elements) != reqCount {
+				return nil, fmt.Errorf("element count mismatch in unpack: expected %d, got %d", reqCount, len(tVal.Elements))
+			}
+		}
+		for i, name := range s.Pattern.Elements {
+			if name != "_" {
+				env.Set(name, tVal.Elements[i])
+			}
+		}
+		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
+			restElements := tVal.Elements[reqCount:]
+			env.Set(s.Pattern.RestName, &TupleValue{Elements: restElements})
+		}
+		return nil, nil
+
 	case *ast.FuncDef:
 		closure := &Closure{
 			Params: s.Params,
@@ -276,6 +303,14 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			callEnv := NewEnvironment(fn.Env)
 			// Bind parameters to lazy argument thunks
 			for i, p := range fn.Params {
+				if p.IsVariadic {
+					var rest []Value
+					if i < len(argValues) {
+						rest = argValues[i:]
+					}
+					callEnv.Set(p.Name, &TupleValue{Elements: rest})
+					break
+				}
 				if i < len(argValues) {
 					callEnv.Set(p.Name, argValues[i])
 				} else {
@@ -312,6 +347,36 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.MatchExpr:
 		val := Force(NewThunk(e.Target, env))
 		for _, c := range e.Cases {
+			if c.TuplePattern != nil {
+				tVal, ok := val.(*TupleValue)
+				if !ok {
+					continue
+				}
+				reqCount := len(c.TuplePattern.Elements)
+				if c.TuplePattern.RestName != "" {
+					if len(tVal.Elements) < reqCount {
+						continue
+					}
+				} else {
+					if len(tVal.Elements) != reqCount {
+						continue
+					}
+				}
+
+				// Matched! Bind unpacked elements in a new scope
+				caseEnv := NewEnvironment(env)
+				for i, name := range c.TuplePattern.Elements {
+					if name != "_" {
+						caseEnv.Set(name, tVal.Elements[i])
+					}
+				}
+				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+					restElements := tVal.Elements[reqCount:]
+					caseEnv.Set(c.TuplePattern.RestName, &TupleValue{Elements: restElements})
+				}
+				return caseEnv.evalBlock(c.Body)
+			}
+
 			pattern := strings.TrimSpace(c.Pattern)
 			if pattern == "_" || checkValueMatchesType(val, pattern) {
 				return env.evalBlock(c.Body)

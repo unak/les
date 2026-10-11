@@ -43,14 +43,25 @@ type TupleValue struct {
 }
 
 func (t *TupleValue) String() string {
+	return t.stringWithDepth(0)
+}
+
+func (t *TupleValue) stringWithDepth(depth int) string {
+	if depth > 10 {
+		return "(...)"
+	}
 	var sb strings.Builder
 	sb.WriteString("(")
 	for i, el := range t.Elements {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		// Demand evaluation when printing
-		sb.WriteString(Force(el).String())
+		val := Force(el)
+		if innerT, ok := val.(*TupleValue); ok {
+			sb.WriteString(innerT.stringWithDepth(depth + 1))
+		} else {
+			sb.WriteString(val.String())
+		}
 	}
 	if len(t.Elements) == 1 {
 		sb.WriteString(",")

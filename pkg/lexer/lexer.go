@@ -31,6 +31,18 @@ func NewLexer(input string) *Lexer {
 }
 
 // NextToken returns the next token.
+func (l *Lexer) PeekRestOfLine() string {
+	var sb strings.Builder
+	for i := l.pos; i < len(l.source); i++ {
+		r := l.source[i]
+		if r == '\n' || r == '\r' {
+			break
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
 func (l *Lexer) NextToken() Token {
 	if len(l.pending) > 0 {
 		tok := l.pending[0]
