@@ -28,7 +28,7 @@ func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, err
 }
 
 func (ev *Evaluator) registerBuiltins() {
-	// print: built-in effect boundary. Demands evaluation of its arguments.
+	// print: built-in effect boundary. Demands evaluation of its arguments without automatic newline.
 	ev.globalEnv.Set("print", &BuiltinFunc{
 		Name: "print",
 		Fn: func(args []Value) (Value, error) {
@@ -37,11 +37,11 @@ func (ev *Evaluator) registerBuiltins() {
 				val := Force(a)
 				parts[i] = val.String()
 			}
-			out := strings.Join(parts, " ")
+			out := strings.Join(parts, "")
 			if ev.globalEnv.Output != nil {
-				ev.globalEnv.Output.WriteString(out + "\n")
+				ev.globalEnv.Output.WriteString(out)
 			} else {
-				fmt.Println(out)
+				fmt.Print(out)
 			}
 			return &TupleValue{Elements: []Value{}}, nil
 		},
@@ -63,6 +63,27 @@ func (ev *Evaluator) registerBuiltins() {
 				parts[i] = typeNameOf(Force(a))
 			}
 			return StringValue("(" + strings.Join(parts, ", ") + ")"), nil
+		},
+	})
+
+	// len: returns integer length of tuple, string, or dict.
+	ev.globalEnv.Set("len", &BuiltinFunc{
+		Name: "len",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("len expects 1 argument, got %d", len(args))
+			}
+			val := Force(args[0])
+			switch v := val.(type) {
+			case StringValue:
+				return IntValue(len([]rune(string(v)))), nil
+			case *TupleValue:
+				return IntValue(len(v.Elements)), nil
+			case *DictValue:
+				return IntValue(len(v.Entries)), nil
+			default:
+				return nil, fmt.Errorf("len expects String, Tuple, or Dict, got %v", val)
+			}
 		},
 	})
 }
@@ -279,10 +300,27 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return nil, fmt.Errorf("tuple index must be Int, got %v", idxVal)
 			}
 			idx := int(i)
+			if idx < 0 {
+				idx = len(t.Elements) + idx
+			}
 			if idx < 0 || idx >= len(t.Elements) {
-				return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", idx, len(t.Elements))
+				return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", int(i), len(t.Elements))
 			}
 			return t.Elements[idx], nil
+		case StringValue:
+			i, ok := idxVal.(IntValue)
+			if !ok {
+				return nil, fmt.Errorf("string index must be Int, got %v", idxVal)
+			}
+			runes := []rune(string(t))
+			idx := int(i)
+			if idx < 0 {
+				idx = len(runes) + idx
+			}
+			if idx < 0 || idx >= len(runes) {
+				return nil, fmt.Errorf("string index out of bounds: %d (len %d)", int(i), len(runes))
+			}
+			return StringValue(string(runes[idx])), nil
 		case *DictValue:
 			k := idxVal.String()
 			if v, ok := t.Entries[k]; ok {
@@ -290,10 +328,42 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			}
 			return nil, fmt.Errorf("key not found in dict: %s", k)
 		default:
-			return nil, fmt.Errorf("cannot index non-tuple/non-dict value: %v", targetVal)
+			return nil, fmt.Errorf("cannot index non-tuple/non-string/non-dict value: %v", targetVal)
 		}
 
 	case *ast.BinaryExpr:
+		if e.Op == "&&" {
+			leftVal := Force(NewThunk(e.Left, env))
+			lb, ok := leftVal.(BoolValue)
+			if !ok {
+				return nil, fmt.Errorf("operator && expects Bool, got %v", leftVal)
+			}
+			if !bool(lb) {
+				return BoolValue(false), nil
+			}
+			rightVal := Force(NewThunk(e.Right, env))
+			rb, ok := rightVal.(BoolValue)
+			if !ok {
+				return nil, fmt.Errorf("operator && expects Bool, got %v", rightVal)
+			}
+			return BoolValue(bool(rb)), nil
+		}
+		if e.Op == "||" {
+			leftVal := Force(NewThunk(e.Left, env))
+			lb, ok := leftVal.(BoolValue)
+			if !ok {
+				return nil, fmt.Errorf("operator || expects Bool, got %v", leftVal)
+			}
+			if bool(lb) {
+				return BoolValue(true), nil
+			}
+			rightVal := Force(NewThunk(e.Right, env))
+			rb, ok := rightVal.(BoolValue)
+			if !ok {
+				return nil, fmt.Errorf("operator || expects Bool, got %v", rightVal)
+			}
+			return BoolValue(bool(rb)), nil
+		}
 		leftVal := Force(NewThunk(e.Left, env))
 		rightVal := Force(NewThunk(e.Right, env))
 		return evalBinary(e.Op, leftVal, rightVal)

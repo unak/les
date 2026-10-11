@@ -230,3 +230,37 @@ res = match x:
 	}
 }
 
+func TestPutsParser(t *testing.T) {
+	code := `
+def puts_each(items):
+    (head, ...tail) = items
+    print head
+    if head is String && len(head) > 0 && head[-1] == "\n":
+        ()
+    else:
+        print "\n"
+    if len(tail) > 0:
+        puts_each(tail)
+
+def puts(*args: Any):
+    if len(args) == 0:
+        print "\n"
+    else:
+        puts_each(args)
+
+puts()
+puts "hello"
+puts "already\n"
+puts "a", "b\n", 42
+`
+	l := lexer.NewLexer(code)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) == 0 {
+		t.Fatalf("no statements parsed")
+	}
+}
+

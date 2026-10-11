@@ -85,11 +85,15 @@ func (p *Parser) ParseProgram() *ast.Program {
 	}
 
 	for !p.curTokenIs(lexer.TokenEOF) {
+		prevTok := p.curToken
 		stmt := p.parseStmt()
 		if stmt != nil {
 			prog.Body = append(prog.Body, stmt)
 		}
 		p.skipNewlines()
+		if p.curToken == prevTok {
+			p.nextToken()
+		}
 	}
 
 	return prog
@@ -100,7 +104,6 @@ func (p *Parser) parseStmt() ast.Stmt {
 	if p.curTokenIs(lexer.TokenEOF) {
 		return nil
 	}
-
 	switch p.curToken.Type {
 	case lexer.TokenModule:
 		return p.parseModuleDecl()
@@ -276,14 +279,16 @@ func (p *Parser) parseTypeAnnotString() string {
 }
 
 func (p *Parser) parseBlockBody() []ast.Stmt {
+	if p.curTokenIs(lexer.TokenColon) {
+		p.nextToken()
+	} else if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken()
+		p.nextToken()
+	}
 	p.skipNewlines()
-	for p.curTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-	}
-	if p.peekTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-	}
-	if !p.expectPeek(lexer.TokenIndent) {
+
+	if !p.curTokenIs(lexer.TokenIndent) {
+		p.errors = append(p.errors, fmt.Sprintf("expected token %v, got %v (%s) at line %d col %d", lexer.TokenIndent, p.curToken.Type, p.curToken.Literal, p.curToken.Line, p.curToken.Col))
 		return nil
 	}
 	p.nextToken() // consume TokenIndent
@@ -292,11 +297,15 @@ func (p *Parser) parseBlockBody() []ast.Stmt {
 	p.skipNewlines()
 
 	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+		prevTok := p.curToken
 		stmt := p.parseStmt()
 		if stmt != nil {
 			body = append(body, stmt)
 		}
 		p.skipNewlines()
+		if p.curToken == prevTok {
+			p.nextToken()
+		}
 	}
 
 	if p.curTokenIs(lexer.TokenDedent) {
@@ -309,19 +318,12 @@ func (p *Parser) parseIfStmt() *ast.IfStmt {
 	p.nextToken() // consume 'if'
 	cond := p.parseExpr(PREC_LOWEST)
 
-	if p.peekTokenIs(lexer.TokenColon) {
-		p.nextToken() // consume ':'
-	}
-
 	thenBody := p.parseBlockBody()
 	var elseBody []ast.Stmt
 
 	p.skipNewlines()
 	if p.curTokenIs(lexer.TokenElse) {
 		p.nextToken() // consume 'else'
-		if p.curTokenIs(lexer.TokenColon) {
-			p.nextToken() // consume ':'
-		}
 		elseBody = p.parseBlockBody()
 	}
 
@@ -903,24 +905,39 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		}
 	case lexer.TokenIs:
 		p.nextToken() // consume 'is'
-		// Type could be Ident (Int) or compound: collect type tokens on same line
 		var typeParts []string
-		for !p.curTokenIs(lexer.TokenNewline) && !p.curTokenIs(lexer.TokenEOF) &&
-			!p.curTokenIs(lexer.TokenQuestion) && !p.curTokenIs(lexer.TokenColon) &&
-			!p.curTokenIs(lexer.TokenRParen) && !p.curTokenIs(lexer.TokenRBracket) &&
-			!p.curTokenIs(lexer.TokenComma) {
+		parenDepth := 0
+		bracketDepth := 0
+		for {
+			if parenDepth == 0 && bracketDepth == 0 {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) {
+					break
+				}
+			}
+			if p.curTokenIs(lexer.TokenLParen) {
+				parenDepth++
+			} else if p.curTokenIs(lexer.TokenRParen) {
+				parenDepth--
+			} else if p.curTokenIs(lexer.TokenLBracket) {
+				bracketDepth++
+			} else if p.curTokenIs(lexer.TokenRBracket) {
+				bracketDepth--
+			}
 			typeParts = append(typeParts, p.curToken.Literal)
-			if p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) ||
-				p.peekTokenIs(lexer.TokenQuestion) || p.peekTokenIs(lexer.TokenColon) ||
-				p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenRBracket) ||
-				p.peekTokenIs(lexer.TokenComma) {
-				break
+			if parenDepth == 0 && bracketDepth == 0 {
+				if p.curTokenIs(lexer.TokenPipe) {
+					// After '|', must continue to next type component
+				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) {
+					// Continue if followed by '|' or '.'
+				} else {
+					break
+				}
 			}
 			p.nextToken()
 		}
 		return &ast.IsExpr{
 			Expr:      left,
-			TypeAnnot: strings.Join(typeParts, ""),
+			TypeAnnot: strings.Join(typeParts, " "),
 		}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,

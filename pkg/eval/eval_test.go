@@ -150,8 +150,9 @@ print r1, r2, r3
 	if err != nil {
 		t.Fatalf("eval is expr failed: %v", err)
 	}
-	if strings.TrimSpace(out.String()) != "1 0 1" {
-		t.Fatalf("expected '1 0 1', got %q", out.String())
+	expected := "101"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
 }
 
@@ -161,10 +162,13 @@ def classify(v):
     match v:
         case Int:
             print "number:", v
+            print "\n"
         case String:
             print "string:", v
+            print "\n"
         case _:
             print "other"
+            print "\n"
 
 classify 100
 classify "les"
@@ -184,7 +188,7 @@ classify True
 	if err != nil {
 		t.Fatalf("eval match expr failed: %v", err)
 	}
-	expected := "number: 100\nstring: les\nother"
+	expected := "number:100\nstring:les\nother"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -194,12 +198,15 @@ func TestEvalNilAndAny(t *testing.T) {
 	code := `
 x = Nil
 print x is Nil, x is Any, 42 is Any, 42 is Nil
+print "\n"
 
 match x:
     case Nil:
         print "got nil"
+        print "\n"
     case _:
         print "other"
+        print "\n"
 `
 	var out strings.Builder
 	ev := NewEvaluator()
@@ -215,7 +222,7 @@ match x:
 	if err != nil {
 		t.Fatalf("eval nil/any failed: %v", err)
 	}
-	expected := "True True True False\ngot nil"
+	expected := "TrueTrueTrueTrue\ngot nil"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -225,6 +232,7 @@ func TestEvalVariadicFunction(t *testing.T) {
 	code := `
 def my_print(prefix: String, *args: Any):
     print prefix, args
+    print "\n"
 
 my_print "zero:"
 my_print "two:", 1, 2
@@ -243,7 +251,7 @@ my_print "two:", 1, 2
 	if err != nil {
 		t.Fatalf("eval variadic func failed: %v", err)
 	}
-	expected := "zero: ()\ntwo: (1, 2)"
+	expected := "zero:()\ntwo:(1, 2)"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -259,17 +267,21 @@ s = fib(0, 1)
 match s:
     case (first, rest):
         print "first:", first
+        print "\n"
         match rest:
             case (second, rest2):
                 print "second:", second
+                print "\n"
                 match rest2:
                     case (third, _):
                         print "third:", third
+                        print "\n"
 
 nums = (10, 20, 30, 40)
 match nums:
     case (h, second, ...tail):
         print "head:", h, "second:", second, "tail:", tail
+        print "\n"
 `
 	var out strings.Builder
 	ev := NewEvaluator()
@@ -285,7 +297,7 @@ match nums:
 	if err != nil {
 		t.Fatalf("eval tuple pattern matching failed: %v", err)
 	}
-	expected := "first: 0\nsecond: 1\nthird: 1\nhead: 10 second: 20 tail: (30, 40)"
+	expected := "first:0\nsecond:1\nthird:1\nhead:10second:20tail:(30, 40)"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -303,10 +315,12 @@ s = fib(0, 1)
 (f1, s2) = s1
 (f2, _) = s2
 print "fibs:", f0, f1, f2
+print "\n"
 
 # Splat unpack assignment without parens
 h, ...tail = (100, 200, 300)
 print "splat:", h, tail
+print "\n"
 `
 	var out strings.Builder
 	ev := NewEvaluator()
@@ -322,7 +336,7 @@ print "splat:", h, tail
 	if err != nil {
 		t.Fatalf("eval unpack assignment failed: %v", err)
 	}
-	expected := "fibs: 0 1 1\nsplat: 100 (200, 300)"
+	expected := "fibs:011\nsplat:100(200, 300)"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -331,13 +345,21 @@ print "splat:", h, tail
 func TestEvalTypeBuiltin(t *testing.T) {
 	code := `
 print type(42)
+print "\n"
 print type((1,))
+print "\n"
 print type(1, 2)
+print "\n"
 print type((1, 2))
+print "\n"
 print type("les")
+print "\n"
 print type(True)
+print "\n"
 print type(Nil)
+print "\n"
 print type()
+print "\n"
 `
 	var out strings.Builder
 	ev := NewEvaluator()
@@ -355,6 +377,49 @@ print type()
 	}
 	expected := "Int\n(Int)\n(Int, Int)\n(Int, Int)\nString\nBool\nNil\n()"
 	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
+func TestPutsFunction(t *testing.T) {
+	code := `
+def puts_each(items):
+    (head, ...tail) = items
+    print head
+    if head is String && len(head) > 0 && head[-1] == "\n":
+        ()
+    else:
+        print "\n"
+    if len(tail) > 0:
+        puts_each(tail)
+
+def puts(*args: Any):
+    if len(args) == 0:
+        print "\n"
+    else:
+        puts_each(args)
+
+puts()
+puts "hello"
+puts "already\n"
+puts "a", "b\n", 42
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval puts failed: %v", err)
+	}
+	expected := "\nhello\nalready\na\nb\n42\n"
+	if out.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
 }

@@ -1,0 +1,33 @@
+# Custom 'puts' function implementation in Les
+# - Prints each argument individually.
+# - If an argument ends with "\n", does not append an extra newline.
+# - Otherwise, appends "\n" to that argument.
+# - If called with 0 arguments, outputs "\n".
+
+def puts_each(items):
+    (head, ...tail) = items
+    print head
+    if head is String && len(head) > 0 && head[-1] == "\n":
+        ()
+    else:
+        print "\n"
+    if len(tail) > 0:
+        puts_each(tail)
+
+def puts(*args: Any):
+    if len(args) == 0:
+        print "\n"
+    else:
+        puts_each(args)
+
+# Test 1: 0 arguments (prints a single newline)
+puts()
+
+# Test 2: Single string without newline (appends newline)
+puts "hello, world!"
+
+# Test 3: String already ending with newline (does not duplicate newline)
+puts "already with newline\n"
+
+# Test 4: Multiple arguments (each gets its own line if needed)
+puts "a", "b\n", 42

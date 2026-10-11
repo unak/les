@@ -180,17 +180,24 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 
 ### 8. Built-in Functions
 
-#### `def print(arg: Any, ...): ()`
-Outputs string representations of arguments separated by spaces, followed by a newline.
+#### `def print(*args: Any): ()`
+Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
 
 - **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
-- **Arguments**: `(arg: Any, ...)` — variable number of values to print.
+- **Arguments**: `*args: Any` — variable number of values to print.
 - **Returns**: `()` (empty tuple).
 - **Usage**:
   ```python
-  print "Hello, world!"
-  print(1, "two", True, Nil)
+  print "Hello, world!\n"
+  print "a", "b", 42  # outputs "ab42" without space or newline
   ```
+
+#### `def len(collection: Any): Int`
+Returns the length of a `String` (rune count), `Tuple`, or `Dict`.
+
+- **Arguments**: `collection: Any`
+- **Returns**: `Int`
+- **Indexing Support**: `String` and `Tuple` support 0-based indexing as well as negative indices (`[-1]` for last element).
 
 #### `def type(*args: Any): String`
 Returns the string representation of the runtime type of the given value or argument tuple.
