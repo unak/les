@@ -1,0 +1,10 @@
+# Binaries
+bin/
+*.exe
+
+# Go cache
+.cache/
+
+# OS specific
+Thumbs.db
+.DS_Store
