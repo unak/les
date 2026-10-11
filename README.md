@@ -175,3 +175,13 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   classify "les"
   ```
 
+### 8. Built-in Functions
+Currently, Les provides the following built-in function:
+
+- `print(*args)`:
+  - **Description**: Outputs string representations of arguments separated by spaces, followed by a newline.
+  - **Effect / Evaluation**: Acts as a demand-driven effect boundary. Forces evaluation of its lazy arguments (`Thunk`s).
+  - **Return Value**: An empty tuple `()`.
+  - **Syntax**: Can be invoked with or without parentheses (e.g. `print "Hello, world!"` or `print(x, y)`).
+
+
