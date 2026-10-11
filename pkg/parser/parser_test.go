@@ -145,3 +145,28 @@ print @math.Pi`
 		t.Fatalf("unexpected modAccess: %+v", modAccess)
 	}
 }
+
+func TestParseImportStmt(t *testing.T) {
+	input := `import math
+import "utils/helpers"`
+
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
+
+	imp1, ok := prog.Body[0].(*ast.ImportStmt)
+	if !ok || imp1.Path != "math" {
+		t.Fatalf("expected import math, got %+v", prog.Body[0])
+	}
+	imp2, ok := prog.Body[1].(*ast.ImportStmt)
+	if !ok || imp2.Path != "utils/helpers" {
+		t.Fatalf("expected import utils/helpers, got %+v", prog.Body[1])
+	}
+}

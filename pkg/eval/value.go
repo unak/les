@@ -156,6 +156,7 @@ type Environment struct {
 	modules map[string]*ModuleValue
 	parent  *Environment
 	Output  *strings.Builder // captures print output if specified
+	Loader  func(path string) (*ModuleValue, error) // module loader callback
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -166,6 +167,7 @@ func NewEnvironment(parent *Environment) *Environment {
 	}
 	if parent != nil {
 		env.Output = parent.Output
+		env.Loader = parent.Loader
 	}
 	return env
 }

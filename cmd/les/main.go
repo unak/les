@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"les/pkg/eval"
 	"les/pkg/lexer"
@@ -50,6 +51,10 @@ func main() {
 
 	// 4. Evaluator (call-by-need graph reduction runtime)
 	evaluator := eval.NewEvaluator()
+	baseDir := filepath.Dir(filename)
+	loader := eval.NewFileModuleLoader(baseDir)
+	evaluator.SetModuleLoader(loader.Load)
+
 	if _, err := evaluator.EvalProgram(prog); err != nil {
 		fmt.Fprintf(os.Stderr, "Runtime Error: %v\n", err)
 		os.Exit(1)

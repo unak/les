@@ -33,6 +33,15 @@ type ModuleDecl struct {
 func (m *ModuleDecl) node() {}
 func (m *ModuleDecl) stmt() {}
 
+// ImportStmt represents module import: import <name> or import "<path>".
+type ImportStmt struct {
+	Path  string
+	Alias string
+}
+
+func (imp *ImportStmt) node() {}
+func (imp *ImportStmt) stmt() {}
+
 // Identifier represents variable or function name.
 type Identifier struct {
 	Name string

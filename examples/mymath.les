@@ -1,0 +1,11 @@
+# Math helper module
+
+module mymath
+
+Pi = 3.14159
+
+def Add(a, b):
+    a + b
+
+def internalSecret():
+    999

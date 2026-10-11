@@ -23,6 +23,10 @@ func (ev *Evaluator) SetOutput(sb *strings.Builder) {
 	ev.globalEnv.Output = sb
 }
 
+func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, error)) {
+	ev.globalEnv.Loader = loader
+}
+
 func (ev *Evaluator) registerBuiltins() {
 	// print: built-in effect boundary. Demands evaluation of its arguments.
 	ev.globalEnv.Set("print", &BuiltinFunc{
@@ -106,6 +110,23 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		return env.evalExpr(s.Value)
 
 	case *ast.ModuleDecl:
+		return nil, nil
+
+	case *ast.ImportStmt:
+		if env.Loader == nil {
+			return nil, fmt.Errorf("module loader not configured")
+		}
+		modVal, err := env.Loader(s.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to import module '%s': %w", s.Path, err)
+		}
+		alias := s.Alias
+		if alias == "" {
+			alias = modVal.Name
+		}
+		// Register module with alias name
+		modVal.Name = alias
+		env.RegisterModule(modVal)
 		return nil, nil
 
 	default:

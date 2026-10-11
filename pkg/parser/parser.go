@@ -102,6 +102,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 	switch p.curToken.Type {
 	case lexer.TokenModule:
 		return p.parseModuleDecl()
+	case lexer.TokenImport:
+		return p.parseImportStmt()
 	case lexer.TokenDef:
 		return p.parseFuncDef()
 	case lexer.TokenIf:
@@ -120,6 +122,29 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseExprStmt()
 	default:
 		return p.parseExprStmt()
+	}
+}
+
+func (p *Parser) parseImportStmt() *ast.ImportStmt {
+	p.nextToken() // consume 'import'
+	var path string
+	if p.curTokenIs(lexer.TokenIdent) || p.curTokenIs(lexer.TokenString) {
+		path = p.curToken.Literal
+	} else {
+		p.errors = append(p.errors, fmt.Sprintf("expected identifier or string after import, got %v (%s)", p.curToken.Type, p.curToken.Literal))
+		return nil
+	}
+	alias := path
+
+	if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else {
+		p.nextToken()
+	}
+	return &ast.ImportStmt{
+		Path:  path,
+		Alias: alias,
 	}
 }
 

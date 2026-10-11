@@ -136,6 +136,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		_, err := inf.inferExpr(s.Value)
 		return err
 
+	case *ast.ImportStmt:
+		return nil
+	case *ast.ModuleDecl:
+		return nil
+
 	default:
 		return nil
 	}

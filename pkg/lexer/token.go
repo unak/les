@@ -26,6 +26,7 @@ const (
 	TokenReturn
 	TokenDo
 	TokenModule
+	TokenImport
 
 	// Punctuation
 	TokenAssign    // =
