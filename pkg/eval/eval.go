@@ -206,9 +206,27 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		return nil, nil
 
 	case *ast.ExprStmt:
-		// Expression statement: if it's a CallExpr to print/builtin effect, it will force demand.
-		// Otherwise, statements can remain unforced or evaluated.
-		return env.evalExpr(s.Value)
+		val, err := env.evalExpr(s.Value)
+		if err != nil {
+			return nil, err
+		}
+		// If the statement is a bare identifier/member resolving to a function,
+		// auto-invoke it with 0 arguments (e.g. bare 'puts' for newline).
+		isCallableTarget := false
+		switch s.Value.(type) {
+		case *ast.Identifier, *ast.ModuleAccessExpr:
+			isCallableTarget = true
+		}
+		if isCallableTarget {
+			forced := Force(val)
+			switch fn := forced.(type) {
+			case *BuiltinFunc:
+				return fn.Fn([]Value{})
+			case *Closure:
+				return env.invokeClosure(fn, []Value{})
+			}
+		}
+		return val, nil
 
 	case *ast.ModuleDecl:
 		return nil, nil
@@ -247,6 +265,26 @@ func (env *Environment) evalBlock(body []ast.Stmt) (Value, error) {
 		}
 	}
 	return lastVal, nil
+}
+
+func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (Value, error) {
+	callEnv := NewEnvironment(fn.Env)
+	for i, p := range fn.Params {
+		if p.IsVariadic {
+			var rest []Value
+			if i < len(argValues) {
+				rest = argValues[i:]
+			}
+			callEnv.Set(p.Name, &TupleValue{Elements: rest})
+			break
+		}
+		if i < len(argValues) {
+			callEnv.Set(p.Name, argValues[i])
+		} else {
+			callEnv.Set(p.Name, &TupleValue{Elements: []Value{}})
+		}
+	}
+	return callEnv.evalBlock(fn.Body)
 }
 
 func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
@@ -423,24 +461,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			return fn.Fn(argValues)
 
 		case *Closure:
-			callEnv := NewEnvironment(fn.Env)
-			// Bind parameters to lazy argument thunks
-			for i, p := range fn.Params {
-				if p.IsVariadic {
-					var rest []Value
-					if i < len(argValues) {
-						rest = argValues[i:]
-					}
-					callEnv.Set(p.Name, &TupleValue{Elements: rest})
-					break
-				}
-				if i < len(argValues) {
-					callEnv.Set(p.Name, argValues[i])
-				} else {
-					callEnv.Set(p.Name, &TupleValue{Elements: []Value{}})
-				}
-			}
-			return callEnv.evalBlock(fn.Body)
+			return env.invokeClosure(fn, argValues)
 
 		default:
 			return nil, fmt.Errorf("cannot call non-function value: %v", calleeVal)

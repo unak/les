@@ -400,6 +400,7 @@ def puts(*args: Any):
         puts_each(args)
 
 puts()
+puts
 puts "hello"
 puts "already\n"
 puts "a", "b\n", 42
@@ -418,9 +419,47 @@ puts "a", "b\n", 42
 	if err != nil {
 		t.Fatalf("eval puts failed: %v", err)
 	}
-	expected := "\nhello\nalready\na\nb\n42\n"
+	expected := "\n\nhello\nalready\na\nb\n42\n"
 	if out.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
 }
+
+func TestFirstClassAndHigherOrderFunctions(t *testing.T) {
+	code := `
+def double(x):
+    x * 2
+
+# Assign function to variable
+f = double
+res = f(21)
+print "f(21)=", res, "\n"
+
+# Higher-order function
+def apply(fn, val):
+    fn(val)
+
+res2 = apply(f, 100)
+print "apply=", res2, "\n"
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval higher order failed: %v", err)
+	}
+	expected := "f(21)=42\napply=200\n"
+	if out.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
 

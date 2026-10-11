@@ -90,7 +90,21 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   x = 10
   def f():
       x = 20  # OK: shadows outer 'x' within f's local scope
-      x
+### 4. Unified Namespace (Lisp-1) & Bare Callable Statements
+- **Lisp-1 Namespace**: Functions and variables share the same unified lexical namespace. Functions are first-class citizens and can be assigned to variables or passed to higher-order functions directly:
+  ```python
+  def double(x): x * 2
+  f = double
+  f(21)            # 42
+
+  def apply(fn, val): fn(val)
+  apply(double, 10) # 20
+  ```
+- **Bare Callable Statements**: When an expression statement consists solely of a bare identifier or module member that resolves to a function, it is automatically invoked with 0 arguments. Inside other expressions (such as assignments or arguments), it evaluates to the function value itself:
+  ```python
+  puts             # Statement level: auto-invoked as puts() (prints newline)
+  f = puts         # Expression level: assigned as a function object
+  f "hello"        # Invoked with argument
   ```
 
 ## Core Language Semantics

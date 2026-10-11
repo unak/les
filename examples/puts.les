@@ -20,8 +20,8 @@ def puts(*args: Any):
     else:
         puts_each(args)
 
-# Test 1: 0 arguments (prints a single newline)
-puts()
+# Test 1: 0 arguments via bare identifier (prints a single newline)
+puts
 
 # Test 2: Single string without newline (appends newline)
 puts "hello, world!"
