@@ -281,8 +281,27 @@ Terminates the program execution immediately with the given exit status code.
   exit 1
   ```
 
+### 9. Built-in Variables & CLI Arguments
 
-### 9. Special Types: `Nil` and `Any`
+Les provides predefined variables for command-line arguments and file path inspection:
+
+| Variable | Type | Scope | Description |
+|---|---|---|---|
+| `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
+| `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
+| `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
+
+**Example**:
+```python
+print "Running program: ", ProgramName, "\n"
+print "This file: ", scriptName, "\n"
+print "Argument count: ", len(Args), "\n"
+
+if len(Args) > 0:
+    print "First arg: ", Args[0], "\n"
+```
+
+### 10. Special Types: `Nil` and `Any`
 - **`Nil`**:
   - Represents the absence of a value (both as the literal `Nil` and the type `Nil`).
   - Useful in union types such as `Int | Nil` (nullable/optional semantics).
@@ -290,7 +309,7 @@ Terminates the program execution immediately with the given exit status code.
   - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
   - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
 
-### 10. Variadic Arguments & Tuple Unpacking
+### 11. Variadic Arguments & Tuple Unpacking
 
 #### Variadic Parameters (`*args`)
 - Function parameters can accept 0 or more arguments by prefixing with `*`:
@@ -343,7 +362,7 @@ Terminates the program execution immediately with the given exit status code.
   - Without arguments or bare `exit`: exits with code `0`.
   - With `True`: code `0`; with `False`: code `1`.
 
-### 11. Structs (`struct`)
+### 12. Structs (`struct`)
 
 Les provides immutable records with methods, Go-style struct embedding, and static ambiguous selector detection.
 
@@ -400,7 +419,7 @@ print rc is Reader      # True
 #### Static Ambiguous Selector Detection
 When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
 
-### 12. Interfaces (`interface`) & Structural Typing
+### 13. Interfaces (`interface`) & Structural Typing
 
 Les provides Go-style implicit structural typing (duck typing) via interface declarations.
 

@@ -53,6 +53,34 @@ print x, " ", y`
 	}
 }
 
+func TestArgsAndProgramName(t *testing.T) {
+	code := `print ProgramName, " ", scriptName, " ", len(Args), " ", Args[0], " ", Args[1]`
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	ev := NewEvaluator()
+	ev.SetProgramName("main.les")
+	ev.SetScriptName("/path/to/main.les")
+	ev.SetArgs([]string{"foo", "bar"})
+
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	expected := "main.les /path/to/main.les 2 foo bar"
+	if out.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
 // MVP Test 2: Lazy Fibonacci stream and take n elements
 func TestMVP2_LazyFibonacciStream(t *testing.T) {
 	code := `def fib(a, b):

@@ -69,6 +69,15 @@ func NewInferencer() *Inferencer {
 		Arg: TypeAny,
 		Ret: TypeNil,
 	})
+	// Built-in Args: (String, ...)
+	_ = rootScope.Declare("Args", &TupleType{
+		Elems:      []Type{TypeString},
+		IsVariadic: true,
+	})
+	// Built-in ProgramName: String
+	_ = rootScope.Declare("ProgramName", TypeString)
+	// Module variable scriptName: String
+	_ = rootScope.Declare("scriptName", TypeString)
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,

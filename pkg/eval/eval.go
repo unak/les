@@ -121,6 +121,27 @@ func (ev *Evaluator) registerBuiltins() {
 			panic(&ExitError{Code: code})
 		},
 	})
+
+	// Default CLI arguments & program name
+	ev.globalEnv.Set("Args", &TupleValue{Elements: []Value{}})
+	ev.globalEnv.Set("ProgramName", StringValue(""))
+	ev.globalEnv.Set("scriptName", StringValue(""))
+}
+
+func (ev *Evaluator) SetArgs(args []string) {
+	elems := make([]Value, len(args))
+	for i, a := range args {
+		elems[i] = StringValue(a)
+	}
+	ev.globalEnv.Set("Args", &TupleValue{Elements: elems})
+}
+
+func (ev *Evaluator) SetProgramName(name string) {
+	ev.globalEnv.Set("ProgramName", StringValue(name))
+}
+
+func (ev *Evaluator) SetScriptName(name string) {
+	ev.globalEnv.Set("scriptName", StringValue(name))
 }
 
 // ExitError indicates that exit() was called to terminate execution.

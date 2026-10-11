@@ -74,6 +74,7 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 	// Execute module in dedicated isolated environment
 	modEnv := NewEnvironment(nil)
 	modEnv.Loader = fml.Load
+	modEnv.Set("scriptName", StringValue(targetFile))
 
 	for _, stmt := range prog.Body {
 		if _, err := modEnv.evalStmt(stmt); err != nil {

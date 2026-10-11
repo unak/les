@@ -52,6 +52,10 @@ func main() {
 
 	// 4. Evaluator (call-by-need graph reduction runtime)
 	evaluator := eval.NewEvaluator()
+	evaluator.SetProgramName(filename)
+	evaluator.SetScriptName(filename)
+	evaluator.SetArgs(args[1:])
+
 	baseDir := filepath.Dir(filename)
 	loader := eval.NewFileModuleLoader(baseDir)
 	evaluator.SetModuleLoader(loader.Load)
