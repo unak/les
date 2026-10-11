@@ -155,9 +155,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				paramTypes[i] = elemType
 			}
 		}
+		var declaredRetType Type = TypeAny
+		if s.ReturnType != "" {
+			declaredRetType = inf.parseTypeAnnot(s.ReturnType)
+		}
+
 		fnType := &FuncType{
 			Arg: &TupleType{Elems: paramTypes},
-			Ret: TypeAny,
+			Ret: declaredRetType,
 		}
 		// Function declaration in current scope
 		if err := inf.scope.Declare(s.Name, fnType); err != nil {
@@ -174,13 +179,33 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		prevScope := inf.scope
 		inf.scope = childScope
+		var lastT Type = TypeAny
 		for _, bStmt := range s.Body {
+			if es, ok := bStmt.(*ast.ExprStmt); ok {
+				if et, err := inf.inferExpr(es.Value); err == nil {
+					lastT = et
+				}
+			} else if rs, ok := bStmt.(*ast.ReturnStmt); ok {
+				if rs.Value != nil {
+					if et, err := inf.inferExpr(rs.Value); err == nil {
+						lastT = et
+					}
+				}
+			}
 			if err := inf.inferStmt(bStmt); err != nil {
 				inf.scope = prevScope
 				return err
 			}
 		}
 		inf.scope = prevScope
+
+		if s.ReturnType != "" {
+			if !IsAssignableTo(lastT, declaredRetType) {
+				return fmt.Errorf("return type mismatch in function '%s': expected %s, got %s", s.Name, declaredRetType, lastT)
+			}
+		} else if lastT != TypeAny {
+			fnType.Ret = lastT
+		}
 		return nil
 
 	case *ast.ExprStmt:
@@ -729,6 +754,54 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		return NewUnionType(memberTypes...)
 	}
 
+	// 2. Check top-level Function Type: Arg -> Ret
+	// Arrow '->' is right-associative: A -> B -> C is A -> (B -> C)
+	arrowIdx := -1
+	parenDepth = 0
+	bracketDepth = 0
+	for i := 0; i < len(runes)-1; i++ {
+		r := runes[i]
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if parenDepth == 0 && bracketDepth == 0 && r == '-' && runes[i+1] == '>' {
+			arrowIdx = i
+			break
+		}
+	}
+
+	if arrowIdx != -1 {
+		argStr := strings.TrimSpace(string(runes[:arrowIdx]))
+		retStr := strings.TrimSpace(string(runes[arrowIdx+2:]))
+
+		var argType Type
+		if strings.HasPrefix(argStr, "(") && strings.HasSuffix(argStr, ")") {
+			inner := strings.TrimSpace(argStr[1 : len(argStr)-1])
+			if inner == "" {
+				argType = &TupleType{Elems: []Type{}}
+			} else {
+				elems := inf.parseTupleElements(inner)
+				argType = &TupleType{Elems: elems}
+			}
+		} else if argStr == "" {
+			argType = &TupleType{Elems: []Type{}}
+		} else {
+			elemType := inf.parseTypeAnnot(argStr)
+			argType = &TupleType{Elems: []Type{elemType}}
+		}
+
+		retType := inf.parseTypeAnnot(retStr)
+		return &FuncType{
+			Arg: argType,
+			Ret: retType,
+		}
+	}
+
 	switch annot {
 	case "Int":
 		return TypeInt
@@ -744,24 +817,42 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		return TypeAny
 	}
 
-	// Tuple annotation: (Int, ...) or (Int, String)
+	// Tuple annotation or grouping: (Int, ...) or (Int, String) or ((Int) -> String)
 	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "" {
 			return &TupleType{Elems: []Type{}}
 		}
-		rawParts := strings.Split(inner, ",")
-		var elems []Type
-		isVariadic := false
-
-		for _, p := range rawParts {
-			part := strings.TrimSpace(p)
-			if part == "..." {
-				isVariadic = true
+		// Check if there is a top-level comma
+		hasTopLevelComma := false
+		pDepth := 0
+		bDepth := 0
+		for _, r := range inner {
+			if r == '(' {
+				pDepth++
+			} else if r == ')' {
+				pDepth--
+			} else if r == '[' {
+				bDepth++
+			} else if r == ']' {
+				bDepth--
+			} else if r == ',' && pDepth == 0 && bDepth == 0 {
+				hasTopLevelComma = true
 				break
 			}
-			if part != "" {
-				elems = append(elems, inf.parseTypeAnnot(part))
+		}
+
+		if !hasTopLevelComma {
+			// Single item in parens: grouping like ((Int) -> String) or (Int)
+			return inf.parseTypeAnnot(inner)
+		}
+
+		elems := inf.parseTupleElements(inner)
+		isVariadic := false
+		for _, r := range strings.Split(inner, ",") {
+			if strings.TrimSpace(r) == "..." {
+				isVariadic = true
+				break
 			}
 		}
 		return &TupleType{
@@ -777,4 +868,37 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 	}
 
 	return TypeAny
+}
+
+func (inf *Inferencer) parseTupleElements(inner string) []Type {
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	start := 0
+	runes := []rune(inner)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if r == ',' && parenDepth == 0 && bracketDepth == 0 {
+			parts = append(parts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	parts = append(parts, string(runes[start:]))
+
+	var elems []Type
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" && trimmed != "..." {
+			elems = append(elems, inf.parseTypeAnnot(trimmed))
+		}
+	}
+	return elems
 }

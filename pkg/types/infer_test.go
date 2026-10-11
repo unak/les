@@ -351,5 +351,87 @@ interface C:
 	}
 }
 
+func TestFunctionTypeAnnotation(t *testing.T) {
+	input := `
+# 1. Variable with function type annotation
+f: (Int) -> Int = |x|: x * 2
+
+# 2. Higher-order function taking function parameter
+def apply(fn: (Int) -> String, x: Int): String:
+    fn(x)
+
+# 3. Function returning a function
+def multiplier(factor: Int): (Int) -> Int:
+    |x: Int|: x * factor
+
+# 4. Zero-argument function
+getter: () -> Nil = ||: Nil
+
+# 5. Multi-argument function type
+adder: (Int, Int) -> Int = |a, b|: a + b
+`
+	p := parser.NewParser(lexer.NewLexer(input))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error for function type annotation: %v", err)
+	}
+
+	fT, ok := inf.scope.Lookup("f")
+	if !ok {
+		t.Fatalf("variable f not found")
+	}
+	fnType, ok := fT.(*FuncType)
+	if !ok {
+		t.Fatalf("expected FuncType, got %T", fT)
+	}
+	if fnType.String() != "(Int) -> Int" {
+		t.Fatalf("expected (Int) -> Int, got %s", fnType.String())
+	}
+}
+
+func TestFunctionTypeMismatch(t *testing.T) {
+	inputMismatch := `
+f: (Int) -> String = |x: Int|: x + 1
+`
+	prog := parser.NewParser(lexer.NewLexer(inputMismatch)).ParseProgram()
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err == nil {
+		t.Fatalf("expected type mismatch error assigning (Int) -> Int to (Int) -> String, got nil")
+	}
+}
+
+func TestHigherOrderFunctionTypeInference(t *testing.T) {
+	input := `
+def map_int(fn: (Int) -> String, x: Int): String:
+    fn(x)
+
+def int_to_str(n: Int): String:
+    "num"
+
+res: String = map_int(int_to_str, 42)
+`
+	p := parser.NewParser(lexer.NewLexer(input))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+
+	resT, ok := inf.scope.Lookup("res")
+	if !ok || resT != TypeString {
+		t.Fatalf("expected res to be String, got %v", resT)
+	}
+}
+
 
 

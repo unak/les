@@ -199,6 +199,11 @@ func (l *Lexer) NextToken() Token {
 				l.advance()
 				l.advance()
 				return t
+			case "->":
+				t := Token{Type: TokenArrow, Literal: "->", Line: l.line, Col: l.col}
+				l.advance()
+				l.advance()
+				return t
 			}
 		}
 

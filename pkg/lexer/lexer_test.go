@@ -67,3 +67,17 @@ func TestLexerBlockTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestLexerArrowToken(t *testing.T) {
+	input := `(Int) -> String`
+	l := NewLexer(input)
+	expected := []TokenType{
+		TokenLParen, TokenIdent, TokenRParen, TokenArrow, TokenIdent, TokenEOF,
+	}
+	for _, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp {
+			t.Fatalf("expected token %v, got %v (%s)", exp, tok.Type, tok.Literal)
+		}
+	}
+}

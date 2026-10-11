@@ -235,6 +235,31 @@ func IsAssignableTo(src, target Type) bool {
 		}
 		return false
 	}
+
+	// If both are FuncType
+	if fSrc, ok := src.(*FuncType); ok {
+		if fTarget, ok := target.(*FuncType); ok {
+			srcArgs, sIsTuple := fSrc.Arg.(*TupleType)
+			targetArgs, tIsTuple := fTarget.Arg.(*TupleType)
+			if sIsTuple && tIsTuple {
+				if len(srcArgs.Elems) != len(targetArgs.Elems) {
+					return false
+				}
+				for i := range srcArgs.Elems {
+					// Contravariant parameter types
+					if !IsAssignableTo(targetArgs.Elems[i], srcArgs.Elems[i]) {
+						return false
+					}
+				}
+			} else {
+				if !IsAssignableTo(fTarget.Arg, fSrc.Arg) {
+					return false
+				}
+			}
+			// Covariant return type
+			return IsAssignableTo(fSrc.Ret, fTarget.Ret)
+		}
+	}
 	return false
 }
 

@@ -45,6 +45,7 @@ const (
 	TokenAt        // @
 	TokenQuestion  // ?
 	TokenPipe      // |
+	TokenArrow     // ->
 	TokenLParen    // (
 	TokenRParen    // )
 	TokenLBracket  // [

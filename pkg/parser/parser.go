@@ -369,8 +369,23 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	params := p.parseFuncParams()
 
 	returnType := ""
-	if p.peekTokenIs(lexer.TokenColon) {
-		p.nextToken() // consume ':'
+	if p.peekTokenIs(lexer.TokenArrow) {
+		p.nextToken() // advance to '->'
+		p.nextToken() // consume '->', advance to return type
+		returnType = p.parseTypeAnnotString()
+		if p.peekTokenIs(lexer.TokenColon) {
+			p.nextToken() // advance to ':'
+		}
+	} else if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // advance to ':'
+		// If followed by return type annot on same line instead of newline/indent:
+		if !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenIndent) && !p.peekTokenIs(lexer.TokenEOF) {
+			p.nextToken() // advance to return type
+			returnType = p.parseTypeAnnotString()
+			if p.peekTokenIs(lexer.TokenColon) {
+				p.nextToken() // advance to ':'
+			}
+		}
 	}
 
 	body := p.parseBlockBody()
@@ -378,7 +393,7 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	return &ast.FuncDef{
 		Name:       name,
 		Params:     params,
-		ReturnType: returnType,
+		ReturnType: strings.TrimSpace(returnType),
 		Body:       body,
 	}
 }
@@ -429,7 +444,7 @@ func (p *Parser) parseTypeAnnotString() string {
 	bracketDepth := 0
 	for {
 		if parenDepth == 0 && bracketDepth == 0 {
-			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) {
+			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
 				break
 			}
 		}
@@ -444,7 +459,7 @@ func (p *Parser) parseTypeAnnotString() string {
 		}
 		parts = append(parts, p.curToken.Literal)
 		if parenDepth == 0 && bracketDepth == 0 {
-			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) {
+			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) {
 				break
 			}
 			if p.peekTokenIs(lexer.TokenPipe) {
@@ -456,7 +471,7 @@ func (p *Parser) parseTypeAnnotString() string {
 		}
 		p.nextToken()
 	}
-	return strings.Join(parts, " ")
+	return normalizeTypeAnnot(parts)
 }
 
 func (p *Parser) parseBlockBody() []ast.Stmt {
@@ -1210,7 +1225,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		bracketDepth := 0
 		for {
 			if parenDepth == 0 && bracketDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) {
 					break
 				}
 			}
@@ -1225,10 +1240,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			}
 			typeParts = append(typeParts, p.curToken.Literal)
 			if parenDepth == 0 && bracketDepth == 0 {
-				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) {
+				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenArrow) {
 					// Must continue to next component
-				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) {
-					// Continue if followed by '|' or '.'
+				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenArrow) {
+					// Continue if followed by '|', '.', or '->'
 				} else {
 					break
 				}
@@ -1356,9 +1371,9 @@ func normalizeTypeAnnot(parts []string) string {
 	for i, part := range parts {
 		if i > 0 {
 			prev := parts[i-1]
-			if prev != "@" && prev != "." && part != "." && part != "|" && prev != "|" {
+			if prev != "@" && prev != "." && part != "." && part != "|" && prev != "|" && part != "->" && prev != "->" {
 				sb.WriteString(" ")
-			} else if part == "|" || prev == "|" {
+			} else if part == "|" || prev == "|" || part == "->" || prev == "->" {
 				sb.WriteString(" ")
 			}
 		}

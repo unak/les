@@ -222,7 +222,28 @@ Listed from highest to lowest precedence:
 - Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
 - User-defined functions cannot create raw side-effect primitives.
 
-### 7. Union Types & Pattern Matching
+### 7. Types, Function Types & Pattern Matching
+- **Function Types (`->`)**:
+  Function types represent callable types mapping argument types to a return type: `(Arg1, Arg2) -> Ret`.
+  - **Syntax**: `(T1, T2) -> Ret`, `(T) -> Ret`, `() -> Ret`, or right-associative higher-order types `(A) -> (B) -> C`.
+  - **Variable annotations**:
+    ```python
+    f: (Int) -> Int = |x|: x * 2
+    ```
+  - **Higher-order function parameters**:
+    ```python
+    def apply(fn: (Int) -> String, x: Int): String:
+        fn(x)
+    ```
+  - **Function return type annotations**:
+    Return types on `def` can be annotated with `:` or `->`:
+    ```python
+    def add(a: Int, b: Int): Int:
+        a + b
+
+    def multiplier(factor: Int) -> (Int) -> Int:
+        |x: Int|: x * factor
+    ```
 - **Union Type Syntax**: `A | B` (e.g., `Int | String`, `Int | Nil`).
 - **Branch Type Inference**: When branches (such as `? :`) return different types, the expression is inferred as a union type (`Int | String`).
 - **Type Test Operator `is`**:
