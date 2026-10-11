@@ -3,55 +3,58 @@
 ## Overview
 Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated scripting language implemented in Go.
 
-## Approved Syntax Specification
-1. **Variables & Optional Types**:
-   ```python
-   x = 10
-   y: Int = 20
-   ```
-2. **Conditionals**:
-   - Multi-line block:
-     ```python
-     if x > 0:
-         1
-     else:
-         0
-     ```
-   - Inline ternary operator: C-style only (`cond ? then_expr : else_expr`).
-     ```python
-     res = x > 0 ? 1 : 0
-     ```
-3. **Tuples & Dicts**:
-   - Tuple literal: `(1, 2, 3)`, empty `()`, single `(1,)`.
-   - Dict literal: `{"key": "value", "a": 1}`.
-   - Indexing: `[]` for both tuple element access (`t[0]`) and dict lookup (`d["key"]`).
-4. **Functions**:
-   ```python
-   def add(a, b):
-       a + b
-   ```
-   - Tail expression implicitly returned (or optional explicit `return`).
-5. **Side-Effect Boundary**:
-   - `print(...)` built-in implicitly drives strict demand evaluation of arguments.
-   - User cannot define raw effect primitives, only wrap them.
+## Core Language Semantics
 
-## MVP Objectives
-1. Basic expressions and `print()` with strict evaluation demand at side-effect points.
-2. Lazy Fibonacci and infinite tuple streams taking head `n` elements:
-   ```python
-   def fib_stream(a, b):
-       (a, fib_stream(b, a + b))
+### 1. Function Application and Tuple Semantics
+- Semantically, all function calls take a single **Tuple** argument.
+- `f(a, b)` passes a 2-tuple `(a, b)`.
+- Function parameter definitions `def f(a, b): ...` pattern-match / destructure the incoming argument tuple.
+- Single argument `f(a)` or `f a`: passes `(a,)` (or 1-element tuple view).
 
-   def take(n, s):
-       n <= 0 ? () : (s[0], take(n - 1, s[1]))
+### 2. Parenthesis Omission & Precedence
+- Omission of parentheses in function application is permitted.
+- **Precedence**: Function call without parentheses has lowest precedence among expression operators, binding greedily:
+  ```python
+  f a + b    # equivalent to f(a + b)
+  print x * 2 + 1  # equivalent to print((x * 2) + 1)
+  ```
+- To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
 
-   print(take(5, fib_stream(0, 1)))
-   ```
-3. Function definitions with lazy parameter evaluation (unused divergent/error arguments are never evaluated):
-   ```python
-   def pick_first(a, b):
-       a
+### 3. Block Arguments (Option A: Ruby-like `do` blocks)
+- Trailing block syntax:
+  ```python
+  each items do |x|:
+      print x
 
-   # 1 / 0 is never evaluated because second arg is never demanded:
-   print(pick_first(42, 1 / 0))
-   ```
+  measure do:
+      heavy_computation()
+
+  map(items) do |x|:
+      x * 2
+  ```
+- Semantics: The block is desugared into a closure / anonymous function passed as the final argument (or appended to the argument tuple).
+
+### 4. Future Lambda Syntax Harmony
+- Block: `do |x|: ...`
+- Inline lambda (harmonious design): `|x|: expr` or `|x, y|: expr`.
+  ```python
+  # Future lambda compatibility:
+  doubled = map items, |x|: x * 2
+  ```
+
+### 5. Control Flow & Operators
+- Multi-line block `if / else`:
+  ```python
+  if x > 0:
+      1
+  else:
+      0
+  ```
+- Inline ternary: C-style only (`cond ? then_expr : else_expr`).
+- Tuples: `()`, `(1,)`, `(1, 2)`.
+- Dicts: `{"a": 1}`.
+- Indexing: `[]` for both tuples and dicts (`t[0]`, `d["a"]`).
+
+### 6. Side Effects
+- Demand-driven strict evaluation at built-in effect points (e.g. `print`).
+- User-defined functions cannot create raw side-effect primitives.
