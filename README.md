@@ -678,5 +678,13 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
   - Native regex matching operations (`s =~ /re/` or `s is /re/`, `re.find(s)`, `re.replace(s, rep)`).
   - Implicitly satisfies the `Show` interface for printing.
 
+### 2. Arbitrary-Precision Integers (Multi-precision `Int`)
+
+`Int` will be upgraded from a fixed 64-bit signed integer to an arbitrary-precision integer (multi-precision / big integer backed by Go's `math/big.Int`).
+
+- **Infinite Magnitude**: `Int` will handle arbitrarily large integers up to available memory limits without overflow or wrap-around (similar to Python 3 and Ruby).
+- **Unified `Int` Type**: Users continue writing `Int` without needing a distinct `BigInt` type. Fast-path optimizations (e.g. 64-bit int fast-path for small values) will be handled transparently under the hood.
+- **Seamless Interop**: Arithmetic operators (`+`, `-`, `*`, `/`, `%`), string formatting, bitwise operations, and Hindley-Milner type inference will continue to work seamlessly without code changes.
+
 
 
