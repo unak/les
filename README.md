@@ -551,5 +551,32 @@ name = @io.ReadLine() # Deferred: does not block yet!
 print "Hello, ", name, "!\n" # name is forced here; user is prompted
 ```
 
+## Planned Features / Future Work
+
+### 1. Regular Expression Type (`Regex`) & `/pattern/flags` Literal
+
+A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is planned for rich text processing.
+
+- **Syntax**: `/pattern/flags` (e.g., `/[a-zA-Z0-9_-]+/`, `/[a-z]+/i`)
+- **Lexer / Parser Disambiguation**:
+  - Disambiguate between division operator (`/`) and regex literal start (`/.../`) using preceding token context:
+    - Preceded by an expression operand (ident, literal, `)`, `]`, `}`): parsed as division `/`.
+    - Preceded by an operator, punctuation, or statement start (e.g., `=`, `(`, `[`, `{`, `,`, `:`, `case`, `return`, `do`): parsed as regex literal `/.../`.
+- **Pattern Matching (`match` / `case`) Integration**:
+  - Seamless matching and capture extraction in `match` statements:
+    ```python
+    match line:
+        case /^GET\s+(\S+)/:
+            # Capture groups extraction / handling
+            print "Matched GET"
+        case /^POST\s+(\S+)/:
+            print "Matched POST"
+        case _:
+            print "Unknown"
+    ```
+- **Methods & Type System**:
+  - Native regex matching operations (`s =~ /re/` or `s is /re/`, `re.find(s)`, `re.replace(s, rep)`).
+  - Implicitly satisfies the `Show` interface for printing.
+
 
 
