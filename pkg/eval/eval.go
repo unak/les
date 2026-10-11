@@ -46,6 +46,59 @@ func (ev *Evaluator) registerBuiltins() {
 			return &TupleValue{Elements: []Value{}}, nil
 		},
 	})
+
+	// type: returns string representation of the runtime type of the value(s).
+	ev.globalEnv.Set("type", &BuiltinFunc{
+		Name: "type",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return StringValue("()"), nil
+			}
+			if len(args) == 1 {
+				val := Force(args[0])
+				return StringValue(typeNameOf(val)), nil
+			}
+			parts := make([]string, len(args))
+			for i, a := range args {
+				parts[i] = typeNameOf(Force(a))
+			}
+			return StringValue("(" + strings.Join(parts, ", ") + ")"), nil
+		},
+	})
+}
+
+func typeNameOf(val Value) string {
+	return typeNameWithDepth(val, 0)
+}
+
+func typeNameWithDepth(val Value, depth int) string {
+	if depth > 10 {
+		return "..."
+	}
+	switch v := val.(type) {
+	case IntValue:
+		return "Int"
+	case FloatValue:
+		return "Float"
+	case StringValue:
+		return "String"
+	case BoolValue:
+		return "Bool"
+	case NilValue:
+		return "Nil"
+	case *TupleValue:
+		parts := make([]string, len(v.Elements))
+		for i, el := range v.Elements {
+			parts[i] = typeNameWithDepth(Force(el), depth+1)
+		}
+		return "(" + strings.Join(parts, ", ") + ")"
+	case *DictValue:
+		return "Dict"
+	case *Closure, *BuiltinFunc:
+		return "Function"
+	default:
+		return "Any"
+	}
 }
 
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {

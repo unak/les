@@ -54,6 +54,11 @@ func NewInferencer() *Inferencer {
 		Arg: TypeAny,
 		Ret: TypeAny,
 	})
+	// Built-in type: (Any) -> String
+	_ = rootScope.Declare("type", &FuncType{
+		Arg: TypeAny,
+		Ret: TypeString,
+	})
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,

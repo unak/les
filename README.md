@@ -192,6 +192,25 @@ Outputs string representations of arguments separated by spaces, followed by a n
   print(1, "two", True, Nil)
   ```
 
+#### `def type(*args: Any): String`
+Returns the string representation of the runtime type of the given value or argument tuple.
+
+- **Arguments**: `*args: Any` — single value or multiple arguments.
+- **Returns**: `String` — type name (e.g. `"Int"`, `"(Int, Int)"`, `"(Int)"`).
+- **Behavior**:
+  - `type(42)` -> `"Int"`
+  - `type((1,))` -> `"(Int)"`
+  - `type(1, 2)` -> `"(Int, Int)"`
+  - `type("hello")` -> `"String"`
+  - `type(Nil)` -> `"Nil"`
+  - `type()` -> `"()"`
+- **Usage**:
+  ```python
+  t = type(42)       # "Int"
+  t2 = type(1, 2)    # "(Int, Int)"
+  ```
+
+
 ### 9. Special Types: `Nil` and `Any`
 - **`Nil`**:
   - Represents the absence of a value (both as the literal `Nil` and the type `Nil`).

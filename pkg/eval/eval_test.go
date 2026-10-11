@@ -328,3 +328,34 @@ print "splat:", h, tail
 	}
 }
 
+func TestEvalTypeBuiltin(t *testing.T) {
+	code := `
+print type(42)
+print type((1,))
+print type(1, 2)
+print type((1, 2))
+print type("les")
+print type(True)
+print type(Nil)
+print type()
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval type builtin failed: %v", err)
+	}
+	expected := "Int\n(Int)\n(Int, Int)\n(Int, Int)\nString\nBool\nNil\n()"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
