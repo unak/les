@@ -12,7 +12,7 @@ Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated 
 | `String` | `"hello"`, `'world'` | UTF-8 encoded string. |
 | `Bool` | `True`, `False` | Boolean value. |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. |
-| `Dict` | `{"a": 1, "b": 2}`, `{}` | Hash table mapping string keys to lazily evaluated values. Indexed by key `d["a"]`. |
+| `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Indexed by key `d["a"]`. |
 
 Type annotations are optional (full HM-style type inference):
 ```python
