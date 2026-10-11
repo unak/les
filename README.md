@@ -195,10 +195,10 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   ```
   Trailing semicolons (e.g. `x = 10;`), multiple consecutive semicolons, and semicolons inside blocks or struct declarations are fully supported.
 - **Line Continuation (`\`)**:
-  Allows a statement to span multiple physical lines. The backslash `\` must be followed immediately by a newline:
+  Allows a statement to span multiple physical lines. The backslash `\` can optionally be followed by trailing whitespace and an inline comment (`# ...`) before the newline:
   ```python
-  total = 10 + \
-          20 + \
+  total = 10 + \          # base value
+          20 + \          # bonus value
           30
 
   def add(a: Int, \

@@ -125,3 +125,18 @@ func TestLexerLineContinuationError(t *testing.T) {
 	}
 }
 
+func TestLexerLineContinuationWithCommentAndWhitespace(t *testing.T) {
+	input := "x = 10 + \\   # trailing comment\n    20 + \\   \n    30\n"
+	l := NewLexer(input)
+	expected := []TokenType{
+		TokenIdent, TokenAssign, TokenInt, TokenPlus, TokenInt, TokenPlus, TokenInt, TokenEOF,
+	}
+	for _, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp {
+			t.Fatalf("expected token %v, got %v (%s)", exp, tok.Type, tok.Literal)
+		}
+	}
+}
+
+

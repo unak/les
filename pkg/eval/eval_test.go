@@ -1323,4 +1323,22 @@ if 1 + \
 	}
 }
 
+func TestEvalLineContinuationWithComments(t *testing.T) {
+	code := `
+val = 10 + \   # base value
+      20 + \   # bonus value
+      30       # final value
+
+print val
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+	expected := "60"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
 

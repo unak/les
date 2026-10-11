@@ -61,11 +61,24 @@ func (l *Lexer) NextToken() Token {
 			continue
 		}
 
-		// Handle line continuation: '\' must be followed immediately by newline
+		// Handle line continuation: '\' optionally followed by whitespace and comment, ending in newline
 		if r == '\\' {
 			startLine := l.line
 			startCol := l.col
 			l.advance() // consume '\\'
+
+			// Skip trailing spaces or tabs on the same line
+			for l.pos < len(l.source) && (l.source[l.pos] == ' ' || l.source[l.pos] == '\t') {
+				l.advance()
+			}
+
+			// Skip trailing comment on the same line
+			if l.pos < len(l.source) && l.source[l.pos] == '#' {
+				for l.pos < len(l.source) && l.source[l.pos] != '\n' {
+					l.advance()
+				}
+			}
+
 			if l.pos < len(l.source) && l.source[l.pos] == '\r' {
 				l.advance()
 			}
@@ -75,7 +88,7 @@ func (l *Lexer) NextToken() Token {
 			}
 			return Token{
 				Type:    TokenError,
-				Literal: "unexpected character '\\': line continuation must be followed by newline",
+				Literal: "unexpected character '\\': line continuation must be followed by newline (or trailing comment)",
 				Line:    startLine,
 				Col:     startCol,
 			}
