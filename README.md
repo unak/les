@@ -9,7 +9,7 @@ Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated 
 |---|---|---|
 | `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
-| `String` | `"hello"`, `'world'` | UTF-8 encoded string. |
+| `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded byte sequence (treated purely as raw UTF-8 byte stream for now). |
 | `Bool` | `True`, `False` | Boolean value. |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Indexed by key `d["a"]`. |
