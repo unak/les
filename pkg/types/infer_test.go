@@ -1,6 +1,8 @@
 package types
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"les/pkg/lexer"
@@ -432,6 +434,109 @@ res: String = map_int(int_to_str, 42)
 		t.Fatalf("expected res to be String, got %v", resT)
 	}
 }
+
+func TestModuleTypeChecking(t *testing.T) {
+	inf := NewInferencer()
+	inf.RegisterModule("math", &ModuleType{
+		Name: "math",
+		Exports: map[string]Type{
+			"Add": &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeInt, TypeInt}},
+				Ret: TypeInt,
+			},
+			"Pi": TypeFloat,
+		},
+	})
+
+	// 1. Success matching
+	inputValid := `
+import math
+res: Int = @math.Add(1, 2)
+pi: Float = @math.Pi
+`
+	progValid := parser.NewParser(lexer.NewLexer(inputValid)).ParseProgram()
+	if err := inf.InferProgram(progValid); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	// 2. Type mismatch with module return type
+	inputMismatch := `
+import math
+res: String = @math.Add(1, 2)
+`
+	progMismatch := parser.NewParser(lexer.NewLexer(inputMismatch)).ParseProgram()
+	infMismatch := NewInferencer()
+	infMismatch.RegisterModule("math", inf.modules["math"])
+	if err := infMismatch.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type mismatch error, got nil")
+	}
+
+	// 3. Undefined member in module
+	inputUndefined := `
+import math
+res = @math.Subtract(10, 5)
+`
+	progUndefined := parser.NewParser(lexer.NewLexer(inputUndefined)).ParseProgram()
+	infUndefined := NewInferencer()
+	infUndefined.RegisterModule("math", inf.modules["math"])
+	if err := infUndefined.InferProgram(progUndefined); err == nil {
+		t.Fatalf("expected undefined member error, got nil")
+	}
+}
+
+func TestFileModuleLoaderTypeChecking(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "les_mod_test_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	calcCode := `
+module calc
+
+def Add(a: Int, b: Int): Int:
+    a + b
+
+def helper(x: Int): Int:
+    x * 2
+
+Version = "1.0"
+`
+	calcPath := filepath.Join(tempDir, "calc.les")
+	if err := os.WriteFile(calcPath, []byte(calcCode), 0644); err != nil {
+		t.Fatalf("failed to write calc.les: %v", err)
+	}
+
+	// 1. Success type checking with FileModuleLoader
+	loader := NewFileModuleLoader(tempDir)
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	mainCode := `
+import calc
+
+ans: Int = @calc.Add(10, 20)
+ver: String = @calc.Version
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	// 2. Private member (lowercase 'helper') is not exported
+	infPrivate := NewInferencer()
+	infPrivate.SetModuleLoader(loader.Load)
+	privateCode := `
+import calc
+x = @calc.helper(5)
+`
+	progPrivate := parser.NewParser(lexer.NewLexer(privateCode)).ParseProgram()
+	if err := infPrivate.InferProgram(progPrivate); err == nil {
+		t.Fatalf("expected error accessing unexported/private member 'helper', got nil")
+	}
+}
+
+
 
 
 

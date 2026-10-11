@@ -14,26 +14,49 @@ import (
 )
 
 func main() {
+	syntaxOnly := flag.Bool("c", false, "check syntax only")
+	typeOnly := flag.Bool("t", false, "check syntax and types only")
+	inlineCode := flag.String("e", "", "evaluate inline script")
+
 	flag.Parse()
 	args := flag.Args()
 
-	if len(args) == 0 {
-		fmt.Println("Les - Lazy Evaluation Script interpreter")
-		fmt.Println("Usage: les <file.les>")
-		os.Exit(1)
+	var codeBytes []byte
+	var filename string
+	var baseDir string
+	var scriptArgs []string
+
+	if *inlineCode != "" {
+		codeBytes = []byte(*inlineCode)
+		filename = "-e"
+		baseDir = "."
+		scriptArgs = args
+	} else {
+		if len(args) == 0 {
+			fmt.Println("Les - Lazy Evaluation Script interpreter")
+			fmt.Println("Usage: les [options] <file.les> [args...]")
+			fmt.Println("       les [options] -e <code> [args...]")
+			fmt.Println("Options:")
+			fmt.Println("  -c         check syntax only")
+			fmt.Println("  -t         check syntax and types only")
+			fmt.Println("  -e <code>  evaluate inline script")
+			os.Exit(1)
+		}
+
+		filename = args[0]
+		scriptArgs = args[1:]
+		baseDir = filepath.Dir(filename)
+
+		var err error
+		codeBytes, err = os.ReadFile(filename)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
-	filename := args[0]
-	codeBytes, err := os.ReadFile(filename)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 1. Lexer
+	// 1. Lexer & Parser
 	l := lexer.NewLexer(string(codeBytes))
-
-	// 2. Parser
 	p := parser.NewParser(l)
 	prog := p.ParseProgram()
 	if len(p.Errors()) > 0 {
@@ -43,22 +66,32 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 3. Type inference & checking
+	if *syntaxOnly {
+		os.Exit(0)
+	}
+
+	// 2. Type inference & checking
 	inferencer := types.NewInferencer()
+	typeLoader := types.NewFileModuleLoader(baseDir)
+	inferencer.SetModuleLoader(typeLoader.Load)
+
 	if err := inferencer.InferProgram(prog); err != nil {
 		fmt.Fprintf(os.Stderr, "Type Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	// 4. Evaluator (call-by-need graph reduction runtime)
+	if *typeOnly {
+		os.Exit(0)
+	}
+
+	// 3. Evaluator (call-by-need graph reduction runtime)
 	evaluator := eval.NewEvaluator()
 	evaluator.SetProgramName(filename)
 	evaluator.SetScriptName(filename)
-	evaluator.SetArgs(args[1:])
+	evaluator.SetArgs(scriptArgs)
 
-	baseDir := filepath.Dir(filename)
-	loader := eval.NewFileModuleLoader(baseDir)
-	evaluator.SetModuleLoader(loader.Load)
+	evalLoader := eval.NewFileModuleLoader(baseDir)
+	evaluator.SetModuleLoader(evalLoader.Load)
 
 	if _, err := evaluator.EvalProgram(prog); err != nil {
 		var exitErr *eval.ExitError

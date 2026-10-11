@@ -410,3 +410,15 @@ func (s *StructType) LookupMember(name string) (Type, error) {
 	return nil, fmt.Errorf("type %s has no field or method '%s'", s.Name, name)
 }
 
+// ModuleType represents a loaded module and its exported member types.
+type ModuleType struct {
+	Name    string
+	Exports map[string]Type
+}
+
+func (m *ModuleType) String() string { return "Module<" + m.Name + ">" }
+func (m *ModuleType) Equals(other Type) bool {
+	om, ok := other.(*ModuleType)
+	return ok && m.Name == om.Name
+}
+

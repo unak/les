@@ -48,8 +48,10 @@ func (s *Scope) Lookup(name string) (Type, bool) {
 
 // Inferencer performs Hindley-Milner type inference with lexical scope checking.
 type Inferencer struct {
-	nextVarID int
-	scope     *Scope
+	nextVarID    int
+	scope        *Scope
+	modules      map[string]*ModuleType
+	moduleLoader func(path string) (*ModuleType, error)
 }
 
 func NewInferencer() *Inferencer {
@@ -86,7 +88,16 @@ func NewInferencer() *Inferencer {
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,
+		modules:   make(map[string]*ModuleType),
 	}
+}
+
+func (inf *Inferencer) SetModuleLoader(loader func(path string) (*ModuleType, error)) {
+	inf.moduleLoader = loader
+}
+
+func (inf *Inferencer) RegisterModule(name string, mod *ModuleType) {
+	inf.modules[name] = mod
 }
 
 func (inf *Inferencer) freshVar() *TypeVar {
@@ -440,6 +451,32 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			_ = inf.scope.Declare("Closer", closerIface)
 			_ = inf.scope.Declare("ReadCloser", readCloserIface)
 			_ = inf.scope.Declare("WriteCloser", writeCloserIface)
+
+			inf.modules["io"] = &ModuleType{
+				Name: "io",
+				Exports: map[string]Type{
+					"Reader":      readerIface,
+					"Writer":      writerIface,
+					"Closer":      closerIface,
+					"ReadCloser":  readCloserIface,
+					"WriteCloser": writeCloserIface,
+					"Stdin":       readCloserIface,
+					"ReadLine": &FuncType{
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+					"ReadAll": &FuncType{
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: TypeString,
+					},
+				},
+			}
+		} else if inf.moduleLoader != nil {
+			mod, err := inf.moduleLoader(s.Path)
+			if err != nil {
+				return err
+			}
+			inf.modules[s.Alias] = mod
 		}
 		return nil
 	case *ast.ModuleDecl:
@@ -591,7 +628,13 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		}
 		return TypeAny, nil
 	case *ast.ModuleAccessExpr:
-		return TypeAny, nil // type of module member (flexible/Any for dynamic module lookup)
+		if mod, ok := inf.modules[e.Module]; ok {
+			if t, ok := mod.Exports[e.Member]; ok {
+				return t, nil
+			}
+			return nil, fmt.Errorf("undefined member '%s' in module '%s'", e.Member, e.Module)
+		}
+		return TypeAny, nil
 	case *ast.IsExpr:
 		_, err := inf.inferExpr(e.Expr)
 		if err != nil {

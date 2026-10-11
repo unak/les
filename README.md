@@ -3,6 +3,33 @@
 ## Overview
 Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated scripting language implemented in Go.
 
+## Command-Line Usage
+
+```bash
+# Run a script file
+les script.les
+
+# Run an inline script (one-liner)
+les -e "x = 10; y = 20; print x + y"
+
+# Check syntax only (-c)
+les -c script.les
+les -c -e "x = 10; y = 20"
+
+# Check syntax and types only (-t), resolving imported modules
+les -t script.les
+les -t -e "x: Int = 10"
+
+# Pass arguments to the script
+les script.les arg1 arg2
+les -e "print Args[0]" foo bar
+```
+
+### Options:
+- `-c`: Check syntax only without type checking or execution.
+- `-t`: Check syntax and static types (including resolving and verifying imported modules) without execution.
+- `-e <code>`: Evaluate the inline script string directly.
+
 ## Built-in Types
 
 | Type | Syntax / Examples | Description |
