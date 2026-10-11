@@ -6,23 +6,57 @@ import (
 	"les/pkg/ast"
 )
 
-// Inferencer performs Hindley-Milner type inference.
+// Scope tracks lexical bindings and detects duplicate declarations in the same scope.
+type Scope struct {
+	parent   *Scope
+	bindings map[string]Type
+	declared map[string]bool // declarations made specifically in this lexical scope
+}
+
+func NewScope(parent *Scope) *Scope {
+	return &Scope{
+		parent:   parent,
+		bindings: make(map[string]Type),
+		declared: make(map[string]bool),
+	}
+}
+
+func (s *Scope) Declare(name string, t Type) error {
+	if s.declared[name] {
+		return fmt.Errorf("duplicate declaration of '%s' in the same scope", name)
+	}
+	s.declared[name] = true
+	s.bindings[name] = t
+	return nil
+}
+
+func (s *Scope) Lookup(name string) (Type, bool) {
+	if t, ok := s.bindings[name]; ok {
+		return t, true
+	}
+	if s.parent != nil {
+		return s.parent.Lookup(name)
+	}
+	return nil, false
+}
+
+// Inferencer performs Hindley-Milner type inference with lexical scope checking.
 type Inferencer struct {
 	nextVarID int
-	env       map[string]Type
+	scope     *Scope
 }
 
 func NewInferencer() *Inferencer {
-	inf := &Inferencer{
-		nextVarID: 0,
-		env:       make(map[string]Type),
-	}
+	rootScope := NewScope(nil)
 	// Built-in print: (Any) -> Any
-	inf.env["print"] = &FuncType{
+	_ = rootScope.Declare("print", &FuncType{
 		Arg: TypeAny,
 		Ret: TypeAny,
+	})
+	return &Inferencer{
+		nextVarID: 0,
+		scope:     rootScope,
 	}
-	return inf
 }
 
 func (inf *Inferencer) freshVar() *TypeVar {
@@ -47,14 +81,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if err != nil {
 			return err
 		}
+		targetType := valType
 		if s.TypeAnnot != "" {
 			expected := parseTypeAnnot(s.TypeAnnot)
 			if !expected.Equals(valType) {
 				return fmt.Errorf("type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
 			}
-			inf.env[s.Name] = expected
-		} else {
-			inf.env[s.Name] = valType
+			targetType = expected
+		}
+		// Enforce same-scope duplicate declaration prohibition
+		if err := inf.scope.Declare(s.Name, targetType); err != nil {
+			return err
 		}
 		return nil
 
@@ -71,20 +108,28 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			Arg: &TupleType{Elems: paramTypes},
 			Ret: TypeAny,
 		}
-		inf.env[s.Name] = fnType
+		// Function declaration in current scope
+		if err := inf.scope.Declare(s.Name, fnType); err != nil {
+			return err
+		}
 
-		// Check body statements
-		savedEnv := make(map[string]Type)
-		for k, v := range inf.env {
-			savedEnv[k] = v
-		}
+		// Create child scope for function parameters and body (shadowing allowed)
+		childScope := NewScope(inf.scope)
 		for i, p := range s.Params {
-			inf.env[p.Name] = paramTypes[i]
+			if err := childScope.Declare(p.Name, paramTypes[i]); err != nil {
+				return fmt.Errorf("duplicate parameter '%s' in function '%s'", p.Name, s.Name)
+			}
 		}
+
+		prevScope := inf.scope
+		inf.scope = childScope
 		for _, bStmt := range s.Body {
-			_ = inf.inferStmt(bStmt)
+			if err := inf.inferStmt(bStmt); err != nil {
+				inf.scope = prevScope
+				return err
+			}
 		}
-		inf.env = savedEnv
+		inf.scope = prevScope
 		return nil
 
 	case *ast.ExprStmt:
@@ -110,7 +155,7 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 	case *ast.BoolLit:
 		return TypeBool, nil
 	case *ast.Identifier:
-		if t, ok := inf.env[e.Name]; ok {
+		if t, ok := inf.scope.Lookup(e.Name); ok {
 			return t, nil
 		}
 		return TypeAny, nil // forward reference or flexible variable
