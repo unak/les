@@ -428,6 +428,9 @@ func (p *Parser) parseFuncParams() []ast.FuncParam {
 
 		if p.peekTokenIs(lexer.TokenComma) {
 			p.nextToken()
+			if p.peekTokenIs(lexer.TokenRParen) {
+				break
+			}
 			p.nextToken()
 		} else {
 			break
@@ -1012,6 +1015,9 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 
 				if p.peekTokenIs(lexer.TokenComma) {
 					p.nextToken() // consume ','
+					if p.peekTokenIs(lexer.TokenPipe) {
+						break
+					}
 					p.nextToken() // advance to next param
 				} else {
 					break
@@ -1319,6 +1325,9 @@ func (p *Parser) parseCallArguments() []ast.Expr {
 
 	for p.peekTokenIs(lexer.TokenComma) {
 		p.nextToken() // consume ','
+		if p.peekTokenIs(lexer.TokenRParen) {
+			break
+		}
 		p.nextToken()
 		args = append(args, p.parseCallArgumentItem())
 	}

@@ -605,3 +605,154 @@ interface ReadCloser:
 	}
 }
 
+func TestParseMultilineTupleAndDict(t *testing.T) {
+	input := `
+t1 = (
+    1,
+    2,
+    3,
+)
+
+t2 = (
+    10,
+    20
+)
+
+d1 = {
+    "a": 1,
+    "b": 2,
+}
+
+d2 = {
+    "x": 100,
+    "y": 200
+}
+
+empty_t = (
+)
+
+empty_d = {
+}
+
+t_comment = (
+    # comment 1
+    1,
+    # comment 2
+    2,
+)
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 7 {
+		t.Fatalf("expected 7 statements, got %d", len(prog.Body))
+	}
+
+	// t1
+	vd1, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok || vd1.Name != "t1" {
+		t.Fatalf("expected t1 VarDecl, got %+v", prog.Body[0])
+	}
+	tup1, ok := vd1.Value.(*ast.TupleLit)
+	if !ok || len(tup1.Elements) != 3 {
+		t.Fatalf("expected TupleLit with 3 elements, got %+v", vd1.Value)
+	}
+
+	// t2
+	vd2, ok := prog.Body[1].(*ast.VarDecl)
+	if !ok || vd2.Name != "t2" {
+		t.Fatalf("expected t2 VarDecl, got %+v", prog.Body[1])
+	}
+	tup2, ok := vd2.Value.(*ast.TupleLit)
+	if !ok || len(tup2.Elements) != 2 {
+		t.Fatalf("expected TupleLit with 2 elements, got %+v", vd2.Value)
+	}
+
+	// d1
+	vd3, ok := prog.Body[2].(*ast.VarDecl)
+	if !ok || vd3.Name != "d1" {
+		t.Fatalf("expected d1 VarDecl, got %+v", prog.Body[2])
+	}
+	dict1, ok := vd3.Value.(*ast.DictLit)
+	if !ok || len(dict1.Entries) != 2 {
+		t.Fatalf("expected DictLit with 2 entries, got %+v", vd3.Value)
+	}
+
+	// d2
+	vd4, ok := prog.Body[3].(*ast.VarDecl)
+	if !ok || vd4.Name != "d2" {
+		t.Fatalf("expected d2 VarDecl, got %+v", prog.Body[3])
+	}
+	dict2, ok := vd4.Value.(*ast.DictLit)
+	if !ok || len(dict2.Entries) != 2 {
+		t.Fatalf("expected DictLit with 2 entries, got %+v", vd4.Value)
+	}
+
+	// empty_t
+	vd5, ok := prog.Body[4].(*ast.VarDecl)
+	if !ok || vd5.Name != "empty_t" {
+		t.Fatalf("expected empty_t VarDecl, got %+v", prog.Body[4])
+	}
+	emptyTup, ok := vd5.Value.(*ast.TupleLit)
+	if !ok || len(emptyTup.Elements) != 0 {
+		t.Fatalf("expected empty TupleLit, got %+v", vd5.Value)
+	}
+
+	// empty_d
+	vd6, ok := prog.Body[5].(*ast.VarDecl)
+	if !ok || vd6.Name != "empty_d" {
+		t.Fatalf("expected empty_d VarDecl, got %+v", prog.Body[5])
+	}
+	emptyDict, ok := vd6.Value.(*ast.DictLit)
+	if !ok || len(emptyDict.Entries) != 0 {
+		t.Fatalf("expected empty DictLit, got %+v", vd6.Value)
+	}
+
+	// t_comment
+	vd7, ok := prog.Body[6].(*ast.VarDecl)
+	if !ok || vd7.Name != "t_comment" {
+		t.Fatalf("expected t_comment VarDecl, got %+v", prog.Body[6])
+	}
+	tupComment, ok := vd7.Value.(*ast.TupleLit)
+	if !ok || len(tupComment.Elements) != 2 {
+		t.Fatalf("expected TupleLit with 2 elements, got %+v", vd7.Value)
+	}
+}
+
+func TestParseMultilineNestedAndCalls(t *testing.T) {
+	input := `
+nested = {
+    "tuple": (
+        1,
+        (
+            2,
+            3,
+        ),
+    ),
+    "single": (
+        42,
+    ),
+}
+
+def add(a: Int, b: Int): Int:
+    a + b
+
+res = add(
+    10,
+    20,
+)
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+}
+

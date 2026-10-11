@@ -1242,3 +1242,28 @@ anonIsGreeter = anon is Greeter
 	}
 }
 
+func TestEvalMultilineTupleAndDict(t *testing.T) {
+	code := `
+t = (
+    10,
+    20,
+    30,
+)
+
+d = {
+    "a": 1,
+    "b": 2,
+}
+
+print t[0] + t[1] + t[2], " ", d["a"] + d["b"]
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+	expected := "60 3"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+

@@ -11,8 +11,8 @@ Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated 
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
 | `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
 | `Bool` | `True`, `False` | Boolean value. |
-| `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. |
-| `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Indexed by key `d["a"]`. |
+| `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
+| `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. |
 
 Type annotations are optional (full HM-style type inference):
 ```python
@@ -80,16 +80,18 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
     ```
 
 ### 3. Scope & Rebinding Rules
-- **Same Scope Rebinding**: **Forbidden (Error)**. A variable cannot be redeclared or rebound within the same lexical scope:
+- **Same Scope Rebinding**: **Allowed if the new value has the same or compatible type**. Rebinding with an incompatible type produces a static type error:
   ```python
   x = 10
-  x = 20  # Compile / Type Error: duplicate definition of 'x' in same scope
+  x = x + 1  # OK: re-bound to Int
+  x = "str"  # Type Error: cannot rebind variable 'x' of type Int with incompatible type String
   ```
 - **Nested / Closure Scope Shadowing**: **Allowed**. Inner scopes (such as inside a function, block, or closure) may define a variable that shadows an outer scope variable:
   ```python
   x = 10
   def f():
-      x = 20  # OK: shadows outer 'x' within f's local scope
+      x = "hello"  # OK: shadows outer 'x' within f's local scope with any type
+  ```
 ### 4. Unified Namespace (Lisp-1) & Bare Callable Statements
 - **Lisp-1 Namespace**: Functions and variables share the same unified lexical namespace. Functions are first-class citizens and can be assigned to variables or passed to higher-order functions directly:
   ```python
