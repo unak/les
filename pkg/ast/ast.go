@@ -91,6 +91,12 @@ type BoolLit struct {
 func (b *BoolLit) node() {}
 func (b *BoolLit) expr() {}
 
+// NilLit represents nil literal.
+type NilLit struct{}
+
+func (n *NilLit) node() {}
+func (n *NilLit) expr() {}
+
 // TupleLit represents tuple literal, e.g. (1, 2, 3), (), (1,).
 type TupleLit struct {
 	Elements []Expr

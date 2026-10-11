@@ -160,6 +160,8 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		return TypeString, nil
 	case *ast.BoolLit:
 		return TypeBool, nil
+	case *ast.NilLit:
+		return TypeNil, nil
 	case *ast.Identifier:
 		if t, ok := inf.scope.Lookup(e.Name); ok {
 			return t, nil
@@ -338,6 +340,10 @@ func parseTypeAnnot(annot string) Type {
 		return TypeString
 	case "Bool":
 		return TypeBool
+	case "Nil":
+		return TypeNil
+	case "Any":
+		return TypeAny
 	}
 
 	// Tuple annotation: (Int, ...) or (Int, String)

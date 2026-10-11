@@ -33,6 +33,10 @@ func (v BoolValue) String() string {
 	return "False"
 }
 
+type NilValue struct{}
+
+func (v NilValue) String() string { return "Nil" }
+
 // TupleValue holds lazy values (Thunks or direct values).
 type TupleValue struct {
 	Elements []Value

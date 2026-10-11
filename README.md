@@ -150,7 +150,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 - User-defined functions cannot create raw side-effect primitives.
 
 ### 7. Union Types & Pattern Matching
-- **Union Type Syntax**: `A | B` (e.g., `Int | String`, `Int | None`).
+- **Union Type Syntax**: `A | B` (e.g., `Int | String`, `Int | Nil`).
 - **Branch Type Inference**: When branches (such as `? :`) return different types, the expression is inferred as a union type (`Int | String`).
 - **Type Test Operator `is`**:
   - Binary operator testing dynamic value type: `expr is Type`.
@@ -168,25 +168,37 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
               print "number:", v
           case String:
               print "string:", v
+          case Nil:
+              print "nil value"
           case _:
               print "other"
 
   classify 100
   classify "les"
+  classify Nil
   ```
 
 ### 8. Built-in Functions
 
-#### `def print(*args: Any): ()`
+#### `def print(arg: Any, ...): ()`
 Outputs string representations of arguments separated by spaces, followed by a newline.
 
 - **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
-- **Arguments**: `*args: Any` — variable number of values to print.
+- **Arguments**: `(arg: Any, ...)` — variable number of values to print.
 - **Returns**: `()` (empty tuple).
 - **Usage**:
   ```python
   print "Hello, world!"
-  print(1, "two", True)
+  print(1, "two", True, Nil)
   ```
+
+### 9. Special Types: `Nil` and `Any`
+- **`Nil`**:
+  - Represents the absence of a value (both as the literal `Nil` and the type `Nil`).
+  - Useful in union types such as `Int | Nil` (nullable/optional semantics).
+- **`Any`**:
+  - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
+  - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
+
 
 

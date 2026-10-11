@@ -162,6 +162,8 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return StringValue(e.Value), nil
 	case *ast.BoolLit:
 		return BoolValue(e.Value), nil
+	case *ast.NilLit:
+		return NilValue{}, nil
 
 	case *ast.Identifier:
 		v, ok := env.Get(e.Name)
@@ -406,6 +408,11 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 	}
 
 	switch typeAnnot {
+	case "Any":
+		return true
+	case "Nil":
+		_, ok := val.(NilValue)
+		return ok
 	case "Int":
 		_, ok := val.(IntValue)
 		return ok

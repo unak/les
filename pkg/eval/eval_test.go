@@ -190,3 +190,34 @@ classify True
 	}
 }
 
+func TestEvalNilAndAny(t *testing.T) {
+	code := `
+x = Nil
+print x is Nil, x is Any, 42 is Any, 42 is Nil
+
+match x:
+    case Nil:
+        print "got nil"
+    case _:
+        print "other"
+`
+	var out strings.Builder
+	ev := NewEvaluator()
+	ev.SetOutput(&out)
+
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval nil/any failed: %v", err)
+	}
+	expected := "True True True False\ngot nil"
+	if strings.TrimSpace(out.String()) != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+

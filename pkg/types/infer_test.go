@@ -129,3 +129,28 @@ val: Int | String = res
 	}
 }
 
+func TestAssignableAnyAndNil(t *testing.T) {
+	// Any is a safe top type: anything is assignable to Any, but Any is not assignable to Int
+	if !IsAssignableTo(TypeInt, TypeAny) {
+		t.Errorf("expected Int to be assignable to Any")
+	}
+	if !IsAssignableTo(TypeNil, TypeAny) {
+		t.Errorf("expected Nil to be assignable to Any")
+	}
+	if IsAssignableTo(TypeAny, TypeInt) {
+		t.Errorf("Any should NOT be assignable to Int without narrowing")
+	}
+
+	// Nil with Union
+	nilOrInt := NewUnionType(TypeInt, TypeNil)
+	if !IsAssignableTo(TypeNil, nilOrInt) {
+		t.Errorf("expected Nil to be assignable to Int | Nil")
+	}
+	if !IsAssignableTo(TypeInt, nilOrInt) {
+		t.Errorf("expected Int to be assignable to Int | Nil")
+	}
+	if IsAssignableTo(TypeString, nilOrInt) {
+		t.Errorf("expected String NOT to be assignable to Int | Nil")
+	}
+}
+

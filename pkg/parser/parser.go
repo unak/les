@@ -473,7 +473,7 @@ func (p *Parser) canStartArgument() bool {
 	// Exclude '(' because 'f(...)' is standard call handled by parseInfix
 	t := p.peekToken.Type
 	switch t {
-	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool,
+	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil,
 		lexer.TokenLBracket, lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
 		return true
 	default:
@@ -510,6 +510,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.StringLit{Value: p.curToken.Literal}
 	case lexer.TokenBool:
 		return &ast.BoolLit{Value: p.curToken.Literal == "True"}
+	case lexer.TokenNil:
+		return &ast.NilLit{}
 	case lexer.TokenMinus, lexer.TokenNot:
 		op := p.curToken.Literal
 		p.nextToken()

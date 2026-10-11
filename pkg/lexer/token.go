@@ -18,6 +18,7 @@ const (
 	TokenFloat
 	TokenString
 	TokenBool
+	TokenNil
 
 	// Keywords
 	TokenDef

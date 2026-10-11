@@ -423,6 +423,8 @@ func (l *Lexer) readIdentifier() Token {
 		tokType = TokenCase
 	case "True", "False":
 		tokType = TokenBool
+	case "Nil":
+		tokType = TokenNil
 	}
 
 	return Token{

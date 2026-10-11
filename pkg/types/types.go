@@ -16,14 +16,12 @@ const (
 	TypeFloat  PrimType = "Float"
 	TypeString PrimType = "String"
 	TypeBool   PrimType = "Bool"
+	TypeNil    PrimType = "Nil"
 	TypeAny    PrimType = "Any"
 )
 
 func (p PrimType) String() string { return string(p) }
 func (p PrimType) Equals(other Type) bool {
-	if other == TypeAny || p == TypeAny {
-		return true
-	}
 	op, ok := other.(PrimType)
 	return ok && p == op
 }
@@ -54,9 +52,6 @@ func (t *TupleType) String() string {
 }
 
 func (t *TupleType) Equals(other Type) bool {
-	if other == TypeAny {
-		return true
-	}
 	ot, ok := other.(*TupleType)
 	if !ok {
 		return false
@@ -96,9 +91,6 @@ func (d *DictType) String() string {
 }
 
 func (d *DictType) Equals(other Type) bool {
-	if other == TypeAny {
-		return true
-	}
 	od, ok := other.(*DictType)
 	if !ok {
 		return false
@@ -117,9 +109,6 @@ func (f *FuncType) String() string {
 }
 
 func (f *FuncType) Equals(other Type) bool {
-	if other == TypeAny {
-		return true
-	}
 	of, ok := other.(*FuncType)
 	if !ok {
 		return false
@@ -190,9 +179,6 @@ func (u *UnionType) String() string {
 }
 
 func (u *UnionType) Equals(other Type) bool {
-	if other == TypeAny {
-		return true
-	}
 	ou, ok := other.(*UnionType)
 	if !ok {
 		return false
@@ -217,7 +203,7 @@ func (u *UnionType) Equals(other Type) bool {
 
 // IsAssignableTo checks if source type can be assigned to target type (handling subtyping and unions).
 func IsAssignableTo(src, target Type) bool {
-	if target == TypeAny || src == TypeAny {
+	if target == TypeAny {
 		return true
 	}
 	if target.Equals(src) {
