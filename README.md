@@ -164,6 +164,24 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   else:
       0
   ```
+- **`for` Loops & Loop Control**:
+  Go-style `for` loops support both condition-controlled loops (`for <cond>:`) and infinite loops (`for:`), with `break` and `continue`:
+  ```python
+  # Infinite loop with break and continue
+  for:
+      line = @io.ReadLine()
+      if line is Nil:
+          break
+      print line, "\n"
+
+  # Condition-based loop
+  i = 0
+  for i < 10:
+      print i, "\n"
+      i = i + 1
+  ```
+- **Same-Type Variable Rebinding**:
+  Re-binding an existing variable in the current scope is allowed as long as the new value has the same (or compatible) type. Type-mismatched assignments (e.g. `x = 10` followed by `x = "hello"`) are caught as static type errors. When rebinding an existing variable, the right-hand side is strictly evaluated (forced) immediately to prevent lazy evaluation cycles.
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 

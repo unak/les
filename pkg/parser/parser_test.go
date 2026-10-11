@@ -102,6 +102,52 @@ y = scriptLine
 	}
 }
 
+func TestParseForStmt(t *testing.T) {
+	input := `
+for x > 0:
+    print x
+    continue
+    break
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Body))
+	}
+	forStmt, ok := prog.Body[0].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("expected ForStmt, got %T", prog.Body[0])
+	}
+	if forStmt.Cond == nil {
+		t.Fatalf("expected non-nil Cond")
+	}
+	if len(forStmt.Body) != 3 {
+		t.Fatalf("expected 3 body statements, got %d", len(forStmt.Body))
+	}
+}
+
+func TestParseInfiniteForStmt(t *testing.T) {
+	input := `
+for:
+    print "loop"
+    break
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	forStmt, ok := prog.Body[0].(*ast.ForStmt)
+	if !ok || forStmt.Cond != nil {
+		t.Fatalf("expected infinite ForStmt with nil Cond, got %+v", prog.Body[0])
+	}
+}
+
 func TestParseTernary(t *testing.T) {
 	input := `res = x > 0 ? 1 : 0`
 	l := lexer.NewLexer(input)

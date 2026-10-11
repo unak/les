@@ -119,13 +119,20 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseInterfaceDef()
 	case lexer.TokenIf:
 		return p.parseIfStmt()
+	case lexer.TokenFor:
+		return p.parseForStmt()
 	case lexer.TokenReturn:
 		return p.parseReturnStmt()
 	case lexer.TokenBreak:
 		if p.inClosureDepth <= 0 {
-			p.errors = append(p.errors, fmt.Sprintf("break outside of closure at line %d col %d", p.curToken.Line, p.curToken.Col))
+			p.errors = append(p.errors, fmt.Sprintf("break outside of closure or loop at line %d col %d", p.curToken.Line, p.curToken.Col))
 		}
 		return p.parseBreakStmt()
+	case lexer.TokenContinue:
+		if p.inClosureDepth <= 0 {
+			p.errors = append(p.errors, fmt.Sprintf("continue outside of loop at line %d col %d", p.curToken.Line, p.curToken.Col))
+		}
+		return p.parseContinueStmt()
 	case lexer.TokenLParen:
 		if p.isUnpackParenDeclStart() {
 			return p.parseUnpackDeclWithParen()
@@ -506,6 +513,29 @@ func (p *Parser) parseIfStmt() *ast.IfStmt {
 		ThenBody: thenBody,
 		ElseBody: elseBody,
 	}
+}
+
+func (p *Parser) parseForStmt() *ast.ForStmt {
+	p.nextToken() // consume 'for'
+	var cond ast.Expr
+	if !p.curTokenIs(lexer.TokenColon) && !p.peekTokenIs(lexer.TokenColon) {
+		cond = p.parseExpr(PREC_LOWEST)
+	}
+
+	p.inClosureDepth++
+	body := p.parseBlockBody()
+	p.inClosureDepth--
+
+	return &ast.ForStmt{
+		Cond: cond,
+		Body: body,
+	}
+}
+
+func (p *Parser) parseContinueStmt() *ast.ContinueStmt {
+	p.nextToken() // consume 'continue'
+	p.consumeStmtEnd()
+	return &ast.ContinueStmt{}
 }
 
 func (p *Parser) parseMatchExpr() *ast.MatchExpr {
@@ -1180,7 +1210,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		bracketDepth := 0
 		for {
 			if parenDepth == 0 && bracketDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) {
 					break
 				}
 			}
@@ -1195,8 +1225,8 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			}
 			typeParts = append(typeParts, p.curToken.Literal)
 			if parenDepth == 0 && bracketDepth == 0 {
-				if p.curTokenIs(lexer.TokenPipe) {
-					// After '|', must continue to next type component
+				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) {
+					// Must continue to next component
 				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) {
 					// Continue if followed by '|' or '.'
 				} else {
@@ -1207,7 +1237,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		}
 		return &ast.IsExpr{
 			Expr:      left,
-			TypeAnnot: strings.Join(typeParts, " "),
+			TypeAnnot: normalizeTypeAnnot(typeParts),
 		}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
@@ -1319,4 +1349,20 @@ func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
 
 func (p *Parser) Errors() []string {
 	return p.errors
+}
+
+func normalizeTypeAnnot(parts []string) string {
+	var sb strings.Builder
+	for i, part := range parts {
+		if i > 0 {
+			prev := parts[i-1]
+			if prev != "@" && prev != "." && part != "." && part != "|" && prev != "|" {
+				sb.WriteString(" ")
+			} else if part == "|" || prev == "|" {
+				sb.WriteString(" ")
+			}
+		}
+		sb.WriteString(part)
+	}
+	return sb.String()
 }

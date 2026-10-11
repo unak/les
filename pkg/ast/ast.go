@@ -265,13 +265,28 @@ type ReturnStmt struct {
 func (r *ReturnStmt) node() {}
 func (r *ReturnStmt) stmt() {}
 
-// BreakStmt represents breaking out of a closure (lambda/block).
+// BreakStmt represents breaking out of a closure (lambda/block) or loop.
 type BreakStmt struct {
 	Value Expr
 }
 
 func (b *BreakStmt) node() {}
 func (b *BreakStmt) stmt() {}
+
+// ContinueStmt represents continuing to the next iteration of a loop.
+type ContinueStmt struct{}
+
+func (c *ContinueStmt) node() {}
+func (c *ContinueStmt) stmt() {}
+
+// ForStmt represents for loop: for [cond]: body. Body is executed as an implicit closure per iteration.
+type ForStmt struct {
+	Cond Expr   // nil for infinite loop `for:`
+	Body []Stmt
+}
+
+func (f *ForStmt) node() {}
+func (f *ForStmt) stmt() {}
 
 // ExprStmt represents expression evaluated as statement.
 type ExprStmt struct {

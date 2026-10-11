@@ -24,7 +24,12 @@ func NewScope(parent *Scope) *Scope {
 
 func (s *Scope) Declare(name string, t Type) error {
 	if s.declared[name] {
-		return fmt.Errorf("duplicate declaration of '%s' in the same scope", name)
+		existingType := s.bindings[name]
+		if !IsAssignableTo(t, existingType) {
+			return fmt.Errorf("cannot assign value of type %s to variable '%s' of type %s", t, name, existingType)
+		}
+		s.bindings[name] = t
+		return nil
 	}
 	s.declared[name] = true
 	s.bindings[name] = t
@@ -193,6 +198,23 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if s.Value != nil {
 			_, err := inf.inferExpr(s.Value)
 			return err
+		}
+		return nil
+
+	case *ast.ContinueStmt:
+		return nil
+
+	case *ast.ForStmt:
+		if s.Cond != nil {
+			_, err := inf.inferExpr(s.Cond)
+			if err != nil {
+				return err
+			}
+		}
+		for _, bStmt := range s.Body {
+			if err := inf.inferStmt(bStmt); err != nil {
+				return err
+			}
 		}
 		return nil
 

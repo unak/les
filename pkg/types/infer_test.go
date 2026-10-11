@@ -46,7 +46,7 @@ func TestTypeMismatch(t *testing.T) {
 	}
 }
 
-func TestSameScopeDuplicateDeclarationError(t *testing.T) {
+func TestSameScopeRebindingAllowed(t *testing.T) {
 	input := `x = 10
 x = 20`
 	l := lexer.NewLexer(input)
@@ -55,8 +55,22 @@ x = 20`
 
 	inf := NewInferencer()
 	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("expected same-type rebinding to succeed, got %v", err)
+	}
+}
+
+func TestSameScopeTypeMismatchRebindingError(t *testing.T) {
+	input := `x = 10
+x = "string"`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
 	if err == nil {
-		t.Fatalf("expected duplicate declaration error, got nil")
+		t.Fatalf("expected type mismatch on rebinding error, got nil")
 	}
 }
 

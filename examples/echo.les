@@ -1,0 +1,8 @@
+import io
+
+# Echo program: reads lines from standard input and prints each line
+for:
+    line = @io.ReadLine()
+    if line is Nil:
+        break
+    print line, "\n"

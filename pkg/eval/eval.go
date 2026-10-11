@@ -232,6 +232,13 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
+		if _, ok := env.store[s.Name]; ok {
+			// Re-binding existing variable in current environment:
+			// Force RHS immediately to avoid circular reference in lazy thunk
+			newVal := Force(NewThunk(s.Value, env))
+			env.store[s.Name] = newVal
+			return nil, nil
+		}
 		// Wrap RHS in lazy Thunk!
 		thunk := NewThunk(s.Value, env)
 		env.Set(s.Name, thunk)
@@ -365,14 +372,35 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			brkVal = v
 		}
 
-		if env.ActiveClosureID == 0 {
-			return nil, fmt.Errorf("break outside of closure")
+		if env.ActiveLoopID != 0 {
+			panic(&BreakSignal{
+				LoopID: env.ActiveLoopID,
+				Value:  brkVal,
+			})
 		}
+		if env.ActiveClosureID != 0 {
+			panic(&BreakSignal{
+				ClosureID: env.ActiveClosureID,
+				Value:     brkVal,
+			})
+		}
+		return nil, fmt.Errorf("break outside of closure or loop")
 
-		panic(&BreakSignal{
-			ClosureID: env.ActiveClosureID,
-			Value:     brkVal,
-		})
+	case *ast.ContinueStmt:
+		if env.ActiveLoopID != 0 {
+			panic(&ContinueSignal{
+				LoopID: env.ActiveLoopID,
+			})
+		}
+		if env.ActiveClosureID != 0 {
+			panic(&ContinueSignal{
+				ClosureID: env.ActiveClosureID,
+			})
+		}
+		return nil, fmt.Errorf("continue outside of loop")
+
+	case *ast.ForStmt:
+		return env.evalForStmt(s)
 
 	case *ast.IfStmt:
 		condVal := Force(NewThunk(s.Cond, env))
@@ -511,12 +539,86 @@ func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (val Value
 					}
 					panic(brk)
 				}
+				if cont, ok := r.(*ContinueSignal); ok {
+					if cont.ClosureID == myCallID {
+						val = &TupleValue{Elements: []Value{}}
+						err = nil
+						return
+					}
+					panic(cont)
+				}
 			}
 			panic(r)
 		}
 	}()
 
 	return callEnv.evalBlock(fn.Body)
+}
+
+func (env *Environment) evalForStmt(s *ast.ForStmt) (Value, error) {
+	loopID := nextCallID()
+	prevLoopID := env.ActiveLoopID
+	env.ActiveLoopID = loopID
+	defer func() {
+		env.ActiveLoopID = prevLoopID
+	}()
+
+	var breakVal Value = &TupleValue{Elements: []Value{}}
+
+	for {
+		if s.Cond != nil {
+			condVal := Force(NewThunk(s.Cond, env))
+			bVal, ok := condVal.(BoolValue)
+			if !ok {
+				return nil, fmt.Errorf("for condition must be Bool, got %v", condVal)
+			}
+			if !bool(bVal) {
+				break
+			}
+		}
+
+		var broke bool
+		var loopErr error
+
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if brk, ok := r.(*BreakSignal); ok {
+						if brk.LoopID == loopID || brk.ClosureID == loopID {
+							broke = true
+							if brk.Value != nil {
+								breakVal = brk.Value
+							}
+							return
+						}
+					}
+					if cont, ok := r.(*ContinueSignal); ok {
+						if cont.LoopID == loopID || cont.ClosureID == loopID {
+							return // continue to next iteration
+						}
+					}
+					// propagate return / outer break / panic
+					panic(r)
+				}
+			}()
+
+			for _, stmt := range s.Body {
+				if _, err := env.evalStmt(stmt); err != nil {
+					loopErr = err
+					return
+				}
+			}
+		}()
+
+		if loopErr != nil {
+			return nil, loopErr
+		}
+		if broke {
+			break
+		}
+	}
+
+	return breakVal, nil
 }
 
 func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
@@ -1006,6 +1108,19 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 					return true
 				}
 			}
+			// Check if typeAnnot is module qualified: @io.Reader
+			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {
+				parts := strings.SplitN(typeAnnot[1:], ".", 2)
+				modName := parts[0]
+				typeName := parts[1]
+				if modVal, found := si.Def.Env.GetModule(modName); found {
+					if expVal, ok := modVal.Exports[typeName]; ok {
+						if ifaceDef, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+							return structImplementsInterfaceValue(si, ifaceDef)
+						}
+					}
+				}
+			}
 			// Check if typeAnnot is an Interface in the struct's definition env
 			if ifaceVal, found := si.Def.Env.Get(typeAnnot); found {
 				if ifaceDef, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
@@ -1025,32 +1140,45 @@ func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue
 		if err != nil {
 			return false
 		}
-		closure, isClosure := Force(memberVal).(*Closure)
-		if !isClosure {
-			return false
-		}
-		// Check param count (excluding self)
-		nonSelfCount := 0
-		for _, p := range closure.Params {
-			if p.Name != "self" {
-				nonSelfCount++
+		forced := Force(memberVal)
+		switch fn := forced.(type) {
+		case *Closure:
+			// Check param count (excluding self)
+			nonSelfCount := 0
+			for _, p := range fn.Params {
+				if p.Name != "self" {
+					nonSelfCount++
+				}
 			}
-		}
-		if nonSelfCount != len(sig.Params) {
+			if nonSelfCount != len(sig.Params) {
+				return false
+			}
+		case *BuiltinFunc:
+			// BuiltinFunc satisfies interface method
+		default:
 			return false
 		}
 	}
 	// Check embedded interfaces
 	for _, embName := range iface.Embedded {
+		var embDef *InterfaceDefValue
 		if embVal, found := si.Def.Env.Get(embName); found {
-			if embDef, isIface := Force(embVal).(*InterfaceDefValue); isIface {
-				if !structImplementsInterfaceValue(si, embDef) {
-					return false
-				}
-			} else {
-				return false
+			if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
+				embDef = ed
 			}
-		} else {
+		}
+		if embDef == nil {
+			// Try finding in imported modules
+			for _, mod := range si.Def.Env.modules {
+				if expVal, exists := mod.Exports[embName]; exists {
+					if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+						embDef = ed
+						break
+					}
+				}
+			}
+		}
+		if embDef == nil || !structImplementsInterfaceValue(si, embDef) {
 			return false
 		}
 	}

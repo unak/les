@@ -34,6 +34,8 @@ const (
 	TokenCase
 	TokenStruct
 	TokenInterface
+	TokenFor
+	TokenContinue
 
 	// Punctuation
 	TokenAssign    // =

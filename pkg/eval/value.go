@@ -350,6 +350,7 @@ type Environment struct {
 	Loader          func(path string) (*ModuleValue, error) // module loader callback
 	EnclosingFuncID uint64                                  // 0 means top-level
 	ActiveClosureID uint64                                  // 0 means not directly inside a closure call
+	ActiveLoopID    uint64                                  // 0 means not inside a loop
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -364,6 +365,7 @@ func NewEnvironment(parent *Environment) *Environment {
 		env.Loader = parent.Loader
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID
+		env.ActiveLoopID = parent.ActiveLoopID
 	}
 	return env
 }
@@ -374,10 +376,17 @@ type ReturnSignal struct {
 	Value  Value
 }
 
-// BreakSignal carries the break value and the target closure call ID.
+// BreakSignal carries the break value and the target closure/loop call ID.
 type BreakSignal struct {
 	ClosureID uint64
+	LoopID    uint64
 	Value     Value
+}
+
+// ContinueSignal signals skipping to the next iteration of the loop.
+type ContinueSignal struct {
+	ClosureID uint64
+	LoopID    uint64
 }
 
 func (env *Environment) Get(name string) (Value, bool) {
@@ -392,6 +401,17 @@ func (env *Environment) Get(name string) (Value, bool) {
 
 func (env *Environment) Set(name string, val Value) {
 	env.store[name] = val
+}
+
+func (env *Environment) Update(name string, val Value) bool {
+	if _, ok := env.store[name]; ok {
+		env.store[name] = val
+		return true
+	}
+	if env.parent != nil {
+		return env.parent.Update(name, val)
+	}
+	return false
 }
 
 func (env *Environment) RegisterModule(mod *ModuleValue) {

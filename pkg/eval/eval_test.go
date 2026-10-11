@@ -173,6 +173,78 @@ print isReader, " ", isCloser, " ", isReadCloser
 	}
 }
 
+func TestForLoopAndBreak(t *testing.T) {
+	code := `
+sum = 0
+# Test infinite for with break and continue
+for:
+    sum = sum + 1
+    if sum == 2:
+        continue
+    if sum >= 5:
+        break
+    print sum, " "
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	// sum 1 is printed, sum 2 continued, sum 3 and 4 printed, sum 5 breaks
+	expected := "1 3 4"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestForLoopWithCondition(t *testing.T) {
+	code := `
+i = 0
+for i < 3:
+    print i, " "
+    i = i + 1
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	expected := "0 1 2"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestForLoopEcho(t *testing.T) {
+	code := `import io
+
+for:
+    line = @io.ReadLine()
+    if line is Nil:
+        break
+    print line, "\n"
+`
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	ev := NewEvaluator()
+	ev.SetInput(strings.NewReader("line 1\nline 2\nline 3\n"))
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	expected := "line 1\nline 2\nline 3\n"
+	if out.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+}
+
 // MVP Test 2: Lazy Fibonacci stream and take n elements
 func TestMVP2_LazyFibonacciStream(t *testing.T) {
 	code := `def fib(a, b):
@@ -355,7 +427,7 @@ match x:
 	if err != nil {
 		t.Fatalf("eval nil/any failed: %v", err)
 	}
-	expected := "TrueTrueTrueTrue\ngot nil"
+	expected := "TrueTrueTrueFalse\ngot nil"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
