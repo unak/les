@@ -170,7 +170,9 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
 - Indexing: `[]` for both tuples and dicts (`t[0]`, `d["a"]`).
 
 ### 6. Side Effects
-- Demand-driven strict evaluation at built-in effect points (e.g. `print`).
+- Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`).
+- Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
+- Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
 - User-defined functions cannot create raw side-effect primitives.
 
 ### 7. Union Types & Pattern Matching
