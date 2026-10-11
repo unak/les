@@ -290,11 +290,12 @@ Les provides predefined variables for command-line arguments and file path inspe
 | `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
 | `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
 | `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
+| `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
 
 **Example**:
 ```python
 print "Running program: ", ProgramName, "\n"
-print "This file: ", scriptName, "\n"
+print "This file: ", scriptName, " line: ", scriptLine, "\n"
 print "Argument count: ", len(Args), "\n"
 
 if len(Args) > 0:

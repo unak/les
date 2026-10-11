@@ -869,6 +869,9 @@ func (p *Parser) parseCallArgumentsWithoutParens() []ast.Expr {
 func (p *Parser) parsePrefix() ast.Expr {
 	switch p.curToken.Type {
 	case lexer.TokenIdent:
+		if p.curToken.Literal == "scriptLine" {
+			return &ast.IntLit{Value: int64(p.curToken.Line)}
+		}
 		return &ast.Identifier{Name: p.curToken.Literal}
 	case lexer.TokenInt:
 		v, _ := strconv.ParseInt(p.curToken.Literal, 10, 64)

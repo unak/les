@@ -75,6 +75,33 @@ c = !True
 	}
 }
 
+func TestParseScriptLine(t *testing.T) {
+	input := `
+x = scriptLine
+y = scriptLine
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
+	vd1 := prog.Body[0].(*ast.VarDecl)
+	i1, ok := vd1.Value.(*ast.IntLit)
+	if !ok || i1.Value != 2 {
+		t.Fatalf("expected line 2 IntLit, got %+v", vd1.Value)
+	}
+
+	vd2 := prog.Body[1].(*ast.VarDecl)
+	i2, ok := vd2.Value.(*ast.IntLit)
+	if !ok || i2.Value != 3 {
+		t.Fatalf("expected line 3 IntLit, got %+v", vd2.Value)
+	}
+}
+
 func TestParseTernary(t *testing.T) {
 	input := `res = x > 0 ? 1 : 0`
 	l := lexer.NewLexer(input)

@@ -81,6 +81,25 @@ func TestArgsAndProgramName(t *testing.T) {
 	}
 }
 
+func TestScriptLine(t *testing.T) {
+	code := `
+line1 = scriptLine
+def foo():
+    scriptLine
+
+line4 = foo()
+print line1, " ", line4
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	expected := "2 4"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
 // MVP Test 2: Lazy Fibonacci stream and take n elements
 func TestMVP2_LazyFibonacciStream(t *testing.T) {
 	code := `def fib(a, b):
