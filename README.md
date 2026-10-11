@@ -164,13 +164,32 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   else:
       0
   ```
-- Inline ternary: C-style only (`cond ? then_expr : else_expr`).
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
-- Indexing `[]`:
-  - `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
-  - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
-  - `Dict`: `d[key]` accesses value by key (`d["a"]`). Non-existent key raises a runtime error.
+
+#### Operators and Precedence
+Listed from highest to lowest precedence:
+
+| Precedence | Operator | Syntax / Example | Types | Description |
+|---|---|---|---|---|
+| 1 (Highest) | `.` | `p.x`, `p.dist()` | `StructInstance` | Member / method access (with promotion) |
+| 1 | `[]` | `s[0]`, `t[1]`, `d["k"]` | `String`, `Tuple`, `Dict` | Indexing (0-based rune for String, negative indices supported) |
+| 1 | `()` | `f(a, b)` | Function / Struct | Function call or struct constructor |
+| 2 | `+`, `-`, `!` | `+x`, `-x`, `!flag` | `Int`/`Float` (`+`, `-`), `Bool` (`!`) | Unary plus, negation, and logical NOT |
+| 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int` | Multiplication, division, modulo |
+| 4 | `+`, `-` | `a + b`, `a - b` | `Int` (`+`, `-`), `String` (`+`) | Addition, subtraction, string concatenation |
+| 5 | `<`, `<=`, `>`, `>=` | `a < b`, `a >= b` | `Int` | Relational comparisons |
+| 6 | `is` | `x is Int`, `p is Reader` | `Any` | Dynamic type / interface satisfaction test |
+| 7 | `==`, `!=` | `a == b`, `a != b` | `Int`, `String`, `Bool` | Equality / inequality comparison |
+| 8 | `&&` | `cond1 && cond2` | `Bool` | Short-circuit logical AND |
+| 9 | `\|\|` | `cond1 \|\| cond2` | `Bool` | Short-circuit logical OR |
+| 10 | `? :` | `cond ? a : b` | `Bool` (cond) | Inline ternary conditional |
+| 11 (Lowest) | *(space)* | `print x * 2 + 1` | Callable | Paren-omitted function call (weakest binding) |
+
+#### Indexing Details (`[]`)
+- `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
+- `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
+- `Dict`: `d[key]` accesses value by key (`d["a"]`). Non-existent key raises a runtime error.
 
 ### 6. Side Effects
 - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`).

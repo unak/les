@@ -882,7 +882,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.BoolLit{Value: p.curToken.Literal == "True"}
 	case lexer.TokenNil:
 		return &ast.NilLit{}
-	case lexer.TokenMinus, lexer.TokenNot:
+	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot:
 		op := p.curToken.Literal
 		p.nextToken()
 		right := p.parseExpr(PREC_UNARY)

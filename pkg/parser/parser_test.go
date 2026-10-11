@@ -41,6 +41,40 @@ func TestParseParenOmissionCall(t *testing.T) {
 	}
 }
 
+func TestParseUnaryOperators(t *testing.T) {
+	input := `
+a = +10
+b = -20
+c = !True
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+	vd1 := prog.Body[0].(*ast.VarDecl)
+	u1, ok := vd1.Value.(*ast.UnaryExpr)
+	if !ok || u1.Op != "+" {
+		t.Fatalf("expected unary +, got %+v", vd1.Value)
+	}
+
+	vd2 := prog.Body[1].(*ast.VarDecl)
+	u2, ok := vd2.Value.(*ast.UnaryExpr)
+	if !ok || u2.Op != "-" {
+		t.Fatalf("expected unary -, got %+v", vd2.Value)
+	}
+
+	vd3 := prog.Body[2].(*ast.VarDecl)
+	u3, ok := vd3.Value.(*ast.UnaryExpr)
+	if !ok || u3.Op != "!" {
+		t.Fatalf("expected unary !, got %+v", vd3.Value)
+	}
+}
+
 func TestParseTernary(t *testing.T) {
 	input := `res = x > 0 ? 1 : 0`
 	l := lexer.NewLexer(input)

@@ -40,6 +40,19 @@ print x`
 	}
 }
 
+func TestEvalUnaryPlus(t *testing.T) {
+	code := `x = +42
+y = +(-10)
+print x, " ", y`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if out != "42 -10" {
+		t.Fatalf("expected '42 -10', got %q", out)
+	}
+}
+
 // MVP Test 2: Lazy Fibonacci stream and take n elements
 func TestMVP2_LazyFibonacciStream(t *testing.T) {
 	code := `def fib(a, b):

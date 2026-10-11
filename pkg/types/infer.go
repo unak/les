@@ -380,6 +380,22 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			valT = v
 		}
 		return &DictType{Key: keyT, Value: valT}, nil
+	case *ast.UnaryExpr:
+		t, err := inf.inferExpr(e.Expr)
+		if err != nil {
+			return nil, err
+		}
+		switch e.Op {
+		case "+", "-":
+			if t == TypeFloat {
+				return TypeFloat, nil
+			}
+			return TypeInt, nil
+		case "!":
+			return TypeBool, nil
+		default:
+			return TypeAny, nil
+		}
 	case *ast.BinaryExpr:
 		leftT, err := inf.inferExpr(e.Left)
 		if err != nil {

@@ -604,6 +604,14 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.UnaryExpr:
 		val := Force(NewThunk(e.Expr, env))
 		switch e.Op {
+		case "+":
+			if iv, ok := val.(IntValue); ok {
+				return iv, nil
+			}
+			if fv, ok := val.(FloatValue); ok {
+				return fv, nil
+			}
+			return nil, fmt.Errorf("unary + expects number, got %v", val)
 		case "-":
 			if iv, ok := val.(IntValue); ok {
 				return -iv, nil
