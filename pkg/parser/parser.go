@@ -1,0 +1,631 @@
+package parser
+
+import (
+	"fmt"
+	"strconv"
+
+	"les/pkg/ast"
+	"les/pkg/lexer"
+)
+
+// Precedence levels for operator precedence parsing.
+const (
+	PREC_LOWEST = iota
+	PREC_CALL_NOPAREN // lowest binary expr: f a + b binds as f(a + b)
+	PREC_TERNARY      // ? :
+	PREC_LOGICAL_OR   // ||
+	PREC_LOGICAL_AND  // &&
+	PREC_EQUALITY     // == !=
+	PREC_COMPARISON   // < <= > >=
+	PREC_SUM          // + -
+	PREC_PRODUCT      // * / %
+	PREC_UNARY        // - !
+	PREC_CALL         // f()
+	PREC_INDEX        // []
+)
+
+type Parser struct {
+	l                   *lexer.Lexer
+	curToken            lexer.Token
+	peekToken           lexer.Token
+	errors              []string
+	inParenOmissionCall bool
+}
+
+func NewParser(l *lexer.Lexer) *Parser {
+	p := &Parser{l: l}
+	p.nextToken()
+	p.nextToken()
+	return p
+}
+
+func (p *Parser) nextToken() {
+	p.curToken = p.peekToken
+	p.peekToken = p.l.NextToken()
+}
+
+func (p *Parser) curTokenIs(t lexer.TokenType) bool {
+	return p.curToken.Type == t
+}
+
+func (p *Parser) peekTokenIs(t lexer.TokenType) bool {
+	return p.peekToken.Type == t
+}
+
+func (p *Parser) expectPeek(t lexer.TokenType) bool {
+	if p.peekTokenIs(t) {
+		p.nextToken()
+		return true
+	}
+	p.errors = append(p.errors, fmt.Sprintf("expected next token %v, got %v (%s) at line %d col %d", t, p.peekToken.Type, p.peekToken.Literal, p.peekToken.Line, p.peekToken.Col))
+	return false
+}
+
+func (p *Parser) skipNewlines() {
+	for p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	}
+}
+
+func (p *Parser) ParseProgram() *ast.Program {
+	prog := &ast.Program{Body: make([]ast.Stmt, 0)}
+	p.skipNewlines()
+
+	for !p.curTokenIs(lexer.TokenEOF) {
+		stmt := p.parseStmt()
+		if stmt != nil {
+			prog.Body = append(prog.Body, stmt)
+		}
+		p.skipNewlines()
+	}
+
+	return prog
+}
+
+func (p *Parser) parseStmt() ast.Stmt {
+	p.skipNewlines()
+	if p.curTokenIs(lexer.TokenEOF) {
+		return nil
+	}
+
+	switch p.curToken.Type {
+	case lexer.TokenDef:
+		return p.parseFuncDef()
+	case lexer.TokenIf:
+		return p.parseIfStmt()
+	case lexer.TokenReturn:
+		return p.parseReturnStmt()
+	case lexer.TokenIdent:
+		// Check for assignment: `x = val` or `x: Int = val`
+		if p.peekTokenIs(lexer.TokenAssign) {
+			return p.parseVarDecl("")
+		}
+		if p.peekTokenIs(lexer.TokenColon) {
+			// type annotated assignment: x: Type = val
+			return p.parseAnnotatedVarDecl()
+		}
+		return p.parseExprStmt()
+	default:
+		return p.parseExprStmt()
+	}
+}
+
+func (p *Parser) parseFuncDef() *ast.FuncDef {
+	// def name(params): body
+	p.nextToken() // consume 'def'
+	if !p.curTokenIs(lexer.TokenIdent) {
+		p.errors = append(p.errors, "expected function name after def")
+		return nil
+	}
+	name := p.curToken.Literal
+
+	if !p.expectPeek(lexer.TokenLParen) {
+		return nil
+	}
+
+	params := p.parseFuncParams()
+
+	returnType := ""
+	if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // consume ':'
+	}
+
+	body := p.parseBlockBody()
+
+	return &ast.FuncDef{
+		Name:       name,
+		Params:     params,
+		ReturnType: returnType,
+		Body:       body,
+	}
+}
+
+func (p *Parser) parseFuncParams() []ast.FuncParam {
+	params := make([]ast.FuncParam, 0)
+	if p.peekTokenIs(lexer.TokenRParen) {
+		p.nextToken()
+		return params
+	}
+
+	p.nextToken()
+	for {
+		if !p.curTokenIs(lexer.TokenIdent) {
+			break
+		}
+		param := ast.FuncParam{Name: p.curToken.Literal}
+		if p.peekTokenIs(lexer.TokenColon) {
+			p.nextToken() // consume ':'
+			p.nextToken() // consume type
+			param.TypeAnnot = p.curToken.Literal
+		}
+		params = append(params, param)
+
+		if p.peekTokenIs(lexer.TokenComma) {
+			p.nextToken()
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	p.expectPeek(lexer.TokenRParen)
+	return params
+}
+
+func (p *Parser) parseBlockBody() []ast.Stmt {
+	p.skipNewlines()
+	for p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	}
+	if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	}
+	if !p.expectPeek(lexer.TokenIndent) {
+		return nil
+	}
+	p.nextToken() // consume TokenIndent
+
+	body := make([]ast.Stmt, 0)
+	p.skipNewlines()
+
+	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
+		stmt := p.parseStmt()
+		if stmt != nil {
+			body = append(body, stmt)
+		}
+		p.skipNewlines()
+	}
+
+	if p.curTokenIs(lexer.TokenDedent) {
+		p.nextToken()
+	}
+	return body
+}
+
+func (p *Parser) parseIfStmt() *ast.IfStmt {
+	p.nextToken() // consume 'if'
+	cond := p.parseExpr(PREC_LOWEST)
+
+	if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken() // consume ':'
+	}
+
+	thenBody := p.parseBlockBody()
+	var elseBody []ast.Stmt
+
+	p.skipNewlines()
+	if p.curTokenIs(lexer.TokenElse) {
+		p.nextToken() // consume 'else'
+		if p.curTokenIs(lexer.TokenColon) {
+			p.nextToken() // consume ':'
+		}
+		elseBody = p.parseBlockBody()
+	}
+
+	return &ast.IfStmt{
+		Cond:     cond,
+		ThenBody: thenBody,
+		ElseBody: elseBody,
+	}
+}
+
+func (p *Parser) parseVarDecl(typeAnnot string) *ast.VarDecl {
+	name := p.curToken.Literal
+	p.nextToken() // consume ident
+	p.nextToken() // consume '='
+	val := p.parseExpr(PREC_LOWEST)
+	if p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	} else if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else {
+		p.nextToken()
+	}
+	return &ast.VarDecl{
+		Name:      name,
+		TypeAnnot: typeAnnot,
+		Value:     val,
+	}
+}
+
+func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
+	name := p.curToken.Literal
+	p.nextToken() // consume ident
+	p.nextToken() // consume ':'
+	typeAnnot := p.curToken.Literal
+	p.nextToken() // consume type
+	if !p.curTokenIs(lexer.TokenAssign) {
+		p.errors = append(p.errors, "expected '=' in variable declaration")
+		return nil
+	}
+	p.nextToken() // consume '='
+	val := p.parseExpr(PREC_LOWEST)
+	if p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	} else if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else {
+		p.nextToken()
+	}
+	return &ast.VarDecl{
+		Name:      name,
+		TypeAnnot: typeAnnot,
+		Value:     val,
+	}
+}
+
+func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
+	p.nextToken() // consume 'return'
+	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
+		return &ast.ReturnStmt{Value: nil}
+	}
+	val := p.parseExpr(PREC_LOWEST)
+	return &ast.ReturnStmt{Value: val}
+}
+
+func (p *Parser) parseExprStmt() *ast.ExprStmt {
+	expr := p.parseExpr(PREC_LOWEST)
+	if p.curTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+	} else if p.peekTokenIs(lexer.TokenNewline) {
+		p.nextToken()
+		p.nextToken()
+	} else {
+		p.nextToken()
+	}
+	return &ast.ExprStmt{Value: expr}
+}
+
+func (p *Parser) parseExpr(precedence int) ast.Expr {
+	prefix := p.parsePrefix()
+	if prefix == nil {
+		return nil
+	}
+
+	// Paren-omitted call: only if callee is identifier and not already inside paren-free call
+	if precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {
+		if _, isIdent := prefix.(*ast.Identifier); isIdent {
+			p.inParenOmissionCall = true
+			args := p.parseCallArgumentsWithoutParens()
+			p.inParenOmissionCall = false
+
+			var block *ast.BlockLiteral
+			if p.peekTokenIs(lexer.TokenDo) {
+				p.nextToken()
+				block = p.parseBlockLiteral()
+			}
+			prefix = &ast.CallExpr{
+				Callee: prefix,
+				Args:   args,
+				Block:  block,
+			}
+		}
+	}
+
+	for !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenEOF) && precedence < p.peekPrecedence() {
+		p.nextToken()
+		prefix = p.parseInfix(prefix)
+	}
+
+	return prefix
+}
+
+func (p *Parser) canStartArgument() bool {
+	// If peek is on the same line and can start an expression without being an operator or separator
+	t := p.peekToken.Type
+	switch t {
+	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool,
+		lexer.TokenLParen, lexer.TokenLBracket, lexer.TokenLBrace:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) parseCallArgumentsWithoutParens() []ast.Expr {
+	args := make([]ast.Expr, 0)
+	p.nextToken() // move to first token of argument
+	firstArg := p.parseExpr(PREC_LOWEST)
+	args = append(args, firstArg)
+
+	for p.peekTokenIs(lexer.TokenComma) {
+		p.nextToken() // consume ','
+		p.nextToken() // advance to next arg
+		args = append(args, p.parseExpr(PREC_LOWEST))
+	}
+
+	return args
+}
+
+func (p *Parser) parsePrefix() ast.Expr {
+	switch p.curToken.Type {
+	case lexer.TokenIdent:
+		return &ast.Identifier{Name: p.curToken.Literal}
+	case lexer.TokenInt:
+		v, _ := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		return &ast.IntLit{Value: v}
+	case lexer.TokenFloat:
+		v, _ := strconv.ParseFloat(p.curToken.Literal, 64)
+		return &ast.FloatLit{Value: v}
+	case lexer.TokenString:
+		return &ast.StringLit{Value: p.curToken.Literal}
+	case lexer.TokenBool:
+		return &ast.BoolLit{Value: p.curToken.Literal == "True"}
+	case lexer.TokenMinus, lexer.TokenNot:
+		op := p.curToken.Literal
+		p.nextToken()
+		right := p.parseExpr(PREC_UNARY)
+		return &ast.UnaryExpr{Op: op, Expr: right}
+	case lexer.TokenLParen:
+		return p.parseGroupOrTuple()
+	case lexer.TokenLBracket:
+		// Could be list or index, but in Les: arrays are tuple or dict. Allow bracketed tuples/lists if needed
+		return p.parseTuple(lexer.TokenRBracket)
+	case lexer.TokenLBrace:
+		return p.parseDict()
+	default:
+		return nil
+	}
+}
+
+func (p *Parser) parseGroupOrTuple() ast.Expr {
+	// ( ) -> empty tuple
+	if p.peekTokenIs(lexer.TokenRParen) {
+		p.nextToken() // consume ')'
+		return &ast.TupleLit{Elements: []ast.Expr{}}
+	}
+
+	p.nextToken() // advance to first element
+	first := p.parseExpr(PREC_LOWEST)
+
+	if p.peekTokenIs(lexer.TokenComma) {
+		// Tuple with elements
+		elems := []ast.Expr{first}
+		for p.peekTokenIs(lexer.TokenComma) {
+			p.nextToken() // consume ','
+			if p.peekTokenIs(lexer.TokenRParen) {
+				break // single tuple trailing comma: (1,)
+			}
+			p.nextToken()
+			elems = append(elems, p.parseExpr(PREC_LOWEST))
+		}
+		p.expectPeek(lexer.TokenRParen)
+		return &ast.TupleLit{Elements: elems}
+	}
+
+	p.expectPeek(lexer.TokenRParen)
+	// Regular grouped expression: (a + b)
+	return first
+}
+
+func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
+	elems := make([]ast.Expr, 0)
+	if p.peekTokenIs(closing) {
+		p.nextToken()
+		return &ast.TupleLit{Elements: elems}
+	}
+	p.nextToken()
+	elems = append(elems, p.parseExpr(PREC_LOWEST))
+	for p.peekTokenIs(lexer.TokenComma) {
+		p.nextToken()
+		if p.peekTokenIs(closing) {
+			break
+		}
+		p.nextToken()
+		elems = append(elems, p.parseExpr(PREC_LOWEST))
+	}
+	p.expectPeek(closing)
+	return &ast.TupleLit{Elements: elems}
+}
+
+func (p *Parser) parseDict() ast.Expr {
+	entries := make([]ast.DictEntry, 0)
+	if p.peekTokenIs(lexer.TokenRBrace) {
+		p.nextToken()
+		return &ast.DictLit{Entries: entries}
+	}
+
+	p.nextToken()
+	for {
+		key := p.parseExpr(PREC_LOWEST)
+		if !p.expectPeek(lexer.TokenColon) {
+			return nil
+		}
+		p.nextToken()
+		val := p.parseExpr(PREC_LOWEST)
+		entries = append(entries, ast.DictEntry{Key: key, Value: val})
+
+		if p.peekTokenIs(lexer.TokenComma) {
+			p.nextToken()
+			if p.peekTokenIs(lexer.TokenRBrace) {
+				break
+			}
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+	p.expectPeek(lexer.TokenRBrace)
+	return &ast.DictLit{Entries: entries}
+}
+
+func (p *Parser) peekPrecedence() int {
+	switch p.peekToken.Type {
+	case lexer.TokenQuestion:
+		return PREC_TERNARY
+	case lexer.TokenOr:
+		return PREC_LOGICAL_OR
+	case lexer.TokenAnd:
+		return PREC_LOGICAL_AND
+	case lexer.TokenEq, lexer.TokenNotEq:
+		return PREC_EQUALITY
+	case lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
+		return PREC_COMPARISON
+	case lexer.TokenPlus, lexer.TokenMinus:
+		return PREC_SUM
+	case lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent:
+		return PREC_PRODUCT
+	case lexer.TokenLParen:
+		return PREC_CALL
+	case lexer.TokenLBracket:
+		return PREC_INDEX
+	default:
+		return PREC_LOWEST
+	}
+}
+
+func (p *Parser) curPrecedence() int {
+	switch p.curToken.Type {
+	case lexer.TokenQuestion:
+		return PREC_TERNARY
+	case lexer.TokenOr:
+		return PREC_LOGICAL_OR
+	case lexer.TokenAnd:
+		return PREC_LOGICAL_AND
+	case lexer.TokenEq, lexer.TokenNotEq:
+		return PREC_EQUALITY
+	case lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
+		return PREC_COMPARISON
+	case lexer.TokenPlus, lexer.TokenMinus:
+		return PREC_SUM
+	case lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent:
+		return PREC_PRODUCT
+	case lexer.TokenLParen:
+		return PREC_CALL
+	case lexer.TokenLBracket:
+		return PREC_INDEX
+	default:
+		return PREC_LOWEST
+	}
+}
+
+func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
+	switch p.curToken.Type {
+	case lexer.TokenQuestion:
+		// cond ? then : else
+		p.nextToken()
+		thenExpr := p.parseExpr(PREC_LOWEST)
+		p.expectPeek(lexer.TokenColon)
+		p.nextToken()
+		elseExpr := p.parseExpr(PREC_LOWEST)
+		return &ast.TernaryExpr{
+			Cond: left,
+			Then: thenExpr,
+			Else: elseExpr,
+		}
+	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
+		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenAnd, lexer.TokenOr:
+		op := p.curToken.Literal
+		prec := p.curPrecedence()
+		p.nextToken()
+		right := p.parseExpr(prec)
+		return &ast.BinaryExpr{
+			Op:    op,
+			Left:  left,
+			Right: right,
+		}
+	case lexer.TokenLParen:
+		// f(a, b)
+		args := p.parseCallArguments()
+		var block *ast.BlockLiteral
+		if p.peekTokenIs(lexer.TokenDo) {
+			p.nextToken()
+			block = p.parseBlockLiteral()
+		}
+		return &ast.CallExpr{
+			Callee: left,
+			Args:   args,
+			Block:  block,
+		}
+	case lexer.TokenLBracket:
+		// target[index]
+		p.nextToken()
+		idx := p.parseExpr(PREC_LOWEST)
+		p.expectPeek(lexer.TokenRBracket)
+		return &ast.IndexExpr{
+			Target: left,
+			Index:  idx,
+		}
+	default:
+		return left
+	}
+}
+
+func (p *Parser) parseCallArguments() []ast.Expr {
+	args := make([]ast.Expr, 0)
+	if p.peekTokenIs(lexer.TokenRParen) {
+		p.nextToken()
+		return args
+	}
+
+	p.nextToken()
+	args = append(args, p.parseExpr(PREC_LOWEST))
+
+	for p.peekTokenIs(lexer.TokenComma) {
+		p.nextToken() // consume ','
+		p.nextToken()
+		args = append(args, p.parseExpr(PREC_LOWEST))
+	}
+
+	p.expectPeek(lexer.TokenRParen)
+	return args
+}
+
+func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
+	// 'do' already consumed or at 'do'
+	params := make([]ast.FuncParam, 0)
+	if p.peekTokenIs(lexer.TokenPipe) {
+		p.nextToken() // consume '|'
+		p.nextToken()
+		for {
+			if !p.curTokenIs(lexer.TokenIdent) {
+				break
+			}
+			params = append(params, ast.FuncParam{Name: p.curToken.Literal})
+			if p.peekTokenIs(lexer.TokenComma) {
+				p.nextToken()
+				p.nextToken()
+			} else {
+				break
+			}
+		}
+		p.expectPeek(lexer.TokenPipe)
+	}
+
+	if p.peekTokenIs(lexer.TokenColon) {
+		p.nextToken()
+	}
+
+	body := p.parseBlockBody()
+	return &ast.BlockLiteral{
+		Params: params,
+		Body:   body,
+	}
+}
+
+func (p *Parser) Errors() []string {
+	return p.errors
+}
