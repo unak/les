@@ -686,5 +686,25 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
 - **Unified `Int` Type**: Users continue writing `Int` without needing a distinct `BigInt` type. Fast-path optimizations (e.g. 64-bit int fast-path for small values) will be handled transparently under the hood.
 - **Seamless Interop**: Arithmetic operators (`+`, `-`, `*`, `/`, `%`), string formatting, bitwise operations, and Hindley-Milner type inference will continue to work seamlessly without code changes.
 
+### 3. Radix Numeric Literals, Hex Floats, and Digit Separators
+
+Rich numeric literal representations with full radix symmetry and visual separators are planned:
+
+- **Symmetric Radix Prefixes**:
+  - **Binary (`0b` / `0B`)**: e.g., `0b1010_1100`
+  - **Octal (`0o` / `0O`)**: e.g., `0o755`, `0o644`
+  - **Decimal (`0d` / `0D`)**: e.g., `0d100`, `0d1_000_000` (provided for explicit radix symmetry and code generation/alignment alongside standard undecorated decimals `42`)
+  - **Hexadecimal (`0x` / `0X`)**: e.g., `0xDEAD_BEEF`, `0xff`
+- **Digit Separator (`_`)**:
+  - Readable grouping using underscores inside numeric literals (e.g., `1_000_000`, `0b1111_0000`, `0xCAFE_BABE`, `3.14159_26535`).
+- **Hexadecimal Floating-Point Literals**:
+  - Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
+    - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
+    - The binary exponent `p` / `P` is required, preventing lexical ambiguity with integer dot accesses.
+- **Built-in Methods on Numeric Literals & Disambiguation**:
+  - Direct method invocation on literals (e.g., `42.ToString()`, `3.14.ToString()`).
+  - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.ToString()`) is disambiguated as a method call on integer `42`.
+
+
 
 
