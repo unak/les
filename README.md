@@ -597,6 +597,60 @@ name = @io.ReadLine() # Deferred: does not block yet!
 print "Hello, ", name, "!\n" # name is forced here; user is prompted
 ```
 
+### 15. Error Handling & `interface Error`
+
+Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
+
+#### `interface Error` & PascalCase Signatures
+In accordance with Go-style visibility conventions (uppercase letter indicates exported/public member), interface method signatures use PascalCase:
+```python
+interface Error:
+    Message(): String
+    ToString(): String
+```
+
+#### Built-in `Error(msg)` Constructor
+A convenient built-in `Error` constructor generates standard error instances satisfying `interface Error`:
+```python
+err = Error("file not found")
+print err           # "Error: file not found" (formatted via ToString)
+print err.Message() # "file not found"
+print err is Error  # True
+```
+
+#### Idiomatic Error Handling via Union Types (`Value | Error`) & Pattern Matching
+Functions declare union return types (`Type | Error`) and callers inspect results using pattern matching:
+```python
+def divide(a: Int, b: Int): Int | Error:
+    if b == 0:
+        Error("division by zero")
+    else:
+        a / b
+
+# Pattern matching on Union result
+match divide(10, 0):
+    case Int:
+        print "Success: ", it
+    case Error:
+        print "Failed: ", it.Message()
+```
+
+#### Duck Typing Custom Errors
+Any user-defined struct providing `Message(): String` (or `Error(): String`) automatically satisfies `Error` structurally without explicit declarations:
+```python
+struct ParseError:
+    line: Int
+    detail: String
+
+    def Message():
+        "line " + line + ": " + detail
+
+    def ToString():
+        "ParseError(" + detail + ")"
+
+# Automatically matches `case Error:` and `is Error`!
+```
+
 ## Planned Features / Future Work
 
 ### 1. Regular Expression Type (`Regex`) & `/pattern/flags` Literal

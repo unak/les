@@ -81,10 +81,23 @@ func NewInferencer() *Inferencer {
 		Elems:      []Type{TypeString},
 		IsVariadic: true,
 	})
-	// Built-in ProgramName: String
-	_ = rootScope.Declare("ProgramName", TypeString)
-	// Module variable scriptName: String
-	_ = rootScope.Declare("scriptName", TypeString)
+	// Built-in Error interface: Message(): String, ToString(): String
+	errorIface := &InterfaceType{
+		Name: "Error",
+		Methods: map[string]*FuncType{
+			"Message": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			},
+			"ToString": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			},
+		},
+		Embedded: []*InterfaceType{},
+	}
+	_ = rootScope.Declare("Error", errorIface)
+
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,
@@ -589,6 +602,9 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		}
 		if st, ok := calleeT.(*StructType); ok {
 			return st, nil
+		}
+		if iface, ok := calleeT.(*InterfaceType); ok && iface.Name == "Error" {
+			return iface, nil
 		}
 		if fnT, ok := calleeT.(*FuncType); ok {
 			return fnT.Ret, nil

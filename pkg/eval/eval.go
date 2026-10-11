@@ -132,6 +132,60 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.globalEnv.Set("Args", &TupleValue{Elements: []Value{}})
 	ev.globalEnv.Set("ProgramName", StringValue(""))
 	ev.globalEnv.Set("scriptName", StringValue(""))
+
+	// Built-in Error constructor & default Error struct definition
+	errorStructDef := &StructDefValue{
+		Name:          "SimpleError",
+		FieldOrder:    []string{"message"},
+		FieldDefaults: make(map[string]ast.Expr),
+		EmbeddedNames: []string{},
+		Methods: map[string]*ast.FuncDef{
+			"Message": {
+				Name: "Message",
+				Body: []ast.Stmt{
+					&ast.ReturnStmt{Value: &ast.Identifier{Name: "message"}},
+				},
+			},
+			"ToString": {
+				Name: "ToString",
+				Body: []ast.Stmt{
+					&ast.ReturnStmt{
+						Value: &ast.BinaryExpr{
+							Op:    "+",
+							Left:  &ast.StringLit{Value: "Error: "},
+							Right: &ast.Identifier{Name: "message"},
+						},
+					},
+				},
+			},
+			"Error": {
+				Name: "Error",
+				Body: []ast.Stmt{
+					&ast.ReturnStmt{Value: &ast.Identifier{Name: "message"}},
+				},
+			},
+		},
+		Env: ev.globalEnv,
+	}
+
+	ev.globalEnv.Set("Error", &BuiltinFunc{
+		Name: "Error",
+		Fn: func(args []Value) (Value, error) {
+			msg := "error"
+			if len(args) > 0 {
+				msg = Force(args[0]).String()
+			}
+			fields := map[string]Value{
+				"message": StringValue(msg),
+			}
+			inst := &StructInstance{
+				Def:      errorStructDef,
+				Fields:   fields,
+				Embedded: make(map[string]*StructInstance),
+			}
+			return inst, nil
+		},
+	})
 }
 
 func (ev *Evaluator) SetArgs(args []string) {
@@ -1107,6 +1161,16 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 				if checkValueMatchesType(emb, typeAnnot) {
 					return true
 				}
+			}
+			// Check if typeAnnot is "Error"
+			if typeAnnot == "Error" {
+				if _, err := si.LookupMember("Message"); err == nil {
+					return true
+				}
+				if _, err := si.LookupMember("Error"); err == nil {
+					return true
+				}
+				return false
 			}
 			// Check if typeAnnot is module qualified: @io.Reader
 			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {

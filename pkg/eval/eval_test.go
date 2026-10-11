@@ -1341,4 +1341,58 @@ print val
 	}
 }
 
+func TestEvalErrorHandling(t *testing.T) {
+	code := `
+# 1. Built-in Error constructor and methods
+err = Error("something went wrong")
+isErr = err is Error
+msg = err.Message()
+
+# 2. Function returning Union type (Int | Error)
+def divide(a: Int, b: Int): Int | Error:
+    if b == 0:
+        Error("division by zero")
+    else:
+        a / b
+
+res1 = divide(10, 2)
+match1 = match res1:
+    case Int:
+        "ok"
+    case Error:
+        "err: " + res1.Message()
+
+res2 = divide(10, 0)
+match2 = match res2:
+    case Int:
+        "ok"
+    case Error:
+        "err: " + res2.Message()
+
+# 3. Custom struct implementing Error duck-typing
+struct MyCustomError:
+    detail: String
+
+    def Message():
+        "custom: " + detail
+
+    def ToString():
+        "MyCustomError(custom: " + detail + ")"
+
+custom = MyCustomError(detail: "not found")
+customIsError = custom is Error
+
+print isErr, " ", msg, " ", match1, " ", match2, " ", customIsError, " ", custom
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	expected := "True something went wrong ok err: division by zero True MyCustomError(custom: not found)"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+
 
