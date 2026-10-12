@@ -2,7 +2,7 @@
 
 # 1. Expressions & Demand-driven print
 x = 10 + 20
-print "MVP1 Value:", x
+print "MVP1 Value:", x, "\n"
 
 # 2. Infinite stream: Fibonacci
 def fib(a, b):
@@ -11,10 +11,10 @@ def fib(a, b):
 def take(n, s):
     n <= 0 ? () : (s[0], take(n - 1, s[1]))
 
-print "MVP2 Fib stream head 7:", take(7, fib(0, 1))
+print "MVP2 Fib stream head 7:", take(7, fib(0, 1)), "\n"
 
 # 3. Lazy parameter evaluation: unused error is never computed
 def choose(first, second):
     first
 
-print "MVP3 Lazy unused arg:", choose(42, 1 / 0)
+print "MVP3 Lazy unused arg:", choose(42, 1 / 0), "\n"

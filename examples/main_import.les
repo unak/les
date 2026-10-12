@@ -2,5 +2,5 @@
 
 import mymath
 
-print "Imported Add result:", @mymath.Add(100, 200)
-print "Imported Pi constant:", @mymath.Pi
+print "Imported Add result:", @mymath.Add(100, 200), "\n"
+print "Imported Pi constant:", @mymath.Pi, "\n"
