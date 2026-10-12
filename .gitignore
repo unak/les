@@ -8,3 +8,6 @@ bin/
 # OS specific
 Thumbs.db
 .DS_Store
+
+# Tool state
+.omg/
