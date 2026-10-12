@@ -354,9 +354,11 @@ type Environment struct {
 	store           map[string]Value
 	modules         map[string]*ModuleValue
 	parent          *Environment
-	Output          *strings.Builder                        // captures print output if specified
-	Input           io.Reader                               // custom standard input if specified
+	RawStdin        io.Reader                               // raw standard input
+	RawStdout       io.Writer                               // raw standard output
+	RawStderr       io.Writer                               // raw standard error
 	StdinReader     *bufio.Reader                           // shared buffered reader for input
+	StdoutWriter    *bufio.Writer                           // shared buffered writer for output
 	Loader          func(path string) (*ModuleValue, error) // module loader callback
 	EnclosingFuncID uint64                                  // 0 means top-level
 	ActiveClosureID uint64                                  // 0 means not directly inside a closure call
@@ -370,9 +372,11 @@ func NewEnvironment(parent *Environment) *Environment {
 		parent:  parent,
 	}
 	if parent != nil {
-		env.Output = parent.Output
-		env.Input = parent.Input
+		env.RawStdin = parent.RawStdin
+		env.RawStdout = parent.RawStdout
+		env.RawStderr = parent.RawStderr
 		env.StdinReader = parent.StdinReader
+		env.StdoutWriter = parent.StdoutWriter
 		env.Loader = parent.Loader
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID
@@ -439,17 +443,57 @@ func (env *Environment) GetModule(name string) (*ModuleValue, bool) {
 	return nil, false
 }
 
-// GetStdinReader returns the shared buffered stdin reader, initializing with os.Stdin if nil.
+// GetRawStdin returns the raw stdin reader, falling back to os.Stdin.
+func (env *Environment) GetRawStdin() io.Reader {
+	if env.parent != nil {
+		return env.parent.GetRawStdin()
+	}
+	if env.RawStdin == nil {
+		return os.Stdin
+	}
+	return env.RawStdin
+}
+
+// GetRawStdout returns the raw stdout writer, falling back to os.Stdout.
+func (env *Environment) GetRawStdout() io.Writer {
+	if env.parent != nil {
+		return env.parent.GetRawStdout()
+	}
+	if env.RawStdout == nil {
+		return os.Stdout
+	}
+	return env.RawStdout
+}
+
+// GetRawStderr returns the raw stderr writer, falling back to os.Stderr.
+func (env *Environment) GetRawStderr() io.Writer {
+	if env.parent != nil {
+		return env.parent.GetRawStderr()
+	}
+	if env.RawStderr == nil {
+		return os.Stderr
+	}
+	return env.RawStderr
+}
+
+// GetStdinReader returns the shared buffered stdin reader, initializing with RawStdin if nil.
 func (env *Environment) GetStdinReader() *bufio.Reader {
 	if env.parent != nil {
 		return env.parent.GetStdinReader()
 	}
 	if env.StdinReader == nil {
-		in := env.Input
-		if in == nil {
-			in = os.Stdin
-		}
-		env.StdinReader = bufio.NewReader(in)
+		env.StdinReader = bufio.NewReader(env.GetRawStdin())
 	}
 	return env.StdinReader
+}
+
+// GetStdoutWriter returns the shared buffered stdout writer, initializing with RawStdout if nil.
+func (env *Environment) GetStdoutWriter() *bufio.Writer {
+	if env.parent != nil {
+		return env.parent.GetStdoutWriter()
+	}
+	if env.StdoutWriter == nil {
+		env.StdoutWriter = bufio.NewWriter(env.GetRawStdout())
+	}
+	return env.StdoutWriter
 }

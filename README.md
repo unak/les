@@ -476,6 +476,9 @@ Les provides predefined variables for command-line arguments and file path inspe
 |---|---|---|---|
 | `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
 | `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
+| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`@bufio.Reader` wrapping `@io.Stdin`). |
+| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`@bufio.Writer` wrapping `@io.Stdout`). |
+| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`@io.Stderr` with no-op `Flush()`). |
 | `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
 | `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
 
@@ -672,8 +675,32 @@ import io
 #### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
   - `@io.Stdin.Read(n)` reads up to `n` bytes.
+- **`@io.Stdout`**: Standard output instance satisfying `Writer`.
+  - `@io.Stdout.Write(s)` writes `s` to standard output.
+- **`@io.Stderr`**: Standard error instance satisfying `Writer`.
+  - `@io.Stderr.Write(s)` writes `s` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
 
-### 16. Error Handling & `interface Error`
+### 16. Buffered I/O Module (`@bufio`)
+
+The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
+
+```python
+import bufio
+```
+
+#### Structs & Constructors
+- **`@bufio.Reader`**: Buffered reader wrapping an underlying `Reader`.
+  - `Read(n: Int): String | Nil`: Reads up to `n` bytes from buffer/stream.
+  - `ReadLine(): String | Nil`: Reads a single line, stripping trailing `\n` or `\r\n`.
+  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string.
+  - `Peek(n: Int): String | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor.
+- **`@bufio.Writer`**: Buffered writer wrapping an underlying `Writer`.
+  - `Write(s: String): Int`: Appends `s` to write buffer.
+  - `Flush(): ()`: Flushes buffered data to the underlying stream.
+- **`@bufio.NewReader(r: Reader): Reader`**: Constructs a buffered `@bufio.Reader`.
+- **`@bufio.NewWriter(w: Writer): Writer`**: Constructs a buffered `@bufio.Writer`.
+
+### 17. Error Handling & `interface Error`
 
 Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
 

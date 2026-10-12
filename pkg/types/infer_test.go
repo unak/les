@@ -761,3 +761,35 @@ res = add(1)
 		t.Fatalf("expected arity mismatch error for missing arguments, got nil")
 	}
 }
+
+func TestIOAndBufioTypeInference(t *testing.T) {
+	code := `
+import io
+import bufio
+
+# Test globals
+w1: Int = Stdout.Write("text")
+w2: Int = Stderr.Write("err")
+Stdout.Flush()
+Stderr.Flush()
+
+l: String | Nil = Stdin.ReadLine()
+s: String | Nil = Stdin.ReadString(":")
+p: String | Nil = Stdin.Peek(5)
+
+# Test @io module
+rawW: Int = @io.Stdout.Write("raw")
+rawR: String | Nil = @io.Stdin.Read(10)
+
+# Test @bufio module
+br = @bufio.NewReader(@io.Stdin)
+bw = @bufio.NewWriter(@io.Stdout)
+l2: String | Nil = br.ReadLine()
+bw.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("type inference error for io/bufio: %v", err)
+	}
+}

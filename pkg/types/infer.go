@@ -128,6 +128,45 @@ func NewInferencer() *Inferencer {
 		IsVariadic: true,
 	})
 
+	// Global standard streams: Stdin (bufio.Reader), Stdout (bufio.Writer), Stderr (bufio.Writer)
+	bufioReaderGlobal := &StructType{
+		Name: "bufio.Reader",
+		Methods: map[string]*FuncType{
+			"Read": {
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+			"ReadLine": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+			"ReadString": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+			"Peek": {
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+		},
+	}
+	bufioWriterGlobal := &StructType{
+		Name: "bufio.Writer",
+		Methods: map[string]*FuncType{
+			"Write": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: TypeInt,
+			},
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+		},
+	}
+	_ = rootScope.Declare("Stdin", bufioReaderGlobal)
+	_ = rootScope.Declare("Stdout", bufioWriterGlobal)
+	_ = rootScope.Declare("Stderr", bufioWriterGlobal)
+
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,
@@ -477,7 +516,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			readerIface := &InterfaceType{
 				Name: "Reader",
 				Methods: map[string]*FuncType{
-					"read": {
+					"Read": {
 						Arg: &TupleType{Elems: []Type{TypeInt}},
 						Ret: NewUnionType(TypeString, TypeNil),
 					},
@@ -487,7 +526,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			writerIface := &InterfaceType{
 				Name: "Writer",
 				Methods: map[string]*FuncType{
-					"write": {
+					"Write": {
 						Arg: &TupleType{Elems: []Type{TypeString}},
 						Ret: TypeInt,
 					},
@@ -497,7 +536,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			closerIface := &InterfaceType{
 				Name: "Closer",
 				Methods: map[string]*FuncType{
-					"close": {
+					"Close": {
 						Arg: &TupleType{Elems: []Type{}},
 						Ret: &TupleType{Elems: []Type{}},
 					},
@@ -508,16 +547,16 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				Name:     "ReadCloser",
 				Embedded: []*InterfaceType{readerIface, closerIface},
 				Methods: map[string]*FuncType{
-					"read":  readerIface.Methods["read"],
-					"close": closerIface.Methods["close"],
+					"Read":  readerIface.Methods["Read"],
+					"Close": closerIface.Methods["Close"],
 				},
 			}
 			writeCloserIface := &InterfaceType{
 				Name:     "WriteCloser",
 				Embedded: []*InterfaceType{writerIface, closerIface},
 				Methods: map[string]*FuncType{
-					"write": writerIface.Methods["write"],
-					"close": closerIface.Methods["close"],
+					"Write": writerIface.Methods["Write"],
+					"Close": closerIface.Methods["Close"],
 				},
 			}
 			_ = inf.scope.Declare("Reader", readerIface)
@@ -535,6 +574,63 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"ReadCloser":  readCloserIface,
 					"WriteCloser": writeCloserIface,
 					"Stdin":       readCloserIface,
+					"Stdout":      writeCloserIface,
+					"Stderr":      writeCloserIface,
+				},
+			}
+		} else if s.Path == "bufio" {
+			readerStruct := &StructType{
+				Name: "Reader",
+				Methods: map[string]*FuncType{
+					"Read": {
+						Arg: &TupleType{Elems: []Type{TypeInt}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+					"ReadLine": {
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+					"ReadString": {
+						Arg: &TupleType{Elems: []Type{TypeString}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+					"Peek": {
+						Arg: &TupleType{Elems: []Type{TypeInt}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+				},
+			}
+			writerStruct := &StructType{
+				Name: "Writer",
+				Methods: map[string]*FuncType{
+					"Write": {
+						Arg: &TupleType{Elems: []Type{TypeString}},
+						Ret: TypeInt,
+					},
+					"Flush": {
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: &TupleType{Elems: []Type{}},
+					},
+				},
+			}
+			newReaderFunc := &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeAny}},
+				Ret: readerStruct,
+			}
+			newWriterFunc := &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeAny}},
+				Ret: writerStruct,
+			}
+			_ = inf.scope.Declare("Reader", readerStruct)
+			_ = inf.scope.Declare("Writer", writerStruct)
+
+			inf.modules["bufio"] = &ModuleType{
+				Name: "bufio",
+				Exports: map[string]Type{
+					"Reader":    readerStruct,
+					"Writer":    writerStruct,
+					"NewReader": newReaderFunc,
+					"NewWriter": newWriterFunc,
 				},
 			}
 		} else if inf.moduleLoader != nil {

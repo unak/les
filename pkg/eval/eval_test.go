@@ -247,10 +247,10 @@ y = gets()
 		t.Fatalf("expected 'i/o error', got %v", err)
 	}
 
-	// Test shared buffer between gets() and @io.Stdin.read
+	// Test shared buffer between gets() and @io.Stdin.Read
 	codeMixed := `import io
 l = gets()
-rest = @io.Stdin.read(5)
+rest = @io.Stdin.Read(5)
 print l, "|", rest
 `
 	evMixed := NewEvaluator()
@@ -1919,5 +1919,121 @@ print b
 	}
 	if strings.TrimSpace(outArith) != "6 36" {
 		t.Fatalf("expected '6 36', got %q", strings.TrimSpace(outArith))
+	}
+}
+
+func TestGlobalStdoutAndStderr(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	var stderr strings.Builder
+	ev.SetOutput(&stdout)
+	ev.SetErrorOutput(&stderr)
+
+	code := `
+Stdout.Write("stdout text\n")
+Stdout.Flush()
+Stderr.Write("stderr text\n")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	if stdout.String() != "stdout text\n" {
+		t.Fatalf("expected 'stdout text\\n', got %q", stdout.String())
+	}
+	// Stderr is unbuffered: text must be present immediately
+	if stderr.String() != "stderr text\n" {
+		t.Fatalf("expected 'stderr text\\n', got %q", stderr.String())
+	}
+}
+
+func TestPrintRoutesToStdout(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+print "hello", " ", 42, "\n"
+Stdout.Write("direct write\n")
+Stdout.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "hello 42\ndirect write\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestBufioReaderMethods(t *testing.T) {
+	ev := NewEvaluator()
+	inputData := "first:second\r\nthird\nfourth"
+	ev.SetInput(strings.NewReader(inputData))
+
+	code := `
+# Test Peek
+peeked = Stdin.Peek(5)
+# Test ReadString with delimiter
+part1 = Stdin.ReadString(":")
+# Test ReadLine (strips \r\n)
+line2 = Stdin.ReadLine()
+# Test ReadLine (strips \n)
+line3 = Stdin.ReadLine()
+# Test ReadLine EOF
+line4 = Stdin.ReadLine()
+line5 = Stdin.ReadLine()
+
+print peeked, "|", part1, "|", line2, "|", line3, "|", line4, "|", line5 is Nil
+`
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "first|first:|second|third|fourth|true"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestIOAndBufioModules(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	var stderr strings.Builder
+	ev.SetOutput(&stdout)
+	ev.SetErrorOutput(&stderr)
+	ev.SetInput(strings.NewReader("buffered input\n"))
+
+	code := `
+import io
+import bufio
+
+# Test @io raw streams
+n1 = @io.Stdout.Write("raw out\n")
+n2 = @io.Stderr.Write("raw err\n")
+
+# Test @bufio.NewReader on @io.Stdin
+br = @bufio.NewReader(@io.Stdin)
+line = br.ReadLine()
+
+print line, " (", n1, ", ", n2, ")"
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	if stderr.String() != "raw err\n" {
+		t.Fatalf("expected stderr 'raw err\\n', got %q", stderr.String())
+	}
+	expectedStdout := "raw out\nbuffered input (8, 8)"
+	if stdout.String() != expectedStdout {
+		t.Fatalf("expected stdout %q, got %q", expectedStdout, stdout.String())
 	}
 }

@@ -25,21 +25,43 @@ type Evaluator struct {
 func NewEvaluator() *Evaluator {
 	env := NewEnvironment(nil)
 	ev := &Evaluator{globalEnv: env}
-	ev.registerBuiltins()
 	ev.initIOModule()
+	ev.initBufioModule()
+	ev.registerBuiltins()
 	return ev
 }
 
-func (ev *Evaluator) SetOutput(sb *strings.Builder) {
-	ev.globalEnv.Output = sb
+func (ev *Evaluator) SetOutput(w io.Writer) {
+	ev.globalEnv.RawStdout = w
+	if w != nil {
+		ev.globalEnv.StdoutWriter = bufio.NewWriter(w)
+	} else {
+		ev.globalEnv.StdoutWriter = nil
+	}
+}
+
+func (ev *Evaluator) SetErrorOutput(w io.Writer) {
+	ev.globalEnv.RawStderr = w
 }
 
 func (ev *Evaluator) SetInput(r io.Reader) {
-	ev.globalEnv.Input = r
+	ev.globalEnv.RawStdin = r
 	if r != nil {
 		ev.globalEnv.StdinReader = bufio.NewReader(r)
 	} else {
 		ev.globalEnv.StdinReader = nil
+	}
+}
+
+func (ev *Evaluator) callValue(calleeVal Value, args []Value) (Value, error) {
+	forced := Force(calleeVal)
+	switch fn := forced.(type) {
+	case *BuiltinFunc:
+		return fn.Fn(args)
+	case *Closure:
+		return ev.globalEnv.invokeClosure(fn, args)
+	default:
+		return nil, fmt.Errorf("cannot call non-function value: %v", forced)
 	}
 }
 
@@ -61,10 +83,12 @@ func (ev *Evaluator) registerBuiltins() {
 				parts[i] = val.String()
 			}
 			out := strings.Join(parts, "")
-			if ev.globalEnv.Output != nil {
-				ev.globalEnv.Output.WriteString(out)
-			} else {
-				fmt.Print(out)
+			w := ev.globalEnv.GetStdoutWriter()
+			if _, err := w.WriteString(out); err != nil {
+				return nil, err
+			}
+			if err := w.Flush(); err != nil {
+				return nil, err
 			}
 			return &TupleValue{Elements: []Value{}}, nil
 		},
@@ -149,6 +173,20 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
+	// Global standard I/O streams
+	bufioMod, _ := ev.globalEnv.GetModule("bufio")
+	readerDef := bufioMod.Exports["Reader"].(*StructDefValue)
+	writerDef := bufioMod.Exports["Writer"].(*StructDefValue)
+	ioMod, _ := ev.globalEnv.GetModule("io")
+
+	stdinInst := ev.makeBufioReaderInstance(func() *bufio.Reader { return ev.globalEnv.GetStdinReader() }, readerDef)
+	stdoutInst := ev.makeBufioWriterInstance(func() *bufio.Writer { return ev.globalEnv.GetStdoutWriter() }, writerDef)
+	stderrInst := ioMod.Exports["Stderr"]
+
+	ev.globalEnv.Set("Stdin", stdinInst)
+	ev.globalEnv.Set("Stdout", stdoutInst)
+	ev.globalEnv.Set("Stderr", stderrInst)
+
 	// gets: reads a single line from standard input, returning String or Nil on EOF.
 	// Returns a lazy ActionThunk that only blocks when demanded.
 	ev.globalEnv.Set("gets", &BuiltinFunc{
@@ -157,23 +195,8 @@ func (ev *Evaluator) registerBuiltins() {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("gets expects 0 arguments, got %d", len(args))
 			}
-			return NewActionThunk(func() (Value, error) {
-				reader := ev.globalEnv.GetStdinReader()
-				line, err := reader.ReadString('\n')
-				if err != nil && err != io.EOF {
-					return nil, err
-				}
-				if len(line) > 0 {
-					if line[len(line)-1] == '\n' {
-						line = line[:len(line)-1]
-						if len(line) > 0 && line[len(line)-1] == '\r' {
-							line = line[:len(line)-1]
-						}
-					}
-					return StringValue(line), nil
-				}
-				return NilValue{}, nil
-			}), nil
+			rlFn := stdinInst.Fields["ReadLine"].(*BuiltinFunc)
+			return rlFn.Fn([]Value{})
 		},
 	})
 
