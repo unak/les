@@ -293,11 +293,11 @@ func (ev *Evaluator) SetArgs(args []string) {
 	for i, a := range args {
 		elems[i] = StringValue(a)
 	}
-	ev.globalEnv.Set("Args", &TupleValue{Elements: elems})
+	ev.builtinsEnv.Set("Args", &TupleValue{Elements: elems})
 }
 
 func (ev *Evaluator) SetProgramName(name string) {
-	ev.globalEnv.Set("ProgramName", StringValue(name))
+	ev.builtinsEnv.Set("ProgramName", StringValue(name))
 }
 
 func (ev *Evaluator) SetScriptName(name string) {
@@ -1495,9 +1495,21 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 	for _, embName := range iface.Embedded {
 		var embDef *InterfaceDefValue
 		if env != nil {
-			if embVal, found := env.Get(embName); found {
-				if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
-					embDef = ed
+			// If iface belongs to a specific module, resolve embedded interface from that owning module first
+			if iface.ModuleName != "" {
+				if mod, found := env.GetModule(iface.ModuleName); found {
+					if expVal, exists := mod.Exports[embName]; exists {
+						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+							embDef = ed
+						}
+					}
+				}
+			}
+			if embDef == nil {
+				if embVal, found := env.Get(embName); found {
+					if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
+						embDef = ed
+					}
 				}
 			}
 			if embDef == nil {

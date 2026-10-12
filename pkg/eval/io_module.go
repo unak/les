@@ -13,7 +13,8 @@ func (ev *Evaluator) initIOModule() {
 
 	// Reader interface definition: Read(n: Int): String | Nil
 	readerIface := &InterfaceDefValue{
-		Name: "Reader",
+		Name:       "Reader",
+		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
 			"Read": {
 				Name:       "Read",
@@ -26,7 +27,8 @@ func (ev *Evaluator) initIOModule() {
 
 	// Writer interface definition: Write(s: String): Int
 	writerIface := &InterfaceDefValue{
-		Name: "Writer",
+		Name:       "Writer",
+		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
 			"Write": {
 				Name:       "Write",
@@ -39,7 +41,8 @@ func (ev *Evaluator) initIOModule() {
 
 	// Closer interface definition: Close(): ()
 	closerIface := &InterfaceDefValue{
-		Name: "Closer",
+		Name:       "Closer",
+		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
 			"Close": {
 				Name:       "Close",
@@ -52,17 +55,19 @@ func (ev *Evaluator) initIOModule() {
 
 	// ReadCloser interface definition: Reader, Closer
 	readCloserIface := &InterfaceDefValue{
-		Name:     "ReadCloser",
-		Embedded: []string{"Reader", "Closer"},
-		Methods:  make(map[string]ast.MethodSig),
+		Name:       "ReadCloser",
+		ModuleName: "io",
+		Embedded:   []string{"Reader", "Closer"},
+		Methods:    make(map[string]ast.MethodSig),
 	}
 	ioExports["ReadCloser"] = readCloserIface
 
 	// WriteCloser interface definition: Writer, Closer
 	writeCloserIface := &InterfaceDefValue{
-		Name:     "WriteCloser",
-		Embedded: []string{"Writer", "Closer"},
-		Methods:  make(map[string]ast.MethodSig),
+		Name:       "WriteCloser",
+		ModuleName: "io",
+		Embedded:   []string{"Writer", "Closer"},
+		Methods:    make(map[string]ast.MethodSig),
 	}
 	ioExports["WriteCloser"] = writeCloserIface
 

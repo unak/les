@@ -2444,3 +2444,82 @@ print res
 		t.Fatalf("expected 'from moduleok', got %q", out.String())
 	}
 }
+
+func TestModuleInheritsProgramNameAndArgs(t *testing.T) {
+	tempDir := t.TempDir()
+
+	modCode := `
+def Inspect(): String:
+    ProgramName + ":" + Args[0] + ":" + scriptName
+`
+	modPath := filepath.Join(tempDir, "modinfo.les")
+	if err := os.WriteFile(modPath, []byte(modCode), 0644); err != nil {
+		t.Fatalf("failed to write modinfo.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	ev.SetProgramName("main_app.les")
+	ev.SetArgs([]string{"foo", "bar"})
+	ev.SetScriptName("main_app.les")
+
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	callerCode := `
+import modinfo
+
+info = @modinfo.Inspect()
+print info, "|", scriptName
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	expectedPrefix := "main_app.les:foo:" + modPath + "|main_app.les"
+	if out.String() != expectedPrefix {
+		t.Fatalf("expected %q, got %q", expectedPrefix, out.String())
+	}
+}
+
+func TestEmbeddedInterfaceOwningModuleResolution(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// localmod exports its own 'Reader' interface with completely different signature: Read(n: String): Int
+	localModCode := `
+interface Reader:
+    def Read(n: String): Int
+`
+	localModPath := filepath.Join(tempDir, "localmod.les")
+	if err := os.WriteFile(localModPath, []byte(localModCode), 0644); err != nil {
+		t.Fatalf("failed to write localmod.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	// Even though localmod has a different Reader, @io.Stdin is @io.ReadCloser should resolve
+	// ReadCloser's embedded Reader from the owning 'io' module, NOT localmod!
+	callerCode := `
+import io
+import localmod
+
+stdin = @io.Stdin
+isRC = stdin is @io.ReadCloser
+print isRC
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "true" {
+		t.Fatalf("expected 'true', got %q", out.String())
+	}
+}
