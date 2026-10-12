@@ -445,10 +445,11 @@ func (s *StructType) LookupMember(name string) (Type, error) {
 	return nil, fmt.Errorf("type %s has no field or method '%s'", s.Name, name)
 }
 
-// ModuleType represents a loaded module and its exported member types.
+// ModuleType represents a loaded module and its exported member types and type definitions.
 type ModuleType struct {
 	Name    string
-	Exports map[string]Type
+	Exports map[string]Type // values/functions/constructors accessible via @mod.Member
+	Types   map[string]Type // types accessible via @mod.Type in type annotations
 }
 
 func (m *ModuleType) String() string { return "Module<" + m.Name + ">" }

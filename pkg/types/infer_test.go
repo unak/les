@@ -836,3 +836,46 @@ wGlobal: @bufio.Writer = Stdout
 		t.Fatalf("type inference error for qualified type annotations: %v", err)
 	}
 }
+
+func TestOrdinaryExportedFunctionTypeAnnotationNotUnwrapped(t *testing.T) {
+	tempDir := t.TempDir()
+
+	mathCode := `
+def Add(a: Int, b: Int): Int:
+    a + b
+`
+	mathPath := filepath.Join(tempDir, "math.les")
+	if err := os.WriteFile(mathPath, []byte(mathCode), 0644); err != nil {
+		t.Fatalf("failed to write math.les: %v", err)
+	}
+
+	loader := NewFileModuleLoader(tempDir)
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	// An annotation referencing @math.Add should be the function type (Int, Int) -> Int,
+	// NOT unwrapped to its return type Int!
+	testCode := `
+import math
+
+fn: @math.Add = @math.Add
+res: Int = fn(10, 20)
+`
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error when using exported function type annotation: %v", err)
+	}
+
+	// Verify that annotating an Int with @math.Add fails because @math.Add is a function type, not Int
+	testMismatchCode := `
+import math
+
+notInt: @math.Add = 42
+`
+	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
+	infMismatch := NewInferencer()
+	infMismatch.SetModuleLoader(loader.Load)
+	if err := infMismatch.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type mismatch annotating Int with @math.Add, but got nil")
+	}
+}

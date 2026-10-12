@@ -681,6 +681,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"Reader": readerConstructorFunc,
 					"Writer": writerConstructorFunc,
 				},
+				Types: map[string]Type{
+					"Reader": readerStruct,
+					"Writer": writerStruct,
+				},
 			}
 		} else if inf.moduleLoader != nil {
 			mod, err := inf.moduleLoader(s.Path)
@@ -1172,12 +1176,12 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 				modName := parts[0]
 				typeName := parts[1]
 				if mod, ok := inf.modules[modName]; ok {
-					if t, ok := mod.Exports[typeName]; ok {
-						// If the exported item is a constructor function (e.g. @bufio.Reader / @bufio.Writer),
-						// resolve type annotation to the constructed struct type (Ret).
-						if ft, ok := t.(*FuncType); ok && ft.Ret != nil {
-							return ft.Ret
+					if mod.Types != nil {
+						if t, ok := mod.Types[typeName]; ok {
+							return t
 						}
+					}
+					if t, ok := mod.Exports[typeName]; ok {
 						return t
 					}
 				}
