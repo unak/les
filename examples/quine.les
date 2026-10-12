@@ -1,9 +1,2 @@
-s = "q = {0: 1}.ToString()[1]
-nl = '
-'
-print 's = ' + q + s + q + nl + s
-"
-q = {0: 1}.ToString()[1]
-nl = '
-'
-print 's = ' + q + s + q + nl + s
+s = "print 's = ' + 34.Chr() + s + 34.Chr() + 10.Chr() + s + 10.Chr()"
+print 's = ' + 34.Chr() + s + 34.Chr() + 10.Chr() + s + 10.Chr()
