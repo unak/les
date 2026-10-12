@@ -176,7 +176,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   ```
 - To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
 
-### 3. Block Arguments (Option A: Ruby-like `do` blocks)
+### 3. Block Arguments (Ruby-like `do` blocks)
 - Trailing block syntax:
   ```python
   each items do |x|:
@@ -417,7 +417,30 @@ Explicit demand point that strictly evaluates (forces) its argument and returns 
   pick(42, force(expensive_call()))
   ```
 
-### 9. Built-in Variables & CLI Arguments
+### 9. Built-in Methods on Primitive Types
+
+- **`String.Ord(): Int`**:
+  Returns the Unicode code point of the first rune (character) in `self`.
+  Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
+  ```python
+  "A".Ord()        # 65
+  "あ".Ord()       # 12354
+  "Hello".Ord()    # 72 (first character 'H')
+  ```
+
+- **`Int.Chr(): String`**:
+  Returns a 1-rune string corresponding to the Unicode code point `self`.
+  Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate pair code point (`0xD800`–`0xDFFF`) raises a runtime error.
+  ```python
+  65.Chr()         # "A"
+  12354.Chr()      # "あ"
+  (97).Chr()       # "a"
+  ```
+
+- **`ToString(): String`**:
+  Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
+
+### 10. Built-in Variables & CLI Arguments
 
 Les provides predefined variables for command-line arguments and file path inspection:
 

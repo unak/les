@@ -636,5 +636,41 @@ def run_callback(force: (Int) -> String):
 	}
 }
 
+func TestStringOrdAndIntChrTypeInference(t *testing.T) {
+	// 1. Valid Ord and Chr method calls
+	codeOk := `
+s: String = "A"
+code: Int = s.Ord()
+n: Int = 65
+ch: String = n.Chr()
+ch2: String = (97).Chr()
+`
+	progOk := parser.NewParser(lexer.NewLexer(codeOk)).ParseProgram()
+	infOk := NewInferencer()
+	if err := infOk.InferProgram(progOk); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
 
+	// 2. Calling Ord on Int should fail type check
+	codeErr1 := `
+n: Int = 65
+x = n.Ord()
+`
+	progErr1 := parser.NewParser(lexer.NewLexer(codeErr1)).ParseProgram()
+	infErr1 := NewInferencer()
+	if err := infErr1.InferProgram(progErr1); err == nil {
+		t.Fatalf("expected type error calling Ord on Int, got nil")
+	}
+
+	// 3. Calling Chr on String should fail type check
+	codeErr2 := `
+s: String = "A"
+x = s.Chr()
+`
+	progErr2 := parser.NewParser(lexer.NewLexer(codeErr2)).ParseProgram()
+	infErr2 := NewInferencer()
+	if err := infErr2.InferProgram(progErr2); err == nil {
+		t.Fatalf("expected type error calling Chr on String, got nil")
+	}
+}
 

@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"les/pkg/ast"
 )
@@ -1196,6 +1197,44 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				return StringValue(val.String()), nil
 			},
 		}, nil
+	}
+	if member == "Ord" {
+		if sv, ok := val.(StringValue); ok {
+			return &BuiltinFunc{
+				Name: "Ord",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Ord() takes 0 arguments, got %d", len(args))
+					}
+					s := string(sv)
+					if len(s) == 0 {
+						return nil, fmt.Errorf("Ord() on empty string")
+					}
+					r, _ := utf8.DecodeRuneInString(s)
+					if r == utf8.RuneError {
+						return nil, fmt.Errorf("Ord() invalid UTF-8 string")
+					}
+					return IntValue(r), nil
+				},
+			}, nil
+		}
+	}
+	if member == "Chr" {
+		if iv, ok := val.(IntValue); ok {
+			return &BuiltinFunc{
+				Name: "Chr",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Chr() takes 0 arguments, got %d", len(args))
+					}
+					n := int64(iv)
+					if n < 0 || n > 0x10FFFF || (n >= 0xD800 && n <= 0xDFFF) {
+						return nil, fmt.Errorf("Chr() code point %d out of valid Unicode range", n)
+					}
+					return StringValue(string(rune(n))), nil
+				},
+			}, nil
+		}
 	}
 	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)
 }
