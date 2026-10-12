@@ -1621,3 +1621,109 @@ print run_shadowed(cb)
 	}
 }
 
+func TestStringOrdAndIntChr(t *testing.T) {
+	// 1. Basic conversions
+	code1 := `
+print "A".Ord(), " ", "あ".Ord(), " ", 65.Chr(), " ", 12354.Chr()
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected1 := "65 12354 A あ"
+	if strings.TrimSpace(out1) != expected1 {
+		t.Fatalf("expected %q, got %q", expected1, out1)
+	}
+
+	// 2. Multicharacter string takes first character
+	code2 := `
+print "Hello".Ord()
+`
+	out2, err := runLesCode(code2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.TrimSpace(out2) != "72" {
+		t.Fatalf("expected 72, got %q", out2)
+	}
+
+	// 3. Empty string .Ord() raises runtime error
+	codeEmpty := `
+print "".Ord()
+`
+	_, err = runLesCode(codeEmpty)
+	if err == nil {
+		t.Fatalf("expected error on empty string .Ord(), got nil")
+	}
+
+	// 4. Out of range integer .Chr() raises runtime error (negative, > 0x10FFFF, surrogate)
+	codeNegative := `
+print (-1).Chr()
+`
+	_, err = runLesCode(codeNegative)
+	if err == nil {
+		t.Fatalf("expected error on negative .Chr(), got nil")
+	}
+
+	codeTooLarge := `
+print (1114112).Chr()
+`
+	_, err = runLesCode(codeTooLarge)
+	if err == nil {
+		t.Fatalf("expected error on too large .Chr(), got nil")
+	}
+
+	codeSurrogate := `
+print (55296).Chr()
+`
+	_, err = runLesCode(codeSurrogate)
+	if err == nil {
+		t.Fatalf("expected error on surrogate .Chr(), got nil")
+	}
+
+	// 5. Valid U+FFFD replacement character returns 65533
+	codeReplacementChar := "print \"" + string(rune(0xFFFD)) + "\".Ord()\n"
+	out, err := runLesCode(codeReplacementChar)
+	if err != nil {
+		t.Fatalf("unexpected error on valid U+FFFD .Ord(): %v", err)
+	}
+	if !strings.Contains(out, "65533") {
+		t.Fatalf("expected 65533 for U+FFFD .Ord(), got %q", out)
+	}
+
+	// 6. Interface dynamic 'is' check with Ord and Chr signatures
+	codeInterface := `
+interface HasOrd:
+    Ord(): Int
+
+interface HasChr:
+    Chr(): String
+
+interface BadOrdParam:
+    Ord(x: Int): Int
+
+interface BadOrdRet:
+    Ord(): String
+
+interface BadChrRet:
+    Chr(): Int
+
+print "A" is HasOrd
+print " "
+print 65 is HasChr
+print " "
+print "A" is BadOrdParam
+print " "
+print "A" is BadOrdRet
+print " "
+print 65 is BadChrRet
+`
+	out, err = runLesCode(codeInterface)
+	if err != nil {
+		t.Fatalf("unexpected error on interface check: %v", err)
+	}
+	expectedOut := "true true false false false"
+	if strings.TrimSpace(out) != expectedOut {
+		t.Fatalf("expected %q, got %q", expectedOut, strings.TrimSpace(out))
+	}
+}

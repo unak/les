@@ -176,7 +176,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   ```
 - To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
 
-### 3. Block Arguments (Option A: Ruby-like `do` blocks)
+### 3. Block Arguments (Ruby-like `do` blocks)
 - Trailing block syntax:
   ```python
   each items do |x|:
@@ -417,7 +417,30 @@ Explicit demand point that strictly evaluates (forces) its argument and returns 
   pick(42, force(expensive_call()))
   ```
 
-### 9. Built-in Variables & CLI Arguments
+### 9. Built-in Methods on Primitive Types
+
+- **`String.Ord(): Int`**:
+  Returns the Unicode code point of the first rune (character) in `self`.
+  Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
+  ```python
+  "A".Ord()        # 65
+  "あ".Ord()       # 12354
+  "Hello".Ord()    # 72 (first character 'H')
+  ```
+
+- **`Int.Chr(): String`**:
+  Returns a 1-rune string corresponding to the Unicode code point `self`.
+  Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
+  ```python
+  65.Chr()         # "A"
+  12354.Chr()      # "あ"
+  (97).Chr()       # "a"
+  ```
+
+- **`ToString(): String`**:
+  Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
+
+### 10. Built-in Variables & CLI Arguments
 
 Les provides predefined variables for command-line arguments and file path inspection:
 
@@ -438,7 +461,7 @@ if len(Args) > 0:
     print "First arg: ", Args[0], "\n"
 ```
 
-### 10. Special Types: `Nil` and `Any`
+### 11. Special Types: `Nil` and `Any`
 - **`Nil`**:
   - Represents the absence of a value (literal `nil`, type `Nil`).
   - Useful in union types such as `Int | Nil` (nullable/optional semantics).
@@ -446,7 +469,7 @@ if len(Args) > 0:
   - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
   - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
 
-### 11. Variadic Arguments & Tuple Unpacking
+### 12. Variadic Arguments & Tuple Unpacking
 
 #### Variadic Parameters (`*args`)
 - Function parameters can accept 0 or more arguments by prefixing with `*`:
@@ -499,7 +522,7 @@ if len(Args) > 0:
   - Without arguments or bare `exit`: exits with code `0`.
   - With `true`: code `0`; with `false`: code `1`.
 
-### 12. Structs (`struct`)
+### 13. Structs (`struct`)
 
 Les provides immutable records with methods, Go-style struct embedding, and static ambiguous selector detection.
 
@@ -556,7 +579,7 @@ print rc is Reader      # true
 #### Static Ambiguous Selector Detection
 When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
 
-### 13. Interfaces (`interface`) & Structural Typing
+### 14. Interfaces (`interface`) & Structural Typing
 
 Les provides Go-style implicit structural typing (duck typing) via interface declarations.
 
@@ -603,7 +626,7 @@ rc: ReadCloser = File(path: "/tmp/data")
 #### Dynamic Runtime Checks (`is`)
 - `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
 
-### 14. Standard I/O Module (`@io`)
+### 15. Standard I/O Module (`@io`)
 
 The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
 
@@ -639,7 +662,7 @@ name = @io.ReadLine() # Deferred: does not block yet!
 print "Hello, ", name, "!\n" # name is forced here; user is prompted
 ```
 
-### 15. Error Handling & `interface Error`
+### 16. Error Handling & `interface Error`
 
 Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
 
