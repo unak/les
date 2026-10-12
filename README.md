@@ -55,6 +55,7 @@ les -e "print Args[0]" foo bar
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
 | `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
 | `Bool` | `true`, `false` | Boolean value. |
+| `Nil` | `nil` | Represents the absence of a value (singleton literal `nil`). Frequently used in union types (e.g., `String | Nil`). |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. |
 
@@ -63,6 +64,7 @@ Type annotations are optional (full HM-style type inference):
 x: Int = 10
 p: (Int, String) = (1, "ok")
 d: Dict[String, Int] = {"count": 42}
+opt: String | Nil = nil
 
 # Infinite / stream Tuple: ellipsis '...' repeats the last specified element type indefinitely
 fib_stream: (Int, ...) = fib(0, 1)
