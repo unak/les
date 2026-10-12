@@ -160,6 +160,9 @@ func (ev *Evaluator) registerBuiltins() {
 			return NewActionThunk(func() (Value, error) {
 				reader := ev.globalEnv.GetStdinReader()
 				line, err := reader.ReadString('\n')
+				if err != nil && err != io.EOF {
+					return nil, err
+				}
 				if len(line) > 0 {
 					if line[len(line)-1] == '\n' {
 						line = line[:len(line)-1]
@@ -168,12 +171,6 @@ func (ev *Evaluator) registerBuiltins() {
 						}
 					}
 					return StringValue(line), nil
-				}
-				if err == io.EOF {
-					return NilValue{}, nil
-				}
-				if err != nil {
-					return nil, err
 				}
 				return NilValue{}, nil
 			}), nil
