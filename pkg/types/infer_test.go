@@ -706,3 +706,58 @@ a: String = 10 |> inc
 		t.Fatalf("expected type mismatch error, got nil")
 	}
 }
+
+func TestBuiltinGetsTypeInference(t *testing.T) {
+	code := `
+line: String | Nil = gets()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	codeErr := `
+line: Int = gets()
+`
+	progErr := parser.NewParser(lexer.NewLexer(codeErr)).ParseProgram()
+	infErr := NewInferencer()
+	if err := infErr.InferProgram(progErr); err == nil {
+		t.Fatalf("expected type mismatch error for gets(), got nil")
+	}
+
+	codeArity := `
+line = gets(1)
+`
+	progArity := parser.NewParser(lexer.NewLexer(codeArity)).ParseProgram()
+	infArity := NewInferencer()
+	if err := infArity.InferProgram(progArity); err == nil {
+		t.Fatalf("expected arity mismatch error for gets(1), got nil")
+	}
+}
+
+func TestFunctionArityMismatch(t *testing.T) {
+	codeTooMany := `
+def add(a: Int, b: Int): Int:
+    a + b
+
+res = add(1, 2, 3)
+`
+	progTooMany := parser.NewParser(lexer.NewLexer(codeTooMany)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(progTooMany); err == nil {
+		t.Fatalf("expected arity mismatch error for extra arguments, got nil")
+	}
+
+	codeTooFew := `
+def add(a: Int, b: Int): Int:
+    a + b
+
+res = add(1)
+`
+	progTooFew := parser.NewParser(lexer.NewLexer(codeTooFew)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(progTooFew); err == nil {
+		t.Fatalf("expected arity mismatch error for missing arguments, got nil")
+	}
+}

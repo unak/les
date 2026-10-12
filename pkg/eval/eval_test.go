@@ -1,7 +1,9 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -100,21 +102,56 @@ print line1, " ", line4
 	}
 }
 
-func TestIOModule(t *testing.T) {
-	code := `import io
+// nonCompReader implements io.Reader with a value receiver and a slice field, making the struct non-comparable.
+type nonCompReader struct {
+	data  []byte
+	pos   *int
+	dummy []int // makes struct non-comparable
+}
 
-# Test ReadLine deferred action (only reads when demanded)
-l1 = @io.ReadLine()
-l2 = @io.ReadLine()
+func (r nonCompReader) Read(p []byte) (int, error) {
+	if *r.pos >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[*r.pos:])
+	*r.pos += n
+	return n, nil
+}
+
+type countingReader struct {
+	readCount int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	r.readCount++
+	return 0, io.EOF
+}
+
+type partialErrReader struct {
+	data []byte
+	err  error
+}
+
+func (r *partialErrReader) Read(p []byte) (int, error) {
+	n := copy(p, r.data)
+	r.data = r.data[n:]
+	return n, r.err
+}
+
+func TestBuiltinGets(t *testing.T) {
+	code := `
+# Test gets deferred action (only reads when demanded)
+l1 = gets()
+l2 = gets()
 
 # At this point, l1 and l2 are thunks.
 # Demand l1 first, then l2:
 print "Line1: ", l1, "\n"
 print "Line2: ", l2, "\n"
 
-# Test ReadAll
-allRest = @io.ReadAll()
-print "Rest: ", allRest, "\n"
+# EOF test
+l3 = gets()
+print "Line3 is Nil: ", l3 is Nil, "\n"
 `
 	l := lexer.NewLexer(code)
 	p := parser.NewParser(l)
@@ -124,7 +161,7 @@ print "Rest: ", allRest, "\n"
 	}
 
 	ev := NewEvaluator()
-	fakeInput := strings.NewReader("hello\nworld\nremaining text")
+	fakeInput := strings.NewReader("hello\r\nworld\n")
 	ev.SetInput(fakeInput)
 
 	var out strings.Builder
@@ -135,9 +172,98 @@ print "Rest: ", allRest, "\n"
 		t.Fatalf("eval error: %v", err)
 	}
 
-	expected := "Line1: hello\nLine2: world\nRest: remaining text\n"
+	expected := "Line1: hello\nLine2: world\nLine3 is Nil: true\n"
 	if out.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
+	}
+
+	// Test standalone CR is preserved
+	ev2 := NewEvaluator()
+	ev2.SetInput(strings.NewReader("value\r\nstandalone\r"))
+	var out2 strings.Builder
+	ev2.SetOutput(&out2)
+	code2 := `
+l1 = gets()
+l2 = gets()
+print l1, "|", l2
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("eval error with standalone CR: %v", err)
+	}
+	expected2 := "value|standalone\r"
+	if out2.String() != expected2 {
+		t.Fatalf("expected %q, got %q", expected2, out2.String())
+	}
+
+	// Test non-comparable reader (struct containing slice, passed as value) does not panic
+	pos := 0
+	ncReader := nonCompReader{
+		data:  []byte("line from non-comp reader\n"),
+		pos:   &pos,
+		dummy: []int{1, 2, 3},
+	}
+	evNonComp := NewEvaluator()
+	evNonComp.SetInput(ncReader)
+	var outNonComp strings.Builder
+	evNonComp.SetOutput(&outNonComp)
+	codeNonComp := `print gets()`
+	progNonComp := parser.NewParser(lexer.NewLexer(codeNonComp)).ParseProgram()
+	if _, err := evNonComp.EvalProgram(progNonComp); err != nil {
+		t.Fatalf("unexpected error with non-comparable reader: %v", err)
+	}
+	if outNonComp.String() != "line from non-comp reader" {
+		t.Fatalf("expected %q, got %q", "line from non-comp reader", outNonComp.String())
+	}
+
+	// Test unused gets() performs zero reads (lazy demand-driven)
+	cr := &countingReader{}
+	evLazy := NewEvaluator()
+	evLazy.SetInput(cr)
+	codeLazy := `
+x = gets()
+y = gets()
+`
+	progLazy := parser.NewParser(lexer.NewLexer(codeLazy)).ParseProgram()
+	if _, err := evLazy.EvalProgram(progLazy); err != nil {
+		t.Fatalf("unexpected error with unused gets: %v", err)
+	}
+	if cr.readCount != 0 {
+		t.Fatalf("expected 0 reads for undemanded gets(), got %d", cr.readCount)
+	}
+
+	// Test non-EOF read error propagation even with partial data
+	pr := &partialErrReader{
+		data: []byte("partial"),
+		err:  errors.New("i/o error"),
+	}
+	evErr := NewEvaluator()
+	evErr.SetInput(pr)
+	codeErr := `x = gets(); print x`
+	progErr := parser.NewParser(lexer.NewLexer(codeErr)).ParseProgram()
+	if _, err := evErr.EvalProgram(progErr); err == nil {
+		t.Fatalf("expected error from gets() with partial error reader, got nil")
+	} else if !strings.Contains(err.Error(), "i/o error") {
+		t.Fatalf("expected 'i/o error', got %v", err)
+	}
+
+	// Test shared buffer between gets() and @io.Stdin.read
+	codeMixed := `import io
+l = gets()
+rest = @io.Stdin.read(5)
+print l, "|", rest
+`
+	evMixed := NewEvaluator()
+	evMixed.SetInput(strings.NewReader("hello\nworld12345"))
+	var outMixed strings.Builder
+	evMixed.SetOutput(&outMixed)
+	progMixed := parser.NewParser(lexer.NewLexer(codeMixed)).ParseProgram()
+	if _, err := evMixed.EvalProgram(progMixed); err != nil {
+		t.Fatalf("eval error mixed: %v", err)
+	}
+	expectedMixed := "hello|world"
+	if outMixed.String() != expectedMixed {
+		t.Fatalf("expected %q, got %q", expectedMixed, outMixed.String())
 	}
 }
 
@@ -214,10 +340,9 @@ for i < 3:
 }
 
 func TestForLoopEcho(t *testing.T) {
-	code := `import io
-
+	code := `
 for:
-    line = @io.ReadLine()
+    line = gets()
     if line is Nil:
         break
     print line, "\n"

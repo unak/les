@@ -117,6 +117,11 @@ func NewInferencer() *Inferencer {
 	})
 	// Built-in force: (Any) -> Any
 	_ = rootScope.Declare("force", builtinForceFuncType)
+	// Built-in gets: () -> String | Nil
+	_ = rootScope.Declare("gets", &FuncType{
+		Arg: &TupleType{Elems: []Type{}},
+		Ret: NewUnionType(TypeString, TypeNil),
+	})
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -530,14 +535,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"ReadCloser":  readCloserIface,
 					"WriteCloser": writeCloserIface,
 					"Stdin":       readCloserIface,
-					"ReadLine": &FuncType{
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-					"ReadAll": &FuncType{
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: TypeString,
-					},
 				},
 			}
 		} else if inf.moduleLoader != nil {
@@ -670,8 +667,21 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			return iface, nil
 		}
 		if fnT, ok := calleeT.(*FuncType); ok {
+			args := e.Args
+			if e.Block != nil {
+				args = append(append([]ast.Expr(nil), e.Args...), &ast.LambdaExpr{
+					Params: e.Block.Params,
+					Body:   e.Block.Body,
+				})
+			}
 			if argTuple, ok := fnT.Arg.(*TupleType); ok {
-				for i, argExpr := range e.Args {
+				if !argTuple.IsVariadic && len(args) != len(argTuple.Elems) {
+					return nil, fmt.Errorf("function expects %d arguments, got %d", len(argTuple.Elems), len(args))
+				}
+				if argTuple.IsVariadic && len(argTuple.Elems) > 0 && len(args) < len(argTuple.Elems)-1 {
+					return nil, fmt.Errorf("function expects at least %d arguments, got %d", len(argTuple.Elems)-1, len(args))
+				}
+				for i, argExpr := range args {
 					argT, err := inf.inferExpr(argExpr)
 					if err != nil {
 						return nil, err
@@ -851,6 +861,11 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			Arg: &TupleType{Elems: paramTypes},
 			Ret: lastT,
 		}, nil
+	case *ast.BlockLiteral:
+		return inf.inferExpr(&ast.LambdaExpr{
+			Params: e.Params,
+			Body:   e.Body,
+		})
 
 	default:
 		return TypeAny, nil
