@@ -122,7 +122,7 @@ func main() {
 	evaluator.SetArgs(scriptArgs)
 
 	evalLoader := eval.NewFileModuleLoader(baseDir)
-	evaluator.SetModuleLoader(evalLoader.Load)
+	evaluator.SetFileModuleLoader(evalLoader)
 
 	if _, err := evaluator.EvalProgram(prog); err != nil {
 		var exitErr *eval.ExitError

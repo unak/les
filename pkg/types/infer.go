@@ -184,9 +184,13 @@ func NewInferencer() *Inferencer {
 	_ = rootScope.Declare("Stdout", bufioWriterGlobal)
 	_ = rootScope.Declare("Stderr", stderrGlobal)
 
+	// User code and module bodies evaluate in a child scope so that predeclared globals
+	// are not included in local module exports.
+	fileScope := NewScope(rootScope)
+
 	return &Inferencer{
 		nextVarID: 0,
-		scope:     rootScope,
+		scope:     fileScope,
 		modules:   make(map[string]*ModuleType),
 	}
 }

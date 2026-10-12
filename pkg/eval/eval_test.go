@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -2332,5 +2334,46 @@ bw.Flush()!
 	}
 	if !strings.Contains(err.Error(), "Write returned unexpected type") {
 		t.Fatalf("expected 'Write returned unexpected type' error, got %v", err)
+	}
+}
+
+func TestFileModuleLoaderAccessBuiltins(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Submodule uses built-in bufio, io, and Stdin / Stdout
+	helperCode := `
+import bufio
+import io
+
+def Greet(name: String): String:
+    bw = @bufio.Writer(@io.Stdout)
+    bw.Write("greeting: ")!
+    bw.Flush()!
+    name
+`
+	helperPath := filepath.Join(tempDir, "helper.les")
+	if err := os.WriteFile(helperPath, []byte(helperCode), 0644); err != nil {
+		t.Fatalf("failed to write helper.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	mainCode := `
+import helper
+
+msg = @helper.Greet("Les")
+print msg
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error with imported module: %v", err)
+	}
+
+	if out.String() != "greeting: Les" {
+		t.Fatalf("expected 'greeting: Les', got %q", out.String())
 	}
 }

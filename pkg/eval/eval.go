@@ -74,6 +74,13 @@ func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, err
 	ev.globalEnv.Loader = loader
 }
 
+func (ev *Evaluator) SetFileModuleLoader(fml *FileModuleLoader) {
+	if fml != nil {
+		fml.SetParentEnv(ev.globalEnv)
+		ev.globalEnv.Loader = fml.Load
+	}
+}
+
 func (ev *Evaluator) registerBuiltins() {
 	// print: built-in effect boundary. Demands evaluation of its arguments without automatic newline.
 	ev.globalEnv.Set("print", &BuiltinFunc{

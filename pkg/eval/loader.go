@@ -12,9 +12,10 @@ import (
 
 // FileModuleLoader loads and executes other .les files as modules.
 type FileModuleLoader struct {
-	baseDir string
-	cache   map[string]*ModuleValue
-	loading map[string]bool // circular import detection
+	baseDir   string
+	parentEnv *Environment
+	cache     map[string]*ModuleValue
+	loading   map[string]bool // circular import detection
 }
 
 func NewFileModuleLoader(baseDir string) *FileModuleLoader {
@@ -23,6 +24,10 @@ func NewFileModuleLoader(baseDir string) *FileModuleLoader {
 		cache:   make(map[string]*ModuleValue),
 		loading: make(map[string]bool),
 	}
+}
+
+func (fml *FileModuleLoader) SetParentEnv(env *Environment) {
+	fml.parentEnv = env
 }
 
 // Load loads the module from path (e.g. "math" -> baseDir/math.les or baseDir/math/module.les).
@@ -71,8 +76,8 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 		modName = filepath.Base(modPath)
 	}
 
-	// Execute module in dedicated isolated environment
-	modEnv := NewEnvironment(nil)
+	// Execute module in dedicated isolated environment chained to parentEnv
+	modEnv := NewEnvironment(fml.parentEnv)
 	modEnv.Loader = fml.Load
 	modEnv.Set("scriptName", StringValue(targetFile))
 

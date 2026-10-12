@@ -534,6 +534,18 @@ x = @calc.helper(5)
 	if err := infPrivate.InferProgram(progPrivate); err == nil {
 		t.Fatalf("expected error accessing unexported/private member 'helper', got nil")
 	}
+
+	// 3. Predeclared globals (Stdout, Stdin, Stderr, etc.) are not spuriously exported by user modules
+	infBuiltins := NewInferencer()
+	infBuiltins.SetModuleLoader(loader.Load)
+	builtinLeakCode := `
+import calc
+s = @calc.Stdout
+`
+	progBuiltins := parser.NewParser(lexer.NewLexer(builtinLeakCode)).ParseProgram()
+	if err := infBuiltins.InferProgram(progBuiltins); err == nil {
+		t.Fatalf("expected error accessing unexported predeclared global 'Stdout' on user module, got nil")
+	}
 }
 
 func TestBuiltinToStringAndShowInterfaceTypeInference(t *testing.T) {
