@@ -309,13 +309,17 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	return lastVal, nil
 }
 
-func isForceDemand(expr ast.Expr) bool {
+func (env *Environment) isForceDemand(expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case *ast.ForceExpr:
 		return true
 	case *ast.CallExpr:
 		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
-			return true
+			if val, ok := env.Get("force"); ok {
+				if bf, ok := val.(*BuiltinFunc); ok && bf.Name == "force" {
+					return true
+				}
+			}
 		}
 	}
 	return false
@@ -332,7 +336,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			return nil, nil
 		}
 		// If RHS is a force demand point, force immediately instead of creating lazy thunk!
-		if isForceDemand(s.Value) {
+		if env.isForceDemand(s.Value) {
 			val := Force(NewThunk(s.Value, env))
 			env.Set(s.Name, val)
 			return nil, nil
@@ -749,7 +753,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		// Lazy tuple elements: wrapped in Thunks unless force-demanded
 		elems := make([]Value, len(e.Elements))
 		for i, el := range e.Elements {
-			if isForceDemand(el) {
+			if env.isForceDemand(el) {
 				elems[i] = Force(NewThunk(el, env))
 			} else {
 				elems[i] = NewThunk(el, env)
@@ -761,7 +765,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		entries := make(map[string]Value)
 		for _, entry := range e.Entries {
 			kVal := Force(NewThunk(entry.Key, env))
-			if isForceDemand(entry.Value) {
+			if env.isForceDemand(entry.Value) {
 				entries[kVal.String()] = Force(NewThunk(entry.Value, env))
 			} else {
 				entries[kVal.String()] = NewThunk(entry.Value, env)
@@ -893,7 +897,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		// Prepare argument thunks (pass-by-need) unless force-demanded
 		argValues := make([]Value, len(e.Args))
 		for i, a := range e.Args {
-			if isForceDemand(a) {
+			if env.isForceDemand(a) {
 				argValues[i] = Force(NewThunk(a, env))
 			} else {
 				argValues[i] = NewThunk(a, env)

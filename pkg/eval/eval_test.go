@@ -1602,5 +1602,22 @@ print d["a"]
 	if err == nil {
 		t.Fatalf("expected division by zero error for dict force, got nil")
 	}
+
+	// 7. Shadowed force does NOT trigger built-in force eager demand
+	codeShadow := `
+def run_shadowed(force):
+    unused = force(1 / 0)
+    42
+
+cb = |x|: x
+print run_shadowed(cb)
+`
+	outShadow, err := runLesCode(codeShadow)
+	if err != nil {
+		t.Fatalf("shadowed force unexpectedly failed: %v", err)
+	}
+	if strings.TrimSpace(outShadow) != "42" {
+		t.Fatalf("expected 42, got %q", outShadow)
+	}
 }
 

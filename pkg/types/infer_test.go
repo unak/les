@@ -610,15 +610,29 @@ print NoShow(x: 1)
 }
 
 func TestForceExprTypeInference(t *testing.T) {
+	// 1. Both expr! and force(expr) preserve inner expression types
 	code := `
 a: Int = (10 + 20)!
-b: Any = force(30)
+b: Int = force(30)
 c: String = ("hello")!
+d: String = force("world")
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()
 	if err := inf.InferProgram(prog); err != nil {
 		t.Fatalf("unexpected type error in force expression inference: %v", err)
+	}
+
+	// 2. Shadowed force parameter uses the parameter's type
+	codeShadow := `
+def run_callback(force: (Int) -> String):
+    res: String = force(10)
+    res
+`
+	progShadow := parser.NewParser(lexer.NewLexer(codeShadow)).ParseProgram()
+	infShadow := NewInferencer()
+	if err := infShadow.InferProgram(progShadow); err != nil {
+		t.Fatalf("unexpected type error in shadowed force: %v", err)
 	}
 }
 
