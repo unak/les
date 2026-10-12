@@ -522,6 +522,27 @@ func (env *Environment) RegisterBufioWriter(bw *bufio.Writer, underlying io.Writ
 	env.ActiveBufioWriters = append(env.ActiveBufioWriters, bw)
 }
 
+// UnregisterBufioWriter removes a bufio.Writer from active flush tracking and underlying map.
+func (env *Environment) UnregisterBufioWriter(bw *bufio.Writer) {
+	if env.parent != nil {
+		env.parent.UnregisterBufioWriter(bw)
+		return
+	}
+	if bw == nil {
+		return
+	}
+	var retained []*bufio.Writer
+	for _, existing := range env.ActiveBufioWriters {
+		if existing != bw {
+			retained = append(retained, existing)
+		}
+	}
+	env.ActiveBufioWriters = retained
+	if env.bufioUnderlying != nil {
+		delete(env.bufioUnderlying, bw)
+	}
+}
+
 // GetActiveBufioWriters returns the active bufio writers tracked in the root environment.
 func (env *Environment) GetActiveBufioWriters() []*bufio.Writer {
 	if env.parent != nil {

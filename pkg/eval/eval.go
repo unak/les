@@ -33,8 +33,10 @@ func NewEvaluator() *Evaluator {
 }
 
 func (ev *Evaluator) SetOutput(w io.Writer) {
-	if ev.builtinsEnv.StdoutWriter != nil {
-		_ = ev.builtinsEnv.StdoutWriter.Flush()
+	if oldBW := ev.builtinsEnv.StdoutWriter; oldBW != nil {
+		_ = oldBW.Flush()
+		oldBW.Reset(io.Discard)
+		ev.builtinsEnv.UnregisterBufioWriter(oldBW)
 	}
 	ev.builtinsEnv.RawStdout = w
 	if w != nil {

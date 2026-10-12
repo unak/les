@@ -2813,3 +2813,43 @@ print res
 		t.Fatalf("expected 'true', got %q", out.String())
 	}
 }
+
+type errorOnFlushWriter struct{}
+
+func (e *errorOnFlushWriter) Write(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("write error")
+}
+
+func TestSetOutputRemovesFailedOldWriter(t *testing.T) {
+	ev := NewEvaluator()
+	// Set output to a writer that fails
+	ev.SetOutput(&errorOnFlushWriter{})
+
+	// Buffer some data into Stdout
+	code := `
+Stdout.Write("buffered in bad output")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, _ = ev.EvalProgram(prog)
+
+	// Switch output to clean buffer: old failing writer must be reset and removed from ActiveBufioWriters
+	var cleanOut strings.Builder
+	ev.SetOutput(&cleanOut)
+
+	if len(ev.builtinsEnv.ActiveBufioWriters) != 1 || ev.builtinsEnv.ActiveBufioWriters[0] != ev.builtinsEnv.StdoutWriter {
+		t.Fatalf("expected exactly 1 active writer (new StdoutWriter), got %d", len(ev.builtinsEnv.ActiveBufioWriters))
+	}
+
+	// Subsequent evaluation must succeed cleanly without encountering old failing writer
+	code2 := `
+Stdout.Write("hello clean")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	_, err := ev.EvalProgram(prog2)
+	if err != nil {
+		t.Fatalf("unexpected eval error after switching output: %v", err)
+	}
+	if cleanOut.String() != "hello clean" {
+		t.Fatalf("expected 'hello clean', got %q", cleanOut.String())
+	}
+}
