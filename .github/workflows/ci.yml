@@ -21,14 +21,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
+          # No external dependencies (no go.sum) yet. Set cache: true when external packages are added.
+          cache: false
 
       - name: Run test suite
         run: go test -v -count=1 ./...
@@ -45,14 +47,16 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: '1.27'
+          # No external dependencies (no go.sum) yet. Set cache: true when external packages are added.
+          cache: false
 
       - name: Determine Version
         id: vars
