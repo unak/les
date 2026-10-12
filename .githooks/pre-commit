@@ -1,0 +1,15 @@
+#!/bin/sh
+# Prevent direct commits to master branch
+
+branch="$(git symbolic-ref --short -q HEAD)"
+
+if [ "$branch" = "master" ]; then
+    echo "==========================================================" >&2
+    echo "ERROR: Direct commit to 'master' branch is not allowed!" >&2
+    echo "Please create a feature branch and submit a pull request:" >&2
+    echo "  git checkout -b feature/your-feature-name" >&2
+    echo "==========================================================" >&2
+    exit 1
+fi
+
+exit 0
