@@ -2853,3 +2853,99 @@ Stdout.Write("hello clean")!
 		t.Fatalf("expected 'hello clean', got %q", cleanOut.String())
 	}
 }
+
+func TestStdoutFlushAndCloseFlushesBuffered(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+Stdout.Write("buffered content")!
+@io.Stdout.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "buffered content" {
+		t.Fatalf("expected @io.Stdout.Flush() to flush buffered output, got %q", out.String())
+	}
+
+	out.Reset()
+	codeClose := `
+Stdout.Write("close content")!
+@io.Stdout.Close()
+`
+	progClose := parser.NewParser(lexer.NewLexer(codeClose)).ParseProgram()
+	_, err = ev.EvalProgram(progClose)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "close content" {
+		t.Fatalf("expected @io.Stdout.Close() to flush buffered output, got %q", out.String())
+	}
+}
+
+func TestCustomReaderPanicRecovery(t *testing.T) {
+	ev := NewEvaluator()
+	code := `
+struct PanicReader:
+    def Read(self, n: Int):
+        1 / 0
+r = @bufio.Reader(PanicReader())
+r.ReadLine()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from PanicReader, got nil")
+	}
+	if !strings.Contains(err.Error(), "Reader.Read") && !strings.Contains(err.Error(), "division by zero") {
+		t.Fatalf("expected runtime error mentioning Reader.Read or division by zero, got %v", err)
+	}
+}
+
+func TestCustomWriterShortWrite(t *testing.T) {
+	ev := NewEvaluator()
+	code := `
+struct ShortWriter:
+    def Write(self, s: String):
+        0
+w = @bufio.Writer(ShortWriter())
+w.Write("test")!
+w.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from short write, got nil")
+	}
+}
+
+func TestStdinReadZeroBytesAndEOF(t *testing.T) {
+	ev := NewEvaluator()
+	ev.SetInput(strings.NewReader("abc"))
+
+	code := `
+z = @io.Stdin.Read(0)!
+a = @io.Stdin.Read(2)!
+b = @io.Stdin.Read(2)!
+c = @io.Stdin.Read(2)!
+if z != "":
+    1 / 0
+if a != "ab":
+    1 / 0
+if b != "c":
+    1 / 0
+if c != nil:
+    1 / 0
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error in Stdin.Read tests: %v", err)
+	}
+}
+
+

@@ -16,15 +16,35 @@ type customReaderAdapter struct {
 	leftover []byte
 }
 
-func (a *customReaderAdapter) Read(p []byte) (int, error) {
+func (a *customReaderAdapter) Read(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			if exitErr, ok := r.(*ExitError); ok {
+				panic(exitErr)
+			}
+			if retSig, ok := r.(*ReturnSignal); ok {
+				panic(retSig)
+			}
+			if brkSig, ok := r.(*BreakSignal); ok {
+				panic(brkSig)
+			}
+			if contSig, ok := r.(*ContinueSignal); ok {
+				panic(contSig)
+			}
+			err = fmt.Errorf("runtime error in Reader.Read: %v", r)
+		}
+	}()
 	// Drain leftover bytes if any
 	if len(a.leftover) > 0 {
-		n := copy(p, a.leftover)
-		a.leftover = a.leftover[n:]
-		return n, nil
+		copied := copy(p, a.leftover)
+		a.leftover = a.leftover[copied:]
+		if len(a.leftover) == 0 {
+			a.leftover = nil
+		}
+		return copied, nil
 	}
 
 	inst, ok := a.target.(*StructInstance)
@@ -47,11 +67,11 @@ func (a *customReaderAdapter) Read(p []byte) (int, error) {
 			// A12: Empty string means no data yet / progress made, not EOF.
 			return 0, nil
 		}
-		n := copy(p, data)
-		if n < len(data) {
-			a.leftover = append(a.leftover, data[n:]...)
+		copied := copy(p, data)
+		if copied < len(data) {
+			a.leftover = append(a.leftover, data[copied:]...)
 		}
-		return n, nil
+		return copied, nil
 	case NilValue:
 		return 0, io.EOF
 	default:
@@ -106,6 +126,9 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 		}
 		if nVal > len(p) {
 			return 0, fmt.Errorf("Write returned count %d exceeding buffer length %d", nVal, len(p))
+		}
+		if nVal < len(p) {
+			return nVal, io.ErrShortWrite
 		}
 		return nVal, nil
 	}

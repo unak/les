@@ -130,13 +130,13 @@ func (ev *Evaluator) initIOModule() {
 				if n > 0 {
 					return StringValue(string(buf[:n])), nil
 				}
-				if err == io.EOF {
+				if err == io.EOF || err == io.ErrNoProgress {
 					return NilValue{}, nil
 				}
 				if err != nil {
 					return nil, err
 				}
-				return NilValue{}, nil
+				return StringValue(""), nil
 			}), nil
 		},
 	}
@@ -216,6 +216,11 @@ func (ev *Evaluator) initIOModule() {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
 			}
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
+			}
 			return &TupleValue{Elements: []Value{}}, nil
 		},
 	}
@@ -224,6 +229,11 @@ func (ev *Evaluator) initIOModule() {
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Flush expects 0 arguments, got %d", len(args))
+			}
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
 			}
 			return &TupleValue{Elements: []Value{}}, nil
 		},

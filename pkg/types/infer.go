@@ -188,10 +188,186 @@ func NewInferencer() *Inferencer {
 	// are not included in local module exports.
 	fileScope := NewScope(rootScope)
 
-	return &Inferencer{
+	inf := &Inferencer{
 		nextVarID: 0,
 		scope:     fileScope,
 		modules:   make(map[string]*ModuleType),
+	}
+	inf.modules["io"] = makeIOModuleType("io")
+	inf.modules["bufio"] = makeBufioModuleType("bufio")
+	return inf
+}
+
+func makeIOModuleType(alias string) *ModuleType {
+	readerIface := &InterfaceType{
+		Name: "io.Reader",
+		Methods: map[string]*FuncType{
+			"Read": {
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+		},
+		Embedded: []*InterfaceType{},
+	}
+	writerIface := &InterfaceType{
+		Name: "io.Writer",
+		Methods: map[string]*FuncType{
+			"Write": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: TypeInt,
+			},
+		},
+		Embedded: []*InterfaceType{},
+	}
+	closerIface := &InterfaceType{
+		Name: "io.Closer",
+		Methods: map[string]*FuncType{
+			"Close": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+		},
+		Embedded: []*InterfaceType{},
+	}
+	readCloserIface := &InterfaceType{
+		Name:     "io.ReadCloser",
+		Embedded: []*InterfaceType{readerIface, closerIface},
+		Methods: map[string]*FuncType{
+			"Read":  readerIface.Methods["Read"],
+			"Close": closerIface.Methods["Close"],
+		},
+	}
+	writeCloserIface := &InterfaceType{
+		Name:     "io.WriteCloser",
+		Embedded: []*InterfaceType{writerIface, closerIface},
+		Methods: map[string]*FuncType{
+			"Write": writerIface.Methods["Write"],
+			"Close": closerIface.Methods["Close"],
+		},
+	}
+	stderrStruct := &StructType{
+		Name: "io.Stderr",
+		Methods: map[string]*FuncType{
+			"Write": writerIface.Methods["Write"],
+			"Close": closerIface.Methods["Close"],
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+		},
+	}
+	stdoutStruct := &StructType{
+		Name: "io.Stdout",
+		Methods: map[string]*FuncType{
+			"Write": writerIface.Methods["Write"],
+			"Close": closerIface.Methods["Close"],
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+		},
+	}
+
+	if alias == "" {
+		alias = "io"
+	}
+	return &ModuleType{
+		Name: alias,
+		Exports: map[string]Type{
+			"Reader":      readerIface,
+			"Writer":      writerIface,
+			"Closer":      closerIface,
+			"ReadCloser":  readCloserIface,
+			"WriteCloser": writeCloserIface,
+			"Stdin":       readCloserIface,
+			"Stdout":      stdoutStruct,
+			"Stderr":      stderrStruct,
+		},
+		Types: map[string]Type{
+			"Reader":      readerIface,
+			"Writer":      writerIface,
+			"Closer":      closerIface,
+			"ReadCloser":  readCloserIface,
+			"WriteCloser": writeCloserIface,
+		},
+	}
+}
+
+func makeBufioModuleType(alias string) *ModuleType {
+	readerIface := &InterfaceType{
+		Name: "io.Reader",
+		Methods: map[string]*FuncType{
+			"Read": {
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+		},
+	}
+	writerIface := &InterfaceType{
+		Name: "io.Writer",
+		Methods: map[string]*FuncType{
+			"Write": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: TypeInt,
+			},
+		},
+	}
+	readerStruct := &StructType{
+		Name: "bufio.Reader",
+		Methods: map[string]*FuncType{
+			"Read": {
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+			"ReadLine": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+			"ReadString": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+			"Peek": {
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			},
+		},
+	}
+	writerStruct := &StructType{
+		Name: "bufio.Writer",
+		Methods: map[string]*FuncType{
+			"Write": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: TypeInt,
+			},
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+		},
+	}
+	readerConstructorFunc := &FuncType{
+		Arg: &TupleType{Elems: []Type{readerIface}},
+		Ret: readerStruct,
+	}
+	writerConstructorFunc := &FuncType{
+		Arg: &TupleType{Elems: []Type{writerIface}},
+		Ret: writerStruct,
+	}
+
+	if alias == "" {
+		alias = "bufio"
+	}
+	return &ModuleType{
+		Name: alias,
+		Exports: map[string]Type{
+			"Reader": readerConstructorFunc,
+			"Writer": writerConstructorFunc,
+		},
+		Types: map[string]Type{
+			"Reader": readerStruct,
+			"Writer": writerStruct,
+		},
 	}
 }
 
@@ -533,170 +709,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 	case *ast.ImportStmt:
 		if s.Path == "io" {
-			// Register standard @io module interfaces in scope
-			readerIface := &InterfaceType{
-				Name: "io.Reader",
-				Methods: map[string]*FuncType{
-					"Read": {
-						Arg: &TupleType{Elems: []Type{TypeInt}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-				},
-				Embedded: []*InterfaceType{},
-			}
-			writerIface := &InterfaceType{
-				Name: "io.Writer",
-				Methods: map[string]*FuncType{
-					"Write": {
-						Arg: &TupleType{Elems: []Type{TypeString}},
-						Ret: TypeInt,
-					},
-				},
-				Embedded: []*InterfaceType{},
-			}
-			closerIface := &InterfaceType{
-				Name: "io.Closer",
-				Methods: map[string]*FuncType{
-					"Close": {
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: &TupleType{Elems: []Type{}},
-					},
-				},
-				Embedded: []*InterfaceType{},
-			}
-			readCloserIface := &InterfaceType{
-				Name:     "io.ReadCloser",
-				Embedded: []*InterfaceType{readerIface, closerIface},
-				Methods: map[string]*FuncType{
-					"Read":  readerIface.Methods["Read"],
-					"Close": closerIface.Methods["Close"],
-				},
-			}
-			writeCloserIface := &InterfaceType{
-				Name:     "io.WriteCloser",
-				Embedded: []*InterfaceType{writerIface, closerIface},
-				Methods: map[string]*FuncType{
-					"Write": writerIface.Methods["Write"],
-					"Close": closerIface.Methods["Close"],
-				},
-			}
-			stderrStruct := &StructType{
-				Name: "io.Stderr",
-				Methods: map[string]*FuncType{
-					"Write": writerIface.Methods["Write"],
-					"Close": closerIface.Methods["Close"],
-					"Flush": {
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: &TupleType{Elems: []Type{}},
-					},
-				},
-			}
-			stdoutStruct := &StructType{
-				Name: "io.Stdout",
-				Methods: map[string]*FuncType{
-					"Write": writerIface.Methods["Write"],
-					"Close": closerIface.Methods["Close"],
-					"Flush": {
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: &TupleType{Elems: []Type{}},
-					},
-				},
-			}
-
 			alias := s.Alias
 			if alias == "" {
 				alias = "io"
 			}
-			inf.modules[alias] = &ModuleType{
-				Name: alias,
-				Exports: map[string]Type{
-					"Reader":      readerIface,
-					"Writer":      writerIface,
-					"Closer":      closerIface,
-					"ReadCloser":  readCloserIface,
-					"WriteCloser": writeCloserIface,
-					"Stdin":       readCloserIface,
-					"Stdout":      stdoutStruct,
-					"Stderr":      stderrStruct,
-				},
-			}
+			inf.modules[alias] = makeIOModuleType(alias)
 		} else if s.Path == "bufio" {
-			readerIface := &InterfaceType{
-				Name: "io.Reader",
-				Methods: map[string]*FuncType{
-					"Read": {
-						Arg: &TupleType{Elems: []Type{TypeInt}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-				},
-			}
-			writerIface := &InterfaceType{
-				Name: "io.Writer",
-				Methods: map[string]*FuncType{
-					"Write": {
-						Arg: &TupleType{Elems: []Type{TypeString}},
-						Ret: TypeInt,
-					},
-				},
-			}
-			readerStruct := &StructType{
-				Name: "bufio.Reader",
-				Methods: map[string]*FuncType{
-					"Read": {
-						Arg: &TupleType{Elems: []Type{TypeInt}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-					"ReadLine": {
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-					"ReadString": {
-						Arg: &TupleType{Elems: []Type{TypeString}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-					"Peek": {
-						Arg: &TupleType{Elems: []Type{TypeInt}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-				},
-			}
-			writerStruct := &StructType{
-				Name: "bufio.Writer",
-				Methods: map[string]*FuncType{
-					"Write": {
-						Arg: &TupleType{Elems: []Type{TypeString}},
-						Ret: TypeInt,
-					},
-					"Flush": {
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: &TupleType{Elems: []Type{}},
-					},
-				},
-			}
-			readerConstructorFunc := &FuncType{
-				Arg: &TupleType{Elems: []Type{readerIface}},
-				Ret: readerStruct,
-			}
-			writerConstructorFunc := &FuncType{
-				Arg: &TupleType{Elems: []Type{writerIface}},
-				Ret: writerStruct,
-			}
-
 			alias := s.Alias
 			if alias == "" {
 				alias = "bufio"
 			}
-			inf.modules[alias] = &ModuleType{
-				Name: alias,
-				Exports: map[string]Type{
-					"Reader": readerConstructorFunc,
-					"Writer": writerConstructorFunc,
-				},
-				Types: map[string]Type{
-					"Reader": readerStruct,
-					"Writer": writerStruct,
-				},
-			}
+			inf.modules[alias] = makeBufioModuleType(alias)
 		} else if inf.moduleLoader != nil {
 			mod, err := inf.moduleLoader(s.Path)
 			if err != nil {

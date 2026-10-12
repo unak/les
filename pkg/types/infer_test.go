@@ -880,3 +880,30 @@ notInt: @math.Add = 42
 		t.Fatalf("expected type mismatch annotating Int with @math.Add, but got nil")
 	}
 }
+
+func TestBuiltinModuleTypeAnnotationsWithoutImport(t *testing.T) {
+	inf := NewInferencer()
+	testCode := `
+def readStream(r: @bufio.Reader): String | Nil:
+    r.ReadLine()
+
+res: String | Nil = readStream(Stdin)
+`
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error when using @bufio.Reader without import: %v", err)
+	}
+
+	testMismatchCode := `
+def readStream(r: @bufio.Reader): String | Nil:
+    r.ReadLine()
+
+bad: String | Nil = readStream(Stdout)
+`
+	inf2 := NewInferencer()
+	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
+	if err := inf2.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type error passing Stdout to @bufio.Reader parameter, got nil")
+	}
+}
+
