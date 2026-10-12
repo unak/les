@@ -1,0 +1,93 @@
+name: CI & Release
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }} / Go ${{ matrix.go }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        go: ['1.26', '1.27']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Run test suite
+        run: go test -v -count=1 ./...
+
+      - name: Verify CLI version output
+        run: go run ./cmd/les -v
+
+  release:
+    name: Create Release
+    needs: test
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: Determine Version
+        id: vars
+        run: |
+          COUNT=$(git rev-list --count master)
+          VERSION="0.1.${COUNT}"
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Building release for ${TAG} (${VERSION})"
+
+      - name: Build Windows Binary
+        env:
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          mkdir -p dist/bin
+          go build -ldflags "-X main.Version=${VERSION}" -o dist/bin/les.exe ./cmd/les
+          cd dist
+          zip -j "les-windows-amd64-v${VERSION}.zip" bin/les.exe ../README.md
+          cd ..
+
+      - name: Create Source Tarball
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          VERSION="${{ steps.vars.outputs.version }}"
+          git archive --format=tar.gz --prefix="les-${TAG}/" -o "dist/les-source-v${VERSION}.tar.gz" HEAD
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          VERSION="${{ steps.vars.outputs.version }}"
+          gh release create "$TAG" \
+            dist/les-windows-amd64-v${VERSION}.zip \
+            dist/les-source-v${VERSION}.tar.gz \
+            --title "Les v${VERSION}" \
+            --generate-notes
