@@ -168,17 +168,40 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		return nil
 
 	case *ast.UnpackDecl:
-		_, err := inf.inferExpr(s.Value)
+		valT, err := inf.inferExpr(s.Value)
 		if err != nil {
 			return err
 		}
-		for _, name := range s.Pattern.Elements {
-			if name != "_" {
-				_ = inf.scope.Declare(name, TypeAny)
+		if tt, ok := valT.(*TupleType); ok {
+			for i, name := range s.Pattern.Elements {
+				if name != "_" {
+					var elemT Type = TypeAny
+					if i < len(tt.Elems) {
+						elemT = tt.Elems[i]
+					} else if tt.IsVariadic && len(tt.Elems) > 0 {
+						elemT = tt.Elems[len(tt.Elems)-1]
+					}
+					_ = inf.scope.Declare(name, elemT)
+				}
 			}
-		}
-		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-			_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeAny}, IsVariadic: true})
+			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
+				var restElemT Type = TypeAny
+				if tt.IsVariadic && len(tt.Elems) > 0 {
+					restElemT = tt.Elems[len(tt.Elems)-1]
+				} else if len(tt.Elems) > len(s.Pattern.Elements) {
+					restElemT = tt.Elems[len(s.Pattern.Elements)]
+				}
+				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{restElemT}, IsVariadic: true})
+			}
+		} else {
+			for _, name := range s.Pattern.Elements {
+				if name != "_" {
+					_ = inf.scope.Declare(name, TypeAny)
+				}
+			}
+			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
+				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeAny}, IsVariadic: true})
+			}
 		}
 		return nil
 

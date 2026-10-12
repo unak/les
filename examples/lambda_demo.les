@@ -50,7 +50,7 @@ block_result = apply_block(10) do |x|:
 puts "apply_block with do block =", block_result
 
 # 6. Trailing block iterating a tuple
-def each_int(items, fn: (Int) -> ()): ():
+def each_int(items: (Int, ...), fn: (Int) -> ()): ():
     (head, ...tail) = items
     fn(head)
     if len(tail) > 0:
