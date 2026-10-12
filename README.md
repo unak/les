@@ -6,7 +6,7 @@ Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated 
 ## Build & Installation
 
 ### Prerequisites
-- Go 1.22 or higher
+- Go 1.26 or higher
 
 ### Build
 ```bash
