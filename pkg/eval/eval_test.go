@@ -2730,3 +2730,86 @@ Stdout.Write("recovered")!
 		t.Fatalf("expected 'recovered', got %q", out.String())
 	}
 }
+
+func TestPeekTreatsNoProgressAsEOF(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+import bufio
+
+struct EmptyReader:
+    def Read(n: Int): String:
+        ""
+
+er = EmptyReader()
+br = @bufio.Reader(er)
+res = br.Peek(5)!
+print res
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error in Peek: %v", err)
+	}
+	if out.String() != "nil" {
+		t.Fatalf("expected nil representation 'nil', got %q", out.String())
+	}
+}
+
+func TestEmbeddedInterfaceResolutionWhenImportPathDiffersFromModuleName(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Module declares "module mymod" but is imported as "pkg"
+	modCode := `
+module mymod
+
+interface Inner:
+    Foo(): Int
+
+interface Outer:
+    Inner
+    Bar(): Int
+`
+	modPath := filepath.Join(tempDir, "pkg.les")
+	if err := os.WriteFile(modPath, []byte(modCode), 0644); err != nil {
+		t.Fatalf("failed to write pkg.les: %v", err)
+	}
+
+	// Another module in root dir with conflicting "Inner" interface:
+	conflictingModCode := `
+interface Inner:
+    Unrelated(): String
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "conflict.les"), []byte(conflictingModCode), 0644); err != nil {
+		t.Fatalf("failed to write conflict.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	callerCode := `
+import conflict
+import pkg
+
+struct Implementer:
+    def Foo(): Int: 1
+    def Bar(): Int: 2
+
+impl = Implementer()
+res = impl is @pkg.Outer
+print res
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "true" {
+		t.Fatalf("expected 'true', got %q", out.String())
+	}
+}

@@ -657,12 +657,19 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to import module '%s': %w", s.Path, err)
 		}
+		canonicalName := modVal.Name
 		if alias == "" {
 			alias = modVal.Name
 		}
 		// Register module with alias name
 		modVal.Name = alias
 		env.RegisterModule(modVal)
+		if s.Path != alias {
+			env.RegisterModule(&ModuleValue{Name: s.Path, Exports: modVal.Exports})
+		}
+		if canonicalName != "" && canonicalName != alias && canonicalName != s.Path {
+			env.RegisterModule(&ModuleValue{Name: canonicalName, Exports: modVal.Exports})
+		}
 		return nil, nil
 
 	default:

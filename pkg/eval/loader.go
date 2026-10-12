@@ -92,7 +92,7 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 	for name, val := range modEnv.store {
 		if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
 			if idv, ok := val.(*InterfaceDefValue); ok && idv.ModuleName == "" {
-				idv.ModuleName = modName
+				idv.ModuleName = modPath
 			}
 			exports[name] = val
 		}

@@ -410,7 +410,7 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 			return NewActionThunk(func() (Value, error) {
 				br := getReader()
 				bytes, err := br.Peek(numBytes)
-				if err != nil && err != io.EOF && len(bytes) == 0 {
+				if err != nil && err != io.EOF && err != io.ErrNoProgress && len(bytes) == 0 {
 					return nil, err
 				}
 				if len(bytes) > 0 {
