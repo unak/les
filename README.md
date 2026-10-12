@@ -176,7 +176,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   print x |> f     # equivalent to print(f(x)) -- pipeline is consumed greedily as argument
   ```
 - To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
-- Similarly, to pass a call result into a pipeline, use parentheses `(print x) |> f` or pipeline the call directly: `x |> f |> print`.
+- Similarly, to pass a function call result as the input to a pipeline, use explicit parentheses on the call: `f(x) |> g` (evaluates as `g(f(x))`).
 
 ### 3. Block Arguments (Ruby-like `do` blocks)
 - Trailing block syntax:
@@ -246,7 +246,7 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   val = 10 |> add(20) # Equivalent to: add(10, 20)
   ```
 - **Interaction with Parenthesis-Omission Calls**:
-  Parenthesis-omitted call statements (`print expr`) bind greedily, so `print x |> f` is parsed as `print(f(x))`. To pipe into subsequent functions, chain with `|>`: `x |> f |> print`.
+  Parenthesis-omitted call statements (`print expr`) bind greedily, so `print x |> f` is parsed as `print(f(x))`. If you want to pipeline into print, write `x |> f |> print`. If you want to pipe the result of a call, use explicit parentheses: `compute(x) |> format`.
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 

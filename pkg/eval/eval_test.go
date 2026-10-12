@@ -1772,4 +1772,27 @@ print 5 |> inc
 	if strings.TrimSpace(outPrint) != "6" {
 		t.Fatalf("expected 6, got %q", strings.TrimSpace(outPrint))
 	}
+
+	// Verify arithmetic precedence and call result piping
+	codeArithAndCall := `
+def double(x: Int): Int:
+    x * 2
+
+def square(x: Int): Int:
+    x * x
+
+a = 1 + 2 |> double
+b = double(3) |> square
+
+print a
+print " "
+print b
+`
+	outArith, err := runLesCode(codeArithAndCall)
+	if err != nil {
+		t.Fatalf("unexpected eval error for arithmetic pipeline: %v", err)
+	}
+	if strings.TrimSpace(outArith) != "6 36" {
+		t.Fatalf("expected '6 36', got %q", strings.TrimSpace(outArith))
+	}
 }

@@ -977,4 +977,48 @@ res4 = 5 |> (|n|: n * 2)
 	if id, ok := pipeCall.Callee.(*ast.Identifier); !ok || id.Name != "f" {
 		t.Fatalf("expected inner callee f, got %+v", pipeCall.Callee)
 	}
+
+	// 6. Precedence below arithmetic: res = 1 + 2 |> double -> double(1 + 2)
+	inputArith := `res = 1 + 2 |> double`
+	progArith := NewParser(lexer.NewLexer(inputArith)).ParseProgram()
+	if len(progArith.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(progArith.Body))
+	}
+	vdArith := progArith.Body[0].(*ast.VarDecl)
+	callArith, ok := vdArith.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for res, got %T", vdArith.Value)
+	}
+	if id, ok := callArith.Callee.(*ast.Identifier); !ok || id.Name != "double" {
+		t.Fatalf("expected callee double, got %+v", callArith.Callee)
+	}
+	if len(callArith.Args) != 1 {
+		t.Fatalf("expected 1 arg to double, got %d", len(callArith.Args))
+	}
+	binArg, ok := callArith.Args[0].(*ast.BinaryExpr)
+	if !ok || binArg.Op != "+" {
+		t.Fatalf("expected binary expr 1 + 2 as arg, got %+v", callArith.Args[0])
+	}
+
+	// 7. Explicit call piped to next function: f(x) |> g -> g(f(x))
+	inputCallPipe := `res = f(x) |> g`
+	progCallPipe := NewParser(lexer.NewLexer(inputCallPipe)).ParseProgram()
+	if len(progCallPipe.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(progCallPipe.Body))
+	}
+	vdCallPipe := progCallPipe.Body[0].(*ast.VarDecl)
+	callG, ok := vdCallPipe.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for res, got %T", vdCallPipe.Value)
+	}
+	if id, ok := callG.Callee.(*ast.Identifier); !ok || id.Name != "g" {
+		t.Fatalf("expected callee g, got %+v", callG.Callee)
+	}
+	innerF, ok := callG.Args[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected inner CallExpr f(x), got %T", callG.Args[0])
+	}
+	if id, ok := innerF.Callee.(*ast.Identifier); !ok || id.Name != "f" {
+		t.Fatalf("expected inner callee f, got %+v", innerF.Callee)
+	}
 }
