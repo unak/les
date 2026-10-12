@@ -3,6 +3,23 @@
 ## Overview
 Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated scripting language implemented in Go.
 
+## Build & Installation
+
+### Prerequisites
+- Go 1.22 or higher
+
+### Build
+```bash
+# Build the binary
+go build -o les ./cmd/les
+
+# Or install to $GOPATH/bin (or $GOBIN)
+go install ./cmd/les
+
+# Run test suite
+go test ./...
+```
+
 ## Command-Line Usage
 
 ```bash
