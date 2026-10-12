@@ -674,3 +674,36 @@ x = s.Chr()
 	}
 }
 
+func TestPipelineOperatorTypeInference(t *testing.T) {
+	code := `
+def inc(x: Int): Int:
+    x + 1
+
+def double(x: Int): Int:
+    x * 2
+
+def toString(x: Int): String:
+    x.ToString()
+
+a: Int = 10 |> inc |> double
+b: String = 10 |> inc |> toString
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	codeMismatch := `
+def inc(x: Int): Int:
+    x + 1
+
+a: String = 10 |> inc
+`
+	progMismatch := parser.NewParser(lexer.NewLexer(codeMismatch)).ParseProgram()
+	infMismatch := NewInferencer()
+	if err := infMismatch.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type mismatch error, got nil")
+	}
+}
+

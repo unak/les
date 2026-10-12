@@ -234,6 +234,15 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   ```
 - **Same-Type Variable Rebinding**:
   Re-binding an existing variable in the current scope is allowed as long as the new value has the same (or compatible) type. Type-mismatched assignments (e.g. `x = 10` followed by `x = "hello"`) are caught as static type errors. When rebinding an existing variable, the right-hand side is strictly evaluated (forced) immediately to prevent lazy evaluation cycles.
+- **Pipeline Operator (`|>`)**:
+  Functional pipelining to cleanly express transformation chains without nested parentheses.
+  `expr |> fn` evaluates as `fn(expr)`, and `expr |> fn(arg2)` evaluates as `fn(expr, arg2)`:
+  ```python
+  result = raw_input |> clean |> parse |> format
+  # Equivalent to: format(parse(clean(raw_input)))
+
+  val = 10 |> add(20) # Equivalent to: add(10, 20)
+  ```
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 
@@ -799,24 +808,14 @@ Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
   displayName = user?.Name ?? "Guest"
   ```
 
-### 6. Pipeline Operator (`|>`)
-
-Functional pipelining to cleanly express transformation chains on immutable data and lazy streams without nested parentheses:
-
-- Syntax: `expr |> fn` evaluates as `fn(expr)`:
-  ```python
-  result = raw_input |> clean |> parse |> format
-  # Equivalent to: format(parse(clean(raw_input)))
-  ```
-
-### 7. Bitwise Operators
+### 6. Bitwise Operators
 
 Bitwise operations for integers:
 
 - Binary operations: AND (`&`), XOR (`^`), left shift (`<<`), right shift (`>>`), NOT (`~`).
 - Bitwise OR: Disambiguated or dedicated operator syntax avoiding grammatical collision with union types (`A | B`) and lambda argument delimiters (`|x|:`).
 
-### 8. User-Defined Generics (Type Parameters `[T]`)
+### 7. User-Defined Generics (Type Parameters `[T]`)
 
 Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
 

@@ -867,3 +867,86 @@ d = (1 + 2)! * 3
 		t.Fatalf("expected ForceExpr on left of *, got %T", binD.Left)
 	}
 }
+
+func TestParsePipelineOperator(t *testing.T) {
+	input := `
+res = x |> f
+res2 = x |> f |> g
+res3 = x |> add(10)
+res4 = 5 |> (|n|: n * 2)
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 4 {
+		t.Fatalf("expected 4 statements, got %d", len(prog.Body))
+	}
+
+	// 1. res = x |> f -> f(x)
+	vd1 := prog.Body[0].(*ast.VarDecl)
+	call1, ok := vd1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for res, got %T", vd1.Value)
+	}
+	if id, ok := call1.Callee.(*ast.Identifier); !ok || id.Name != "f" {
+		t.Fatalf("expected callee f, got %+v", call1.Callee)
+	}
+	if len(call1.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(call1.Args))
+	}
+	if arg, ok := call1.Args[0].(*ast.Identifier); !ok || arg.Name != "x" {
+		t.Fatalf("expected arg x, got %+v", call1.Args[0])
+	}
+
+	// 2. res2 = x |> f |> g -> g(f(x))
+	vd2 := prog.Body[1].(*ast.VarDecl)
+	call2, ok := vd2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for res2, got %T", vd2.Value)
+	}
+	if id, ok := call2.Callee.(*ast.Identifier); !ok || id.Name != "g" {
+		t.Fatalf("expected callee g, got %+v", call2.Callee)
+	}
+	innerCall, ok := call2.Args[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected inner CallExpr f(x), got %T", call2.Args[0])
+	}
+	if id, ok := innerCall.Callee.(*ast.Identifier); !ok || id.Name != "f" {
+		t.Fatalf("expected inner callee f, got %+v", innerCall.Callee)
+	}
+
+	// 3. res3 = x |> add(10) -> add(x, 10)
+	vd3 := prog.Body[2].(*ast.VarDecl)
+	call3, ok := vd3.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for res3, got %T", vd3.Value)
+	}
+	if id, ok := call3.Callee.(*ast.Identifier); !ok || id.Name != "add" {
+		t.Fatalf("expected callee add, got %+v", call3.Callee)
+	}
+	if len(call3.Args) != 2 {
+		t.Fatalf("expected 2 args (x, 10), got %d", len(call3.Args))
+	}
+	if id, ok := call3.Args[0].(*ast.Identifier); !ok || id.Name != "x" {
+		t.Fatalf("expected first arg x, got %+v", call3.Args[0])
+	}
+	if num, ok := call3.Args[1].(*ast.IntLit); !ok || num.Value != 10 {
+		t.Fatalf("expected second arg 10, got %+v", call3.Args[1])
+	}
+
+	// 4. res4 = 5 |> (|n|: n * 2) -> (|n|: n * 2)(5)
+	vd4 := prog.Body[3].(*ast.VarDecl)
+	call4, ok := vd4.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for res4, got %T", vd4.Value)
+	}
+	if len(call4.Args) != 1 {
+		t.Fatalf("expected 1 arg (5), got %d", len(call4.Args))
+	}
+	if num, ok := call4.Args[0].(*ast.IntLit); !ok || num.Value != 5 {
+		t.Fatalf("expected arg 5, got %+v", call4.Args[0])
+	}
+}

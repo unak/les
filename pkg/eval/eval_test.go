@@ -1727,3 +1727,34 @@ print 65 is BadChrRet
 		t.Fatalf("expected %q, got %q", expectedOut, strings.TrimSpace(out))
 	}
 }
+
+func TestPipelineOperator(t *testing.T) {
+	code := `
+def inc(x: Int): Int:
+    x + 1
+
+def double(x: Int): Int:
+    x * 2
+
+def add(x: Int, y: Int): Int:
+    x + y
+
+a = 5 |> inc |> double
+b = 10 |> add(20)
+c = 3 |> (|x|: x * 3) |> inc
+
+print a
+print " "
+print b
+print " "
+print c
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error for pipeline operator: %v", err)
+	}
+	expected := "12 30 10"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected %q, got %q", expected, strings.TrimSpace(out))
+	}
+}
