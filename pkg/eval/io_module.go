@@ -193,7 +193,9 @@ func (ev *Evaluator) initIOModule() {
 			}
 			// C/Ruby behavior: flush buffered stdout before writing directly
 			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
-				_ = stdoutWriter.Flush()
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
 			}
 			w := ev.globalEnv.GetRawStdout()
 			n, err := w.Write([]byte(string(sv)))
@@ -270,7 +272,9 @@ func (ev *Evaluator) initIOModule() {
 			}
 			// C/Ruby behavior: flush buffered stdout before writing to stderr
 			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
-				_ = stdoutWriter.Flush()
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
 			}
 			w := ev.globalEnv.GetRawStderr()
 			n, err := w.Write([]byte(string(sv)))

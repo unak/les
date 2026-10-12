@@ -1169,6 +1169,11 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 				typeName := parts[1]
 				if mod, ok := inf.modules[modName]; ok {
 					if t, ok := mod.Exports[typeName]; ok {
+						// If the exported item is a constructor function (e.g. @bufio.Reader / @bufio.Writer),
+						// resolve type annotation to the constructed struct type (Ret).
+						if ft, ok := t.(*FuncType); ok && ft.Ret != nil {
+							return ft.Ret
+						}
 						return t
 					}
 				}

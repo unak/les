@@ -65,10 +65,15 @@ type customWriterAdapter struct {
 	target Value
 }
 
-func (a *customWriterAdapter) Write(p []byte) (int, error) {
+func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("runtime error in Writer.Write: %v", r)
+		}
+	}()
 	inst, ok := a.target.(*StructInstance)
 	if !ok {
 		return 0, fmt.Errorf("expected StructInstance for Writer, got %s", typeNameOf(a.target))
@@ -83,14 +88,14 @@ func (a *customWriterAdapter) Write(p []byte) (int, error) {
 	}
 	forced := Force(resVal)
 	if iv, ok := forced.(IntValue); ok {
-		n := int(iv)
-		if n < 0 {
-			return 0, fmt.Errorf("Write returned negative count %d", n)
+		nVal := int(iv)
+		if nVal < 0 {
+			return 0, fmt.Errorf("Write returned negative count %d", nVal)
 		}
-		if n > len(p) {
+		if nVal > len(p) {
 			return len(p), nil
 		}
-		return n, nil
+		return nVal, nil
 	}
 	return len(p), nil
 }
@@ -282,13 +287,14 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				if n > 0 {
 					return StringValue(string(buf[:n])), nil
 				}
-				if err == io.EOF {
+				if err == io.EOF || err == io.ErrNoProgress {
 					return NilValue{}, nil
 				}
 				if err != nil {
 					return nil, err
 				}
-				return NilValue{}, nil
+				// 0 bytes read without error: empty read ("")
+				return StringValue(""), nil
 			}), nil
 		},
 	}
@@ -302,7 +308,7 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 			return NewActionThunk(func() (Value, error) {
 				br := getReader()
 				line, err := br.ReadString('\n')
-				if err != nil && err != io.EOF {
+				if err != nil && err != io.EOF && err != io.ErrNoProgress {
 					return nil, err
 				}
 				if len(line) > 0 {
@@ -350,7 +356,7 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 							return StringValue(string(accumulated)), nil
 						}
 					}
-					if err == io.EOF {
+					if err == io.EOF || err == io.ErrNoProgress {
 						if len(accumulated) > 0 {
 							return StringValue(string(accumulated)), nil
 						}

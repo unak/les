@@ -692,7 +692,7 @@ import bufio
 - **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
   - `Read(n: Int): String | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns `""`; `n < 0` produces a runtime error.
   - `ReadLine(): String | Nil`: Reads a single line, stripping trailing `\n` or `\r\n`.
-  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text including delimiter, or `nil` on EOF.
+  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
   - `Peek(n: Int): String | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns `""`; `n < 0` produces a runtime error.
 - **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
   - `Write(s: String): Int`: Appends `s` to write buffer.

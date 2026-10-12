@@ -519,9 +519,18 @@ func (env *Environment) FlushAllBufioWriters() error {
 	}
 	var firstErr error
 	for _, bw := range env.ActiveBufioWriters {
-		if err := bw.Flush(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if firstErr == nil {
+						firstErr = fmt.Errorf("panic during flush: %v", r)
+					}
+				}
+			}()
+			if err := bw.Flush(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}()
 	}
 	return firstErr
 }

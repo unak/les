@@ -2160,3 +2160,60 @@ print r0 == "", "|", p0 == "", "|", del1, "|", del2
 		t.Fatalf("expected %q, got %q", expected, stdout.String())
 	}
 }
+
+func TestEmptyStringCustomRead(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	// Test custom reader that returns "" several times then EOF (Nil).
+	// bufio.Reader handles io.ErrNoProgress without crash.
+	code := `
+import bufio
+
+struct EmptyReader:
+    def Read(n: Int):
+        ""
+
+er = EmptyReader()
+br = @bufio.Reader(er)
+
+# bufio.ReadLine on reader returning only "" should eventually see ErrNoProgress as EOF -> Nil
+line = br.ReadLine()
+print line is Nil
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "true"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestFlushPanicRecovery(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct FailingWriter:
+    def Write(s: String):
+        len(s) - 1000 # negative write count causes error
+
+fw = FailingWriter()
+bw = @bufio.Writer(fw)
+bw.Write("trigger")! # force demand point so write buffers
+# Program exits, auto-flush triggers failure in Write
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from failing flush, got nil")
+	}
+	if !strings.Contains(err.Error(), "negative count") {
+		t.Fatalf("expected negative count error, got %v", err)
+	}
+}

@@ -346,7 +346,11 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 		if r := recover(); r != nil {
 			if exitErr, ok := r.(*ExitError); ok {
 				// Normal termination via exit() or top-level return: flush all bufio writers
-				_ = ev.globalEnv.FlushAllBufioWriters()
+				flushErr := ev.globalEnv.FlushAllBufioWriters()
+				if flushErr != nil && exitErr.Code == 0 {
+					err = flushErr
+					return
+				}
 				err = exitErr
 				return
 			}
@@ -364,7 +368,9 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 		}
 		// Normal completion without panic/exit
 		if err == nil {
-			_ = ev.globalEnv.FlushAllBufioWriters()
+			if flushErr := ev.globalEnv.FlushAllBufioWriters(); flushErr != nil {
+				err = flushErr
+			}
 		}
 	}()
 
