@@ -100,21 +100,20 @@ print line1, " ", line4
 	}
 }
 
-func TestIOModule(t *testing.T) {
-	code := `import io
-
-# Test ReadLine deferred action (only reads when demanded)
-l1 = @io.ReadLine()
-l2 = @io.ReadLine()
+func TestBuiltinGets(t *testing.T) {
+	code := `
+# Test gets deferred action (only reads when demanded)
+l1 = gets()
+l2 = gets()
 
 # At this point, l1 and l2 are thunks.
 # Demand l1 first, then l2:
 print "Line1: ", l1, "\n"
 print "Line2: ", l2, "\n"
 
-# Test ReadAll
-allRest = @io.ReadAll()
-print "Rest: ", allRest, "\n"
+# EOF test
+l3 = gets()
+print "Line3 is Nil: ", l3 is Nil, "\n"
 `
 	l := lexer.NewLexer(code)
 	p := parser.NewParser(l)
@@ -124,7 +123,7 @@ print "Rest: ", allRest, "\n"
 	}
 
 	ev := NewEvaluator()
-	fakeInput := strings.NewReader("hello\nworld\nremaining text")
+	fakeInput := strings.NewReader("hello\r\nworld\n")
 	ev.SetInput(fakeInput)
 
 	var out strings.Builder
@@ -135,7 +134,7 @@ print "Rest: ", allRest, "\n"
 		t.Fatalf("eval error: %v", err)
 	}
 
-	expected := "Line1: hello\nLine2: world\nRest: remaining text\n"
+	expected := "Line1: hello\nLine2: world\nLine3 is Nil: true\n"
 	if out.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -214,10 +213,9 @@ for i < 3:
 }
 
 func TestForLoopEcho(t *testing.T) {
-	code := `import io
-
+	code := `
 for:
-    line = @io.ReadLine()
+    line = gets()
     if line is Nil:
         break
     print line, "\n"

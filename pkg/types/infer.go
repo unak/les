@@ -117,6 +117,11 @@ func NewInferencer() *Inferencer {
 	})
 	// Built-in force: (Any) -> Any
 	_ = rootScope.Declare("force", builtinForceFuncType)
+	// Built-in gets: () -> String | Nil
+	_ = rootScope.Declare("gets", &FuncType{
+		Arg: &TupleType{Elems: []Type{}},
+		Ret: NewUnionType(TypeString, TypeNil),
+	})
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -530,14 +535,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"ReadCloser":  readCloserIface,
 					"WriteCloser": writeCloserIface,
 					"Stdin":       readCloserIface,
-					"ReadLine": &FuncType{
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: NewUnionType(TypeString, TypeNil),
-					},
-					"ReadAll": &FuncType{
-						Arg: &TupleType{Elems: []Type{}},
-						Ret: TypeString,
-					},
 				},
 			}
 		} else if inf.moduleLoader != nil {

@@ -1,8 +1,10 @@
 package eval
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -140,6 +142,46 @@ func (ev *Evaluator) registerBuiltins() {
 				return nil, fmt.Errorf("force expects 1 argument, got %d", len(args))
 			}
 			return Force(args[0]), nil
+		},
+	})
+
+	// gets: reads a single line from standard input, returning String or Nil on EOF.
+	// Returns a lazy ActionThunk that only blocks when demanded.
+	var stdinReader *bufio.Reader
+	var currentReader io.Reader
+	ev.globalEnv.Set("gets", &BuiltinFunc{
+		Name: "gets",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return nil, fmt.Errorf("gets expects 0 arguments, got %d", len(args))
+			}
+			return NewActionThunk(func() (Value, error) {
+				in := ev.globalEnv.Input
+				if in == nil {
+					in = os.Stdin
+				}
+				if stdinReader == nil || currentReader != in {
+					currentReader = in
+					stdinReader = bufio.NewReader(in)
+				}
+				line, err := stdinReader.ReadString('\n')
+				if len(line) > 0 {
+					if line[len(line)-1] == '\n' {
+						line = line[:len(line)-1]
+					}
+					if len(line) > 0 && line[len(line)-1] == '\r' {
+						line = line[:len(line)-1]
+					}
+					return StringValue(line), nil
+				}
+				if err == io.EOF {
+					return NilValue{}, nil
+				}
+				if err != nil {
+					return nil, err
+				}
+				return NilValue{}, nil
+			}), nil
 		},
 	})
 

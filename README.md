@@ -223,7 +223,7 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   ```python
   # Infinite loop with break and continue
   for:
-      line = @io.ReadLine()
+      line = gets()
       if line is Nil:
           break
       print line, "\n"
@@ -305,10 +305,10 @@ Listed from highest to lowest precedence:
   - When passed as a function argument (`f(expr!)`), bound to a variable (`x = expr!`), or stored in a container (`(expr!,)` or `{"k": expr!}`), the expression is strictly evaluated (forced) immediately at that site instead of creating a deferred lazy `Thunk`.
   - *Note*: If the identifier `force` is shadowed in local scope (e.g. by a parameter), `expr!` continues to strictly force evaluation at the syntax level, while `force(expr)` resolves to the shadowed local binding without creating an automatic eager demand point.
 - **Input is a Deferred Thunk (Lazy Read)**:
-  - I/O read operations (e.g. `@io.ReadLine()`, `@io.ReadAll()`) return a deferred `Thunk` without blocking at invocation time.
+  - I/O read operations (e.g. `gets()`) return a deferred `Thunk` without blocking at invocation time.
   - The actual I/O read / system call occurs only when the value is demanded (e.g., printed, compared, or concatenated). Unused inputs never block or perform reads.
 - **Evaluation Order**:
-  - Binary expressions, tuple elements, and arguments are strictly evaluated and forced **left-to-right**, guaranteeing predictable I/O sequence (e.g. `@io.ReadLine() + @io.ReadLine()`).
+  - Binary expressions, tuple elements, and arguments are strictly evaluated and forced **left-to-right**, guaranteeing predictable I/O sequence (e.g. `gets() + gets()`).
 - Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
 - User-defined functions cannot create raw side-effect primitives.
 
@@ -428,6 +428,21 @@ Explicit demand point that strictly evaluates (forces) its argument and returns 
   x = force(10 + 20)
   # Forces argument evaluation before function application or container construction:
   pick(42, force(expensive_call()))
+  ```
+
+#### `def gets(): String | Nil`
+Reads a single line from standard input, stripping any trailing newline (`\n` or `\r\n`). Returns `nil` upon reaching EOF.
+
+- **Effect**: Returns a deferred lazy `Thunk`. Invoking `gets()` does not block immediately; the actual read occurs only when the value is demanded (e.g. forced via `print`, `!`, or string concatenation).
+- **Arguments**: None (`()`).
+- **Returns**: `String | Nil` — the line content as a `String`, or `nil` on EOF.
+- **Usage**:
+  ```python
+  line = gets()
+  if line is Nil:
+      print "EOF reached\n"
+  else:
+      print "Read line: ", line, "\n"
   ```
 
 ### 9. Built-in Methods on Primitive Types
@@ -657,23 +672,6 @@ import io
 #### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
   - `@io.Stdin.Read(n)` reads up to `n` bytes.
-
-#### Convenience Functions
-- **`@io.ReadLine(): String | Nil`**:
-  Reads a single line from standard input (excluding trailing newline `\n` / `\r\n`). Returns `nil` upon EOF.
-  Deferred as a lazy `Thunk`; only blocks on user input when the value is demanded.
-- **`@io.ReadAll(): String`**:
-  Reads all remaining contents from standard input until EOF. Deferred as a lazy `Thunk`.
-
-**Interactive Example**:
-```python
-import io
-
-print "What is your name? "
-name = @io.ReadLine() # Deferred: does not block yet!
-
-print "Hello, ", name, "!\n" # name is forced here; user is prompted
-```
 
 ### 16. Error Handling & `interface Error`
 

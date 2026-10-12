@@ -1,7 +1,6 @@
 package eval
 
 import (
-	"bufio"
 	"io"
 	"os"
 
@@ -73,62 +72,6 @@ func (ev *Evaluator) initIOModule() {
 			return ev.globalEnv.Input
 		}
 		return os.Stdin
-	}
-
-	var stdinReader *bufio.Reader
-	var currentReader io.Reader
-
-	getBufioReader := func() *bufio.Reader {
-		r := getInputReader()
-		if stdinReader == nil || currentReader != r {
-			currentReader = r
-			stdinReader = bufio.NewReader(r)
-		}
-		return stdinReader
-	}
-
-	// @io.ReadLine(): String | Nil (deferred via ActionThunk)
-	ioExports["ReadLine"] = &BuiltinFunc{
-		Name: "ReadLine",
-		Fn: func(args []Value) (Value, error) {
-			// Returns a lazy Thunk that blocks only when demanded (forced)!
-			return NewActionThunk(func() (Value, error) {
-				br := getBufioReader()
-				line, err := br.ReadString('\n')
-				if len(line) > 0 {
-					// Trim trailing newline (\r\n or \n)
-					if len(line) > 0 && line[len(line)-1] == '\n' {
-						line = line[:len(line)-1]
-					}
-					if len(line) > 0 && line[len(line)-1] == '\r' {
-						line = line[:len(line)-1]
-					}
-					return StringValue(line), nil
-				}
-				if err == io.EOF {
-					return NilValue{}, nil
-				}
-				if err != nil {
-					return nil, err
-				}
-				return NilValue{}, nil
-			}), nil
-		},
-	}
-
-	// @io.ReadAll(): String (deferred via ActionThunk)
-	ioExports["ReadAll"] = &BuiltinFunc{
-		Name: "ReadAll",
-		Fn: func(args []Value) (Value, error) {
-			return NewActionThunk(func() (Value, error) {
-				br := getBufioReader()
-				bytes, err := io.ReadAll(br)
-				if err != nil {
-					return nil, err
-				}
-				return StringValue(string(bytes)), nil
-			}), nil
-		},
 	}
 
 	// Stdin struct definition implementing Reader & Closer
