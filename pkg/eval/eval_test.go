@@ -2523,3 +2523,94 @@ print isRC
 		t.Fatalf("expected 'true', got %q", out.String())
 	}
 }
+
+func TestEvaluatorReuseAfterRuntimeErrorDoesNotFlushStaleBuffers(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	// First run: writes to custom writer and Stdout, then panics with division by zero
+	firstCode := `
+import bufio
+
+struct Buffer:
+    content: String
+    def Write(s: String): Int:
+        content = content + s
+        len(s)
+
+buf = Buffer(content: "")
+bw = @bufio.Writer(buf)
+bw.Write("stale custom output")!
+Stdout.Write("stale stdout output")!
+(1 / 0)!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
+	_, err1 := ev.EvalProgram(prog1)
+	if err1 == nil {
+		t.Fatalf("expected runtime error, got nil")
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no output flushed on runtime error, got %q", out.String())
+	}
+
+	// Second run on the same evaluator: normal execution
+	secondCode := `
+Stdout.Write("clean output")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 != nil {
+		t.Fatalf("unexpected eval error in second run: %v", err2)
+	}
+	if out.String() != "clean output" {
+		t.Fatalf("expected %q, got %q", "clean output", out.String())
+	}
+}
+
+func TestDrainedCustomBufioWritersCleanedUp(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+import bufio
+
+struct Buffer:
+    content: String
+    def Write(s: String): Int:
+        content = content + s
+        len(s)
+
+buf = Buffer(content: "")
+bw = @bufio.Writer(buf)
+bw.Write("hello")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	// After evaluation finishes and flushes, custom writer should be drained and removed from ActiveBufioWriters
+	for _, bw := range ev.globalEnv.ActiveBufioWriters {
+		if bw != ev.globalEnv.StdoutWriter {
+			t.Fatalf("expected no custom writers retained in ActiveBufioWriters, found %v", bw)
+		}
+	}
+
+	// Now execute a Write on bw again in a subsequent run, verifying it gets re-registered
+	code2 := `
+bw.Write("world")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	_, err = ev.EvalProgram(prog2)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	for _, bw := range ev.globalEnv.ActiveBufioWriters {
+		if bw != ev.globalEnv.StdoutWriter {
+			t.Fatalf("expected no custom writers retained after second run, found %v", bw)
+		}
+	}
+}

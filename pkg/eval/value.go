@@ -583,5 +583,40 @@ func (env *Environment) FlushAllBufioWriters() error {
 			}
 		}
 	}
+	// Clean up fully drained custom writers so they do not leak memory or outlive the evaluation.
+	// Only retain StdoutWriter or writers that still have buffered data.
+	var retained []*bufio.Writer
+	for _, bw := range env.ActiveBufioWriters {
+		if bw == env.StdoutWriter || bw.Buffered() > 0 {
+			retained = append(retained, bw)
+		}
+	}
+	env.ActiveBufioWriters = retained
 	return firstErr
+}
+
+// ResetBufioWritersOnError discards any unflushed buffered data from StdoutWriter and
+// resets and removes all custom bufio writers.
+// Used after evaluation errors to prevent abandoned buffers from leaking into subsequent program runs.
+func (env *Environment) ResetBufioWritersOnError() {
+	if env.parent != nil {
+		env.parent.ResetBufioWritersOnError()
+		return
+	}
+	for _, bw := range env.ActiveBufioWriters {
+		if bw != env.StdoutWriter {
+			bw.Reset(io.Discard)
+		}
+	}
+	if env.StdoutWriter != nil {
+		env.StdoutWriter.Reset(env.GetRawStdout())
+		env.ActiveBufioWriters = []*bufio.Writer{env.StdoutWriter}
+	} else {
+		env.ActiveBufioWriters = nil
+	}
+}
+
+// ClearCustomBufioWriters is an alias for ResetBufioWritersOnError.
+func (env *Environment) ClearCustomBufioWriters() {
+	env.ResetBufioWritersOnError()
 }

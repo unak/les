@@ -364,6 +364,7 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 				err = exitErr
 				return
 			}
+			ev.globalEnv.ResetBufioWritersOnError()
 			if _, ok := r.(*ReturnSignal); ok {
 				err = fmt.Errorf("return outside of function")
 				return
@@ -381,6 +382,8 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 			if flushErr := ev.globalEnv.FlushAllBufioWriters(); flushErr != nil {
 				err = flushErr
 			}
+		} else {
+			ev.globalEnv.ResetBufioWritersOnError()
 		}
 	}()
 

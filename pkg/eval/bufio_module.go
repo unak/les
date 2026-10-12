@@ -445,6 +445,7 @@ func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, def
 			if err != nil {
 				return nil, err
 			}
+			ev.globalEnv.RegisterBufioWriter(bw)
 			return IntValue(n), nil
 		},
 	}
