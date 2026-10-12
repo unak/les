@@ -810,3 +810,11 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+## Contributions
+
+By submitting contributions (via pull requests, email, or any other means) to this project:
+
+1. **Copyright Ownership**: You retain the copyright to your contributed code.
+2. **Grant of Rights**: You grant the project owner (U.Nakamura) an unrestricted, perpetual, irrevocable, worldwide, royalty-free license to use, copy, modify, merge, distribute, sublicense, and relicense your contributions.
+3. **Non-infringement**: You represent and warrant that your contributions are your original work and do not infringe upon any third party's copyright, patent, or other intellectual property rights.
