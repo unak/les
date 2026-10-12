@@ -167,7 +167,7 @@ print isReader, " ", isCloser, " ", isReadCloser
 		t.Fatalf("eval error: %v", err)
 	}
 
-	expected := "True True True"
+	expected := "true true true"
 	if out.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -377,7 +377,7 @@ def classify(v):
 
 classify 100
 classify "les"
-classify True
+classify true
 `
 	var out strings.Builder
 	ev := NewEvaluator()
@@ -401,12 +401,12 @@ classify True
 
 func TestEvalNilAndAny(t *testing.T) {
 	code := `
-x = Nil
+x = nil
 print x is Nil, x is Any, 42 is Any, 42 is Nil
 print "\n"
 
 match x:
-    case Nil:
+    case nil:
         print "got nil"
         print "\n"
     case _:
@@ -427,7 +427,7 @@ match x:
 	if err != nil {
 		t.Fatalf("eval nil/any failed: %v", err)
 	}
-	expected := "TrueTrueTrueFalse\ngot nil"
+	expected := "truetruetruefalse\ngot nil"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -559,9 +559,9 @@ print type((1, 2))
 print "\n"
 print type("les")
 print "\n"
-print type(True)
+print type(true)
 print "\n"
-print type(Nil)
+print type(nil)
 print "\n"
 print type()
 print "\n"
@@ -737,13 +737,13 @@ func TestExitBuiltin(t *testing.T) {
 			wantCode: 42,
 		},
 		{
-			name:     "exit with True",
-			code:     "exit True",
+			name:     "exit with true",
+			code:     "exit true",
 			wantCode: 0,
 		},
 		{
-			name:     "exit with False",
-			code:     "exit False",
+			name:     "exit with false",
+			code:     "exit false",
 			wantCode: 1,
 		},
 		{
@@ -1002,13 +1002,13 @@ func TestTopLevelReturn(t *testing.T) {
 			wantCode: 42,
 		},
 		{
-			name:     "return True is exit 0",
-			code:     "return True\n",
+			name:     "return true is exit 0",
+			code:     "return true\n",
 			wantCode: 0,
 		},
 		{
-			name:     "return False is exit 1",
-			code:     "return False\n",
+			name:     "return false is exit 1",
+			code:     "return false\n",
 			wantCode: 1,
 		},
 		{
@@ -1158,7 +1158,7 @@ a = Animal(species: "Cat")
 d = Dog(Animal(species: "Canine"), bark: "Woof")
 (a is Animal, d is Dog, d is Animal, a is Dog)
 `,
-			wantVal: "(True, True, True, False)",
+			wantVal: "(true, true, true, false)",
 		},
 	}
 
@@ -1236,7 +1236,7 @@ anonIsGreeter = anon is Greeter
 		t.Fatalf("eval error: %v", err)
 	}
 
-	expected := "(True, True, True, True, False)"
+	expected := "(true, true, true, true, false)"
 	if val.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, val.String())
 	}
@@ -1388,7 +1388,7 @@ print isErr, " ", msg, " ", match1, " ", match2, " ", customIsError, " ", custom
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	expected := "True something went wrong ok err: division by zero True MyCustomError(custom: not found)"
+	expected := "true something went wrong ok err: division by zero true MyCustomError(custom: not found)"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
@@ -1400,9 +1400,9 @@ func TestBuiltinToStringAndShowInterface(t *testing.T) {
 s_int = 42.ToString()
 s_float = 3.14.ToString()
 s_str = "hello".ToString()
-s_bool1 = True.ToString()
-s_bool2 = False.ToString()
-s_nil = Nil.ToString()
+s_bool1 = true.ToString()
+s_bool2 = false.ToString()
+s_nil = nil.ToString()
 s_tuple = (1, 2).ToString()
 s_list = [1, 2, 3].ToString()
 s_dict = {"k": 99}.ToString()
@@ -1414,7 +1414,7 @@ s_bound = f()
 # 3. is Show interface satisfaction
 intIsShow = 42 is Show
 strIsShow = "les" is Show
-nilIsShow = Nil is Show
+nilIsShow = nil is Show
 tupleIsShow = (1, 2) is Show
 intIsError = 42 is Error
 
@@ -1434,7 +1434,7 @@ print s_int, "\n", s_float, "\n", s_str, "\n", s_bool1, "\n", s_bool2, "\n", s_n
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	expected := "42\n3.14\nhello\nTrue\nFalse\nNil\n(1, 2)\n(1, 2, 3)\n{\"k\": 99}\n100\nTrue\nTrue\nTrue\nTrue\nFalse\nTrue\nPerson(Alice)"
+	expected := "42\n3.14\nhello\ntrue\nfalse\nnil\n(1, 2)\n(1, 2, 3)\n{\"k\": 99}\n100\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nPerson(Alice)"
 	if strings.TrimSpace(out) != expected {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
 	}
@@ -1457,7 +1457,59 @@ print n
 	}
 }
 
+func TestNilEqualityAndDisallowCapitalLiterals(t *testing.T) {
+	// 1. nil equality comparison
+	code := `
+a = nil == nil
+b = nil != nil
+c = 42 == nil
+d = 42 != nil
+print a, " ", b, " ", c, " ", d
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "true false false true"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
 
+	// 2. Disallow True / False / Nil as value literals (they are treated as undefined identifiers)
+	badCodes := []string{
+		"print True",
+		"print False",
+		"print Nil",
+	}
+	for _, bc := range badCodes {
+		_, err := runLesCode(bc)
+		if err == nil {
+			t.Fatalf("expected error for %q, but got nil", bc)
+		}
+	}
 
+	// 3. Match expression with true, false, nil value patterns
+	matchCode := `
+def check(v):
+    match v:
+        case true:
+            "got-true"
+        case false:
+            "got-false"
+        case nil:
+            "got-nil"
+        case _:
+            "other"
 
+print check(true), " ", check(false), " ", check(nil), " ", check(42)
+`
+	out2, err := runLesCode(matchCode)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected2 := "got-true got-false got-nil other"
+	if strings.TrimSpace(out2) != expected2 {
+		t.Fatalf("expected %q, got %q", expected2, out2)
+	}
+}
 

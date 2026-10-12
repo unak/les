@@ -941,7 +941,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		return TypeString
 	case "Bool":
 		return TypeBool
-	case "Nil":
+	case "Nil", "nil":
 		return TypeNil
 	case "Any":
 		return TypeAny

@@ -1060,6 +1060,18 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 }
 
 func evalBinary(op string, left, right Value) (Value, error) {
+	// Nil comparison
+	_, leftIsNil := left.(NilValue)
+	_, rightIsNil := right.(NilValue)
+	if leftIsNil || rightIsNil {
+		if op == "==" {
+			return BoolValue(leftIsNil && rightIsNil), nil
+		}
+		if op == "!=" {
+			return BoolValue(leftIsNil != rightIsNil), nil
+		}
+	}
+
 	// Numeric operations
 	if li, ok := left.(IntValue); ok {
 		if ri, ok := right.(IntValue); ok {
@@ -1160,9 +1172,15 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	switch typeAnnot {
 	case "Any":
 		return true
-	case "Nil":
+	case "Nil", "nil":
 		_, ok := val.(NilValue)
 		return ok
+	case "true":
+		b, ok := val.(BoolValue)
+		return ok && bool(b)
+	case "false":
+		b, ok := val.(BoolValue)
+		return ok && !bool(b)
 	case "Int":
 		_, ok := val.(IntValue)
 		return ok

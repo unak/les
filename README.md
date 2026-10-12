@@ -54,7 +54,7 @@ les -e "print Args[0]" foo bar
 | `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
 | `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
-| `Bool` | `True`, `False` | Boolean value. |
+| `Bool` | `true`, `false` | Boolean value. |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. |
 
@@ -313,7 +313,7 @@ Listed from highest to lowest precedence:
 - **Branch Type Inference**: When branches (such as `? :`) return different types, the expression is inferred as a union type (`Int | String`).
 - **Type Test Operator `is`**:
   - Binary operator testing dynamic value type: `expr is Type`.
-  - Evaluates to `Bool` (`True` or `False`).
+  - Evaluates to `Bool` (`true` or `false`).
   ```python
   x = 10
   if x is Int:
@@ -327,14 +327,14 @@ Listed from highest to lowest precedence:
               print "number:", v
           case String:
               print "string:", v
-          case Nil:
+          case nil:
               print "nil value"
           case _:
               print "other"
 
   classify 100
   classify "les"
-  classify Nil
+  classify nil
   ```
 
 ### 8. Built-in Functions
@@ -368,7 +368,7 @@ Returns the string representation of the runtime type of the given value or argu
   - `type((1,))` -> `"(Int)"`
   - `type(1, 2)` -> `"(Int, Int)"`
   - `type("hello")` -> `"String"`
-  - `type(Nil)` -> `"Nil"`
+  - `type(nil)` -> `"Nil"`
   - `type()` -> `"()"`
 - **Usage**:
   ```python
@@ -382,13 +382,13 @@ Terminates the program execution immediately with the given exit status code.
 - **Arguments**: Optional 0 or 1 argument (`Int` or `Bool`).
   - No arguments (`exit` or `exit()`): exits with code `0`.
   - `Int`: exits with the given integer code (e.g. `exit 0`, `exit 42`).
-  - `Bool`: `True` exits with code `0`, `False` exits with code `1`.
+  - `Bool`: `true` exits with code `0`, `false` exits with code `1`.
 - **Usage**:
   ```python
   exit           # Bare statement auto-call: exits with 0
   exit 0
-  exit True      # exits with 0
-  exit False     # exits with 1
+  exit true      # exits with 0
+  exit false     # exits with 1
   exit 1
   ```
 
@@ -415,7 +415,7 @@ if len(Args) > 0:
 
 ### 10. Special Types: `Nil` and `Any`
 - **`Nil`**:
-  - Represents the absence of a value (both as the literal `Nil` and the type `Nil`).
+  - Represents the absence of a value (literal `nil`, type `Nil`).
   - Useful in union types such as `Int | Nil` (nullable/optional semantics).
 - **`Any`**:
   - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
@@ -472,7 +472,7 @@ if len(Args) > 0:
   - Terminates the process immediately with an integer status code.
   - Accepts 0 or 1 argument (`Int` or `Bool`).
   - Without arguments or bare `exit`: exits with code `0`.
-  - With `True`: code `0`; with `False`: code `1`.
+  - With `true`: code `0`; with `false`: code `1`.
 
 ### 12. Structs (`struct`)
 
@@ -525,7 +525,7 @@ struct ReadCloser:
 
 rc = ReadCloser()
 print rc.Read()         # "read data" (promoted method)
-print rc is Reader      # True
+print rc is Reader      # true
 ```
 
 #### Static Ambiguous Selector Detection
@@ -587,19 +587,19 @@ import io
 ```
 
 #### Core Interfaces
-- **`Reader`**: `read(n: Int): String | Nil`
-- **`Writer`**: `write(s: String): Int`
-- **`Closer`**: `close(): ()`
+- **`Reader`**: `Read(n: Int): String | Nil`
+- **`Writer`**: `Write(s: String): Int`
+- **`Closer`**: `Close(): ()`
 - **`ReadCloser`**: embeds `Reader`, `Closer`
 - **`WriteCloser`**: embeds `Writer`, `Closer`
 
 #### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
-  - `@io.Stdin.read(n)` reads up to `n` bytes.
+  - `@io.Stdin.Read(n)` reads up to `n` bytes.
 
 #### Convenience Functions
 - **`@io.ReadLine(): String | Nil`**:
-  Reads a single line from standard input (excluding trailing newline `\n` / `\r\n`). Returns `Nil` upon EOF.
+  Reads a single line from standard input (excluding trailing newline `\n` / `\r\n`). Returns `nil` upon EOF.
   Deferred as a lazy `Thunk`; only blocks on user input when the value is demanded.
 - **`@io.ReadAll(): String`**:
   Reads all remaining contents from standard input until EOF. Deferred as a lazy `Thunk`.
@@ -632,7 +632,7 @@ A convenient built-in `Error` constructor generates standard error instances sat
 err = Error("file not found")
 print err           # "Error: file not found" (formatted via ToString)
 print err.Message() # "file not found"
-print err is Error  # True
+print err is Error  # true
 ```
 
 #### Idiomatic Error Handling via Union Types (`Value | Error`) & Pattern Matching

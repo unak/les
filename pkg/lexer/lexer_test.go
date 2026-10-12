@@ -139,4 +139,26 @@ func TestLexerLineContinuationWithCommentAndWhitespace(t *testing.T) {
 	}
 }
 
+func TestLexerBoolAndNilKeywords(t *testing.T) {
+	input := "true false nil True False Nil"
+	l := NewLexer(input)
+	expected := []struct {
+		tokType TokenType
+		literal string
+	}{
+		{TokenBool, "true"},
+		{TokenBool, "false"},
+		{TokenNil, "nil"},
+		{TokenIdent, "True"},
+		{TokenIdent, "False"},
+		{TokenIdent, "Nil"},
+		{TokenEOF, ""},
+	}
 
+	for i, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp.tokType || tok.Literal != exp.literal {
+			t.Fatalf("[%d] expected %v (%q), got %v (%q)", i, exp.tokType, exp.literal, tok.Type, tok.Literal)
+		}
+	}
+}

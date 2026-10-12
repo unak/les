@@ -936,7 +936,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenString:
 		return &ast.StringLit{Value: p.curToken.Literal}
 	case lexer.TokenBool:
-		return &ast.BoolLit{Value: p.curToken.Literal == "True"}
+		return &ast.BoolLit{Value: p.curToken.Literal == "true"}
 	case lexer.TokenNil:
 		return &ast.NilLit{}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot:

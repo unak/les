@@ -45,7 +45,7 @@ func TestParseUnaryOperators(t *testing.T) {
 	input := `
 a = +10
 b = -20
-c = !True
+c = !true
 `
 	l := lexer.NewLexer(input)
 	p := NewParser(l)

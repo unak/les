@@ -131,7 +131,7 @@ y: Int | String = "hello"
 
 func TestTernaryUnionInference(t *testing.T) {
 	input := `
-res = True ? 42 : "hello"
+res = true ? 42 : "hello"
 val: Int | String = res
 `
 	l := lexer.NewLexer(input)
@@ -367,7 +367,7 @@ def multiplier(factor: Int): (Int) -> Int:
     |x: Int|: x * factor
 
 # 4. Zero-argument function
-getter: () -> Nil = ||: Nil
+getter: () -> Nil = ||: nil
 
 # 5. Multi-argument function type
 adder: (Int, Int) -> Int = |a, b|: a + b

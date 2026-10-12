@@ -29,14 +29,14 @@ type BoolValue bool
 
 func (v BoolValue) String() string {
 	if v {
-		return "True"
+		return "true"
 	}
-	return "False"
+	return "false"
 }
 
 type NilValue struct{}
 
-func (v NilValue) String() string { return "Nil" }
+func (v NilValue) String() string { return "nil" }
 
 // TupleValue holds lazy values (Thunks or direct values).
 type TupleValue struct {
