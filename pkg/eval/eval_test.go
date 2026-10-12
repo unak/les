@@ -1666,7 +1666,7 @@ print (-1).Chr()
 	}
 
 	codeTooLarge := `
-print (0x110000).Chr()
+print (1114112).Chr()
 `
 	_, err = runLesCode(codeTooLarge)
 	if err == nil {
@@ -1674,10 +1674,56 @@ print (0x110000).Chr()
 	}
 
 	codeSurrogate := `
-print (0xD800).Chr()
+print (55296).Chr()
 `
 	_, err = runLesCode(codeSurrogate)
 	if err == nil {
 		t.Fatalf("expected error on surrogate .Chr(), got nil")
+	}
+
+	// 5. Valid U+FFFD replacement character returns 65533
+	codeReplacementChar := "print \"" + string(rune(0xFFFD)) + "\".Ord()\n"
+	out, err := runLesCode(codeReplacementChar)
+	if err != nil {
+		t.Fatalf("unexpected error on valid U+FFFD .Ord(): %v", err)
+	}
+	if !strings.Contains(out, "65533") {
+		t.Fatalf("expected 65533 for U+FFFD .Ord(), got %q", out)
+	}
+
+	// 6. Interface dynamic 'is' check with Ord and Chr signatures
+	codeInterface := `
+interface HasOrd:
+    Ord(): Int
+
+interface HasChr:
+    Chr(): String
+
+interface BadOrdParam:
+    Ord(x: Int): Int
+
+interface BadOrdRet:
+    Ord(): String
+
+interface BadChrRet:
+    Chr(): Int
+
+print "A" is HasOrd
+print " "
+print 65 is HasChr
+print " "
+print "A" is BadOrdParam
+print " "
+print "A" is BadOrdRet
+print " "
+print 65 is BadChrRet
+`
+	out, err = runLesCode(codeInterface)
+	if err != nil {
+		t.Fatalf("unexpected error on interface check: %v", err)
+	}
+	expectedOut := "true true false false false"
+	if strings.TrimSpace(out) != expectedOut {
+		t.Fatalf("expected %q, got %q", expectedOut, strings.TrimSpace(out))
 	}
 }

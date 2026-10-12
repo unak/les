@@ -1210,8 +1210,8 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(s) == 0 {
 						return nil, fmt.Errorf("Ord() on empty string")
 					}
-					r, _ := utf8.DecodeRuneInString(s)
-					if r == utf8.RuneError {
+					r, size := utf8.DecodeRuneInString(s)
+					if r == utf8.RuneError && size <= 1 {
 						return nil, fmt.Errorf("Ord() invalid UTF-8 string")
 					}
 					return IntValue(r), nil
@@ -1371,7 +1371,15 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 		case *BuiltinFunc:
 			// For ToString, 0 params
 			if mName == "ToString" {
-				if len(sig.Params) != 0 {
+				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String" && sig.ReturnType != "Any") {
+					return false
+				}
+			} else if mName == "Ord" {
+				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int" && sig.ReturnType != "Any") {
+					return false
+				}
+			} else if mName == "Chr" {
+				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String" && sig.ReturnType != "Any") {
 					return false
 				}
 			}
