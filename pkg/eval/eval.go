@@ -1410,11 +1410,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						}
 						if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
 							if si, ok := val.(*StructInstance); ok && si.Def != nil {
-								if si.Def == structDef || si.Def.Name == structDef.Name {
+								if si.Def == structDef {
 									return true
 								}
 								for _, emb := range si.Embedded {
-									if emb.Def == structDef || emb.Def.Name == structDef.Name {
+									if emb.Def == structDef {
 										return true
 									}
 								}

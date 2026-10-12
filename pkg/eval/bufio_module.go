@@ -97,7 +97,7 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 		}
 		return nVal, nil
 	}
-	return len(p), nil
+	return 0, fmt.Errorf("Write returned unexpected type %s", typeNameOf(forced))
 }
 
 // initBufioModule registers the built-in @bufio module.

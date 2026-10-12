@@ -2258,21 +2258,28 @@ func TestRuntimeQualifiedTypeMatching(t *testing.T) {
 	var stdout strings.Builder
 	ev.SetOutput(&stdout)
 
+	// User struct named Reader must NOT match @bufio.Reader by name alone
 	code := `
 import io
 import bufio
 
+struct Reader:
+    def Read(n: Int): "custom"
+
+userR = Reader()
+
 print Stdin is @bufio.Reader, "|"
 print Stdout is @bufio.Writer, "|"
 print @io.Stdin is @io.Reader, "|"
-print @io.Stdout is @io.Writer
+print @io.Stdout is @io.Writer, "|"
+print userR is @bufio.Reader # must be false (different identity)
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	if _, err := ev.EvalProgram(prog); err != nil {
 		t.Fatalf("eval failed: %v", err)
 	}
 
-	expected := "true|true|true|true"
+	expected := "true|true|true|true|false"
 	if stdout.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, stdout.String())
 	}
@@ -2300,5 +2307,30 @@ bw.Flush()!
 	}
 	if !strings.Contains(err.Error(), "exceeding buffer length") {
 		t.Fatalf("expected 'exceeding buffer length' error, got %v", err)
+	}
+}
+
+func TestWriterResultNonInt(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct BadWriter:
+    def Write(s: String):
+        "not an integer"
+
+bw_custom = BadWriter()
+bw = @bufio.Writer(bw_custom)
+bw.Write("hello")!
+bw.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from non-int write, got nil")
+	}
+	if !strings.Contains(err.Error(), "Write returned unexpected type") {
+		t.Fatalf("expected 'Write returned unexpected type' error, got %v", err)
 	}
 }

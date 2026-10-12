@@ -573,5 +573,14 @@ func (env *Environment) FlushAllBufioWriters() error {
 			break
 		}
 	}
+	// If non-failed writers still have buffered data (e.g. infinite refill cycle or stuck progress), report error
+	if firstErr == nil {
+		for _, bw := range env.ActiveBufioWriters {
+			if !failed[bw] && bw.Buffered() > 0 {
+				firstErr = fmt.Errorf("buffered output remained unflushed after drain limit")
+				break
+			}
+		}
+	}
 	return firstErr
 }
