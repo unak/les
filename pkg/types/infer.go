@@ -98,6 +98,19 @@ func NewInferencer() *Inferencer {
 	}
 	_ = rootScope.Declare("Error", errorIface)
 
+	// Built-in Show interface: ToString(): String
+	showIface := &InterfaceType{
+		Name: "Show",
+		Methods: map[string]*FuncType{
+			"ToString": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			},
+		},
+		Embedded: []*InterfaceType{},
+	}
+	_ = rootScope.Declare("Show", showIface)
+
 	return &Inferencer{
 		nextVarID: 0,
 		scope:     rootScope,
@@ -607,6 +620,25 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			return iface, nil
 		}
 		if fnT, ok := calleeT.(*FuncType); ok {
+			if argTuple, ok := fnT.Arg.(*TupleType); ok {
+				for i, argExpr := range e.Args {
+					argT, err := inf.inferExpr(argExpr)
+					if err != nil {
+						return nil, err
+					}
+					if i < len(argTuple.Elems) {
+						expectedParamT := argTuple.Elems[i]
+						if !IsAssignableTo(argT, expectedParamT) {
+							return nil, fmt.Errorf("type mismatch in argument %d: expected %s, got %s", i+1, expectedParamT, argT)
+						}
+					} else if argTuple.IsVariadic && len(argTuple.Elems) > 0 {
+						expectedParamT := argTuple.Elems[len(argTuple.Elems)-1]
+						if !IsAssignableTo(argT, expectedParamT) {
+							return nil, fmt.Errorf("type mismatch in variadic argument %d: expected %s, got %s", i+1, expectedParamT, argT)
+						}
+					}
+				}
+			}
 			return fnT.Ret, nil
 		}
 		return TypeAny, nil
@@ -626,6 +658,9 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		}
 		if targetT == TypeAny {
 			return TypeAny, nil
+		}
+		if bSig, ok := LookupBuiltinTypeMethod(targetT, e.Member); ok {
+			return bSig, nil
 		}
 		return nil, fmt.Errorf("cannot access member '%s' on non-struct/interface type %s", e.Member, targetT)
 	case *ast.NamedArgExpr:

@@ -320,13 +320,37 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 		return true
 	}
 
-	// Other types (e.g. primitives) could implement interfaces if empty or built-in
+	// For other types (e.g. primitives, tuples, dicts), check if built-in methods satisfy target
 	if len(target.Methods) == 0 {
 		return true
 	}
 
-	return false
+	for mName, targetSig := range target.Methods {
+		srcSig, ok := LookupBuiltinTypeMethod(src, mName)
+		if !ok {
+			return false
+		}
+		if !targetSig.Equals(srcSig) {
+			return false
+		}
+	}
+	return true
 }
+
+// LookupBuiltinTypeMethod returns the method signature if type t has a built-in method named mName.
+func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
+	if mName == "ToString" || mName == "to_string" {
+		switch t.(type) {
+		case PrimType, *TupleType, *DictType, *FuncType, *TypeVar, *UnionType:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			}, true
+		}
+	}
+	return nil, false
+}
+
 
 // StructFieldInfo holds type info of a struct field.
 type StructFieldInfo struct {

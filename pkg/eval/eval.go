@@ -186,7 +186,19 @@ func (ev *Evaluator) registerBuiltins() {
 			return inst, nil
 		},
 	})
+
+	// Built-in Show interface definition: ToString(): String
+	ev.globalEnv.Set("Show", &InterfaceDefValue{
+		Name: "Show",
+		Methods: map[string]ast.MethodSig{
+			"ToString": {
+				Name:   "ToString",
+				Params: []ast.FuncParam{},
+			},
+		},
+	})
 }
+
 
 func (ev *Evaluator) SetArgs(args []string) {
 	elems := make([]Value, len(args))
@@ -873,7 +885,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		if si, ok := targetVal.(*StructInstance); ok {
 			return si.LookupMember(e.Member)
 		}
-		return nil, fmt.Errorf("cannot access member '%s' on non-struct value: %v", e.Member, targetVal)
+		return lookupBuiltinMember(targetVal, e.Member)
 
 	case *ast.NamedArgExpr:
 		return env.evalExpr(e.Value)
@@ -905,7 +917,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.IsExpr:
 		val := Force(NewThunk(e.Expr, env))
-		matches := checkValueMatchesType(val, strings.TrimSpace(e.TypeAnnot))
+		matches := checkValueMatchesType(val, strings.TrimSpace(e.TypeAnnot), env)
 		return BoolValue(matches), nil
 
 	case *ast.MatchExpr:
@@ -942,7 +954,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			}
 
 			pattern := strings.TrimSpace(c.Pattern)
-			if pattern == "_" || checkValueMatchesType(val, pattern) {
+			if pattern == "_" || checkValueMatchesType(val, pattern, env) {
 				return env.evalBlock(c.Body)
 			}
 		}
@@ -1111,7 +1123,22 @@ func evalBinary(op string, left, right Value) (Value, error) {
 	return nil, fmt.Errorf("unsupported binary operation %v %s %v", left, op, right)
 }
 
-func checkValueMatchesType(val Value, typeAnnot string) bool {
+func lookupBuiltinMember(val Value, member string) (Value, error) {
+	if member == "ToString" || member == "to_string" {
+		return &BuiltinFunc{
+			Name: "ToString",
+			Fn: func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return nil, fmt.Errorf("ToString() takes 0 arguments, got %d", len(args))
+				}
+				return StringValue(val.String()), nil
+			},
+		}, nil
+	}
+	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)
+}
+
+func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {
 	typeAnnot = strings.TrimSpace(typeAnnot)
 	if typeAnnot == "" || typeAnnot == "Any" {
 		return true
@@ -1120,7 +1147,7 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 	if strings.Contains(typeAnnot, "|") {
 		parts := strings.Split(typeAnnot, "|")
 		for _, p := range parts {
-			if checkValueMatchesType(val, strings.TrimSpace(p)) {
+			if checkValueMatchesType(val, strings.TrimSpace(p), optEnv...) {
 				return true
 			}
 		}
@@ -1158,7 +1185,7 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 				return true
 			}
 			for _, emb := range si.Embedded {
-				if checkValueMatchesType(emb, typeAnnot) {
+				if checkValueMatchesType(emb, typeAnnot, optEnv...) {
 					return true
 				}
 			}
@@ -1172,35 +1199,52 @@ func checkValueMatchesType(val Value, typeAnnot string) bool {
 				}
 				return false
 			}
+		}
+
+		var searchEnv *Environment
+		if len(optEnv) > 0 && optEnv[0] != nil {
+			searchEnv = optEnv[0]
+		} else if si, ok := val.(*StructInstance); ok && si.Def != nil {
+			searchEnv = si.Def.Env
+		}
+
+		if searchEnv != nil {
 			// Check if typeAnnot is module qualified: @io.Reader
 			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {
 				parts := strings.SplitN(typeAnnot[1:], ".", 2)
 				modName := parts[0]
 				typeName := parts[1]
-				if modVal, found := si.Def.Env.GetModule(modName); found {
+				if modVal, found := searchEnv.GetModule(modName); found {
 					if expVal, ok := modVal.Exports[typeName]; ok {
 						if ifaceDef, isIface := Force(expVal).(*InterfaceDefValue); isIface {
-							return structImplementsInterfaceValue(si, ifaceDef)
+							return valueImplementsInterfaceValue(val, ifaceDef, searchEnv)
 						}
 					}
 				}
 			}
-			// Check if typeAnnot is an Interface in the struct's definition env
-			if ifaceVal, found := si.Def.Env.Get(typeAnnot); found {
+
+			// Check if typeAnnot is an Interface in searchEnv
+			if ifaceVal, found := searchEnv.Get(typeAnnot); found {
 				if ifaceDef, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
-					return structImplementsInterfaceValue(si, ifaceDef)
+					return valueImplementsInterfaceValue(val, ifaceDef, searchEnv)
 				}
 			}
-			return false
 		}
+
 		return false
 	}
 }
 
-func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue) bool {
+func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
 	// Check all direct methods required by the interface
 	for mName, sig := range iface.Methods {
-		memberVal, err := si.LookupMember(mName)
+		var memberVal Value
+		var err error
+		if si, ok := val.(*StructInstance); ok {
+			memberVal, err = si.LookupMember(mName)
+		} else {
+			memberVal, err = lookupBuiltinMember(val, mName)
+		}
 		if err != nil {
 			return false
 		}
@@ -1218,7 +1262,12 @@ func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue
 				return false
 			}
 		case *BuiltinFunc:
-			// BuiltinFunc satisfies interface method
+			// For ToString, 0 params
+			if mName == "ToString" || mName == "to_string" {
+				if len(sig.Params) != 0 {
+					return false
+				}
+			}
 		default:
 			return false
 		}
@@ -1226,26 +1275,37 @@ func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue
 	// Check embedded interfaces
 	for _, embName := range iface.Embedded {
 		var embDef *InterfaceDefValue
-		if embVal, found := si.Def.Env.Get(embName); found {
-			if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
-				embDef = ed
+		if env != nil {
+			if embVal, found := env.Get(embName); found {
+				if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
+					embDef = ed
+				}
 			}
-		}
-		if embDef == nil {
-			// Try finding in imported modules
-			for _, mod := range si.Def.Env.modules {
-				if expVal, exists := mod.Exports[embName]; exists {
-					if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
-						embDef = ed
-						break
+			if embDef == nil {
+				// Try finding in imported modules
+				for _, mod := range env.modules {
+					if expVal, exists := mod.Exports[embName]; exists {
+						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+							embDef = ed
+							break
+						}
 					}
 				}
 			}
 		}
-		if embDef == nil || !structImplementsInterfaceValue(si, embDef) {
+		if embDef == nil || !valueImplementsInterfaceValue(val, embDef, env) {
 			return false
 		}
 	}
 	return true
 }
+
+func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue) bool {
+	var env *Environment
+	if si.Def != nil {
+		env = si.Def.Env
+	}
+	return valueImplementsInterfaceValue(si, iface, env)
+}
+
 

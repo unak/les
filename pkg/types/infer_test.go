@@ -536,6 +536,51 @@ x = @calc.helper(5)
 	}
 }
 
+func TestBuiltinToStringAndShowInterfaceTypeInference(t *testing.T) {
+	code := `
+# 1. Primitives have ToString(): String
+s1: String = 42.ToString()
+s2: String = "hello".ToString()
+s3: String = (1, 2).ToString()
+
+# 2. Built-in types satisfy Show interface
+def format_item(item: Show): String:
+    item.ToString()
+
+res1: String = format_item(42)
+res2: String = format_item("test")
+res3: String = format_item([1, 2, 3])
+
+# 3. Custom struct with ToString satisfies Show
+struct Item:
+    id: Int
+    def ToString():
+        "Item"
+
+item = Item(id: 1)
+res4: String = format_item(item)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	// 4. Int does NOT satisfy Error interface (lacks Message(): String)
+	errCode := `
+def fail_error(e: Error):
+    e.Message()
+
+fail_error(42)
+`
+	progErr := parser.NewParser(lexer.NewLexer(errCode)).ParseProgram()
+	infErr := NewInferencer()
+	if err := infErr.InferProgram(progErr); err == nil {
+		t.Fatalf("expected type error assigning Int to Error interface, got nil")
+	}
+}
+
+
 
 
 

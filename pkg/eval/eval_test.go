@@ -1394,5 +1394,52 @@ print isErr, " ", msg, " ", match1, " ", match2, " ", customIsError, " ", custom
 	}
 }
 
+func TestBuiltinToStringAndShowInterface(t *testing.T) {
+	code := `
+# 1. Direct ToString on primitive literals & expressions
+s_int = 42.ToString()
+s_float = 3.14.ToString()
+s_str = "hello".ToString()
+s_bool1 = True.ToString()
+s_bool2 = False.ToString()
+s_nil = Nil.ToString()
+s_tuple = (1, 2).ToString()
+s_list = [1, 2, 3].ToString()
+s_dict = {"k": 99}.ToString()
+
+# 2. Method tear-off (binding to variable)
+f = 100.ToString
+s_bound = f()
+
+# 3. is Show interface satisfaction
+intIsShow = 42 is Show
+strIsShow = "les" is Show
+nilIsShow = Nil is Show
+tupleIsShow = (1, 2) is Show
+intIsError = 42 is Error
+
+# 4. Custom struct with ToString satisfies Show
+struct Person:
+    name: String
+    def ToString():
+        "Person(" + name + ")"
+
+p = Person(name: "Alice")
+pIsShow = p is Show
+pStr = p.ToString()
+
+print s_int, "\n", s_float, "\n", s_str, "\n", s_bool1, "\n", s_bool2, "\n", s_nil, "\n", s_tuple, "\n", s_list, "\n", s_dict, "\n", s_bound, "\n", intIsShow, "\n", strIsShow, "\n", nilIsShow, "\n", tupleIsShow, "\n", intIsError, "\n", pIsShow, "\n", pStr
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+	expected := "42\n3.14\nhello\nTrue\nFalse\nNil\n(1, 2)\n(1, 2, 3)\n{\"k\": 99}\n100\nTrue\nTrue\nTrue\nTrue\nFalse\nTrue\nPerson(Alice)"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
+	}
+}
+
+
 
 
