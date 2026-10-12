@@ -131,6 +131,17 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
+	// force: strictly evaluates (forces) its argument and returns it.
+	ev.globalEnv.Set("force", &BuiltinFunc{
+		Name: "force",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("force expects 1 argument, got %d", len(args))
+			}
+			return Force(args[0]), nil
+		},
+	})
+
 	// Default CLI arguments & program name
 	ev.globalEnv.Set("Args", &TupleValue{Elements: []Value{}})
 	ev.globalEnv.Set("ProgramName", StringValue(""))
@@ -298,6 +309,22 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	return lastVal, nil
 }
 
+func (env *Environment) isForceDemand(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.ForceExpr:
+		return true
+	case *ast.CallExpr:
+		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
+			if val, ok := env.Get("force"); ok {
+				if bf, ok := val.(*BuiltinFunc); ok && bf.Name == "force" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
@@ -306,6 +333,12 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			// Force RHS immediately to avoid circular reference in lazy thunk
 			newVal := Force(NewThunk(s.Value, env))
 			env.store[s.Name] = newVal
+			return nil, nil
+		}
+		// If RHS is a force demand point, force immediately instead of creating lazy thunk!
+		if env.isForceDemand(s.Value) {
+			val := Force(NewThunk(s.Value, env))
+			env.Set(s.Name, val)
 			return nil, nil
 		}
 		// Wrap RHS in lazy Thunk!
@@ -706,6 +739,8 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return BoolValue(e.Value), nil
 	case *ast.NilLit:
 		return NilValue{}, nil
+	case *ast.ForceExpr:
+		return Force(NewThunk(e.Expr, env)), nil
 
 	case *ast.Identifier:
 		v, ok := env.Get(e.Name)
@@ -715,10 +750,14 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return v, nil
 
 	case *ast.TupleLit:
-		// Lazy tuple elements: wrapped in Thunks
+		// Lazy tuple elements: wrapped in Thunks unless force-demanded
 		elems := make([]Value, len(e.Elements))
 		for i, el := range e.Elements {
-			elems[i] = NewThunk(el, env)
+			if env.isForceDemand(el) {
+				elems[i] = Force(NewThunk(el, env))
+			} else {
+				elems[i] = NewThunk(el, env)
+			}
 		}
 		return &TupleValue{Elements: elems}, nil
 
@@ -726,7 +765,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		entries := make(map[string]Value)
 		for _, entry := range e.Entries {
 			kVal := Force(NewThunk(entry.Key, env))
-			entries[kVal.String()] = NewThunk(entry.Value, env)
+			if env.isForceDemand(entry.Value) {
+				entries[kVal.String()] = Force(NewThunk(entry.Value, env))
+			} else {
+				entries[kVal.String()] = NewThunk(entry.Value, env)
+			}
 		}
 		return &DictValue{Entries: entries}, nil
 
@@ -851,10 +894,14 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.CallExpr:
 		calleeVal := Force(NewThunk(e.Callee, env))
 
-		// Prepare argument thunks (pass-by-need)
+		// Prepare argument thunks (pass-by-need) unless force-demanded
 		argValues := make([]Value, len(e.Args))
 		for i, a := range e.Args {
-			argValues[i] = NewThunk(a, env)
+			if env.isForceDemand(a) {
+				argValues[i] = Force(NewThunk(a, env))
+			} else {
+				argValues[i] = NewThunk(a, env)
+			}
 		}
 
 		// Trailing block as closure argument

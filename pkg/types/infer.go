@@ -54,6 +54,11 @@ type Inferencer struct {
 	moduleLoader func(path string) (*ModuleType, error)
 }
 
+var builtinForceFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeAny,
+}
+
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
@@ -110,6 +115,8 @@ func NewInferencer() *Inferencer {
 		Arg: TypeAny,
 		Ret: TypeNil,
 	})
+	// Built-in force: (Any) -> Any
+	_ = rootScope.Declare("force", builtinForceFuncType)
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -564,6 +571,8 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		return TypeBool, nil
 	case *ast.NilLit:
 		return TypeNil, nil
+	case *ast.ForceExpr:
+		return inf.inferExpr(e.Expr)
 	case *ast.Identifier:
 		if t, ok := inf.scope.Lookup(e.Name); ok {
 			return t, nil
@@ -648,6 +657,11 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		calleeT, err := inf.inferExpr(e.Callee)
 		if err != nil {
 			return nil, err
+		}
+		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
+			if t, ok := inf.scope.Lookup("force"); ok && t == builtinForceFuncType {
+				return inf.inferExpr(e.Args[0])
+			}
 		}
 		if st, ok := calleeT.(*StructType); ok {
 			return st, nil

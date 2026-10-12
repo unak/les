@@ -804,4 +804,66 @@ struct Point:
 	}
 }
 
+func TestParsePostfixForce(t *testing.T) {
+	input := `
+a = x!
+b = f(1, 2)!
+c = !y!
+d = (1 + 2)! * 3
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 4 {
+		t.Fatalf("expected 4 statements, got %d", len(prog.Body))
+	}
 
+	// a = x!
+	vdA := prog.Body[0].(*ast.VarDecl)
+	fA, ok := vdA.Value.(*ast.ForceExpr)
+	if !ok {
+		t.Fatalf("expected ForceExpr for a, got %T", vdA.Value)
+	}
+	idA, ok := fA.Expr.(*ast.Identifier)
+	if !ok || idA.Name != "x" {
+		t.Fatalf("expected identifier x in a!, got %+v", fA.Expr)
+	}
+
+	// b = f(1, 2)!
+	vdB := prog.Body[1].(*ast.VarDecl)
+	fB, ok := vdB.Value.(*ast.ForceExpr)
+	if !ok {
+		t.Fatalf("expected ForceExpr for b, got %T", vdB.Value)
+	}
+	if _, ok := fB.Expr.(*ast.CallExpr); !ok {
+		t.Fatalf("expected CallExpr in b!, got %+v", fB.Expr)
+	}
+
+	// c = !y! -> UnaryExpr(!, ForceExpr(y))
+	vdC := prog.Body[2].(*ast.VarDecl)
+	uC, ok := vdC.Value.(*ast.UnaryExpr)
+	if !ok || uC.Op != "!" {
+		t.Fatalf("expected UnaryExpr ! for c, got %+v", vdC.Value)
+	}
+	fC, ok := uC.Expr.(*ast.ForceExpr)
+	if !ok {
+		t.Fatalf("expected ForceExpr inside !y!, got %T", uC.Expr)
+	}
+	idC, ok := fC.Expr.(*ast.Identifier)
+	if !ok || idC.Name != "y" {
+		t.Fatalf("expected identifier y inside !y!, got %+v", fC.Expr)
+	}
+
+	// d = (1 + 2)! * 3 -> BinaryExpr(*, ForceExpr(1 + 2), 3)
+	vdD := prog.Body[3].(*ast.VarDecl)
+	binD, ok := vdD.Value.(*ast.BinaryExpr)
+	if !ok || binD.Op != "*" {
+		t.Fatalf("expected BinaryExpr * for d, got %+v", vdD.Value)
+	}
+	if _, ok := binD.Left.(*ast.ForceExpr); !ok {
+		t.Fatalf("expected ForceExpr on left of *, got %T", binD.Left)
+	}
+}

@@ -264,6 +264,7 @@ Listed from highest to lowest precedence:
 | 1 (Highest) | `.` | `p.x`, `p.dist()` | `StructInstance` | Member / method access (with promotion) |
 | 1 | `[]` | `s[0]`, `t[1]`, `d["k"]` | `String`, `Tuple`, `Dict` | Indexing (0-based rune for String, negative indices supported) |
 | 1 | `()` | `f(a, b)` | Function / Struct | Function call or struct constructor |
+| 1 | `!` (postfix) | `expr!` | `Any` | Explicit demand point (syntactic sugar for unshadowed built-in `force(expr)`) |
 | 2 | `+`, `-`, `!` | `+x`, `-x`, `!flag` | `Int`/`Float` (`+`, `-`), `Bool` (`!`) | Unary plus, negation, and logical NOT |
 | 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int` | Multiplication, division, modulo |
 | 4 | `+`, `-` | `a + b`, `a - b` | `Int` (`+`, `-`), `String` (`+`) | Addition, subtraction, string concatenation |
@@ -285,6 +286,11 @@ Listed from highest to lowest precedence:
   - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`). Arguments are forced immediately when the statement executes.
   - Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
   - Ensures prompt output (e.g. `print "Name: "`) displays before subsequent reads.
+- **Explicit Demand Points (`expr!` / `force(expr)`)**:
+  - By default, function arguments, variable initializations, tuple elements, and dict values are wrapped in lazy `Thunk`s.
+  - Suffixing an expression with `!` (e.g. `expr!`) acts as an unconditional syntax-level strict evaluation demand point. Calling the unshadowed built-in `force(expr)` has the same effect.
+  - When passed as a function argument (`f(expr!)`), bound to a variable (`x = expr!`), or stored in a container (`(expr!,)` or `{"k": expr!}`), the expression is strictly evaluated (forced) immediately at that site instead of creating a deferred lazy `Thunk`.
+  - *Note*: If the identifier `force` is shadowed in local scope (e.g. by a parameter), `expr!` continues to strictly force evaluation at the syntax level, while `force(expr)` resolves to the shadowed local binding without creating an automatic eager demand point.
 - **Input is a Deferred Thunk (Lazy Read)**:
   - I/O read operations (e.g. `@io.ReadLine()`, `@io.ReadAll()`) return a deferred `Thunk` without blocking at invocation time.
   - The actual I/O read / system call occurs only when the value is demanded (e.g., printed, compared, or concatenated). Unused inputs never block or perform reads.
@@ -396,6 +402,19 @@ Terminates the program execution immediately with the given exit status code.
   exit true      # exits with 0
   exit false     # exits with 1
   exit 1
+  ```
+
+#### `def force(x: Any): Any`
+Explicit demand point that strictly evaluates (forces) its argument and returns the evaluated concrete value.
+
+- **Arguments**: `x: Any` — expression or value to force.
+- **Returns**: `Any` — concrete evaluated value.
+- **Syntactic Sugar**: The postfix exclamation mark `expr!` is syntactic sugar for the built-in `force(expr)`. Unlike function calls which can be shadowed by local bindings or parameters, `expr!` is a dedicated syntax form that always guarantees immediate evaluation.
+- **Usage**:
+  ```python
+  x = force(10 + 20)
+  # Forces argument evaluation before function application or container construction:
+  pick(42, force(expensive_call()))
   ```
 
 ### 9. Built-in Variables & CLI Arguments
