@@ -280,7 +280,6 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 	return nil, fmt.Errorf("type %s has no field or method '%s'", si.Def.Name, name)
 }
 
-
 // Thunk implements aggressive lazy evaluation (memoized call-by-need).
 type Thunk struct {
 	Evaluated  bool

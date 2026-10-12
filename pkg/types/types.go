@@ -363,7 +363,6 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 	return nil, false
 }
 
-
 // StructFieldInfo holds type info of a struct field.
 type StructFieldInfo struct {
 	Name       string
@@ -457,4 +456,3 @@ func (m *ModuleType) Equals(other Type) bool {
 	om, ok := other.(*ModuleType)
 	return ok && m.Name == om.Name
 }
-

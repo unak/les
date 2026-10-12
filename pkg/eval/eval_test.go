@@ -1757,4 +1757,19 @@ print c
 	if strings.TrimSpace(out) != expected {
 		t.Fatalf("expected %q, got %q", expected, strings.TrimSpace(out))
 	}
+
+	// Verify parenthesis-omitted print consumes pipeline greedily: print 5 |> inc prints 6
+	codePrint := `
+def inc(x: Int): Int:
+    x + 1
+
+print 5 |> inc
+`
+	outPrint, err := runLesCode(codePrint)
+	if err != nil {
+		t.Fatalf("unexpected eval error for print with pipeline: %v", err)
+	}
+	if strings.TrimSpace(outPrint) != "6" {
+		t.Fatalf("expected 6, got %q", strings.TrimSpace(outPrint))
+	}
 }

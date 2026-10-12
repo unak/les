@@ -77,7 +77,6 @@ type NamedArgExpr struct {
 func (n *NamedArgExpr) node() {}
 func (n *NamedArgExpr) expr() {}
 
-
 // IntLit represents integer literal.
 type IntLit struct {
 	Value int64
@@ -289,7 +288,7 @@ func (c *ContinueStmt) stmt() {}
 
 // ForStmt represents for loop: for [cond]: body. Body is executed as an implicit closure per iteration.
 type ForStmt struct {
-	Cond Expr   // nil for infinite loop `for:`
+	Cond Expr // nil for infinite loop `for:`
 	Body []Stmt
 }
 
@@ -366,4 +365,3 @@ type InterfaceDef struct {
 
 func (i *InterfaceDef) node() {}
 func (i *InterfaceDef) stmt() {}
-

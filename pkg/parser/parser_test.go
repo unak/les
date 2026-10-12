@@ -949,4 +949,32 @@ res4 = 5 |> (|n|: n * 2)
 	if num, ok := call4.Args[0].(*ast.IntLit); !ok || num.Value != 5 {
 		t.Fatalf("expected arg 5, got %+v", call4.Args[0])
 	}
+
+	// 5. Parenthesis-omitted call greedily consumes pipeline: print x |> f -> print(f(x))
+	inputPrint := `print x |> f`
+	progPrint := NewParser(lexer.NewLexer(inputPrint)).ParseProgram()
+	if len(progPrint.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(progPrint.Body))
+	}
+	stmt, ok := progPrint.Body[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected ExprStmt, got %T", progPrint.Body[0])
+	}
+	printCall, ok := stmt.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for print, got %T", stmt.Value)
+	}
+	if id, ok := printCall.Callee.(*ast.Identifier); !ok || id.Name != "print" {
+		t.Fatalf("expected callee print, got %+v", printCall.Callee)
+	}
+	if len(printCall.Args) != 1 {
+		t.Fatalf("expected 1 arg to print, got %d", len(printCall.Args))
+	}
+	pipeCall, ok := printCall.Args[0].(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected argument to be CallExpr f(x), got %T", printCall.Args[0])
+	}
+	if id, ok := pipeCall.Callee.(*ast.Identifier); !ok || id.Name != "f" {
+		t.Fatalf("expected inner callee f, got %+v", pipeCall.Callee)
+	}
 }

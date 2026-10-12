@@ -503,16 +503,16 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				Name:     "ReadCloser",
 				Embedded: []*InterfaceType{readerIface, closerIface},
 				Methods: map[string]*FuncType{
-					"read":   readerIface.Methods["read"],
-					"close":  closerIface.Methods["close"],
+					"read":  readerIface.Methods["read"],
+					"close": closerIface.Methods["close"],
 				},
 			}
 			writeCloserIface := &InterfaceType{
 				Name:     "WriteCloser",
 				Embedded: []*InterfaceType{writerIface, closerIface},
 				Methods: map[string]*FuncType{
-					"write":  writerIface.Methods["write"],
-					"close":  closerIface.Methods["close"],
+					"write": writerIface.Methods["write"],
+					"close": closerIface.Methods["close"],
 				},
 			}
 			_ = inf.scope.Declare("Reader", readerIface)

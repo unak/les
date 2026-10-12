@@ -11,7 +11,7 @@ import (
 
 // Precedence levels for operator precedence parsing.
 const (
-	PREC_LOWEST = iota
+	PREC_LOWEST       = iota
 	PREC_PIPE         // |>
 	PREC_CALL_NOPAREN // lowest binary expr: f a + b binds as f(a + b)
 	PREC_TERNARY      // ? :
@@ -830,7 +830,6 @@ func (p *Parser) parseBreakStmt() *ast.BreakStmt {
 	p.consumeStmtEnd()
 	return &ast.BreakStmt{Value: val}
 }
-
 
 func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	p.atStatementStart = true

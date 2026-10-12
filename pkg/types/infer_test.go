@@ -706,4 +706,3 @@ a: String = 10 |> inc
 		t.Fatalf("expected type mismatch error, got nil")
 	}
 }
-

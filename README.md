@@ -173,8 +173,10 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   ```python
   f a + b    # equivalent to f(a + b)
   print x * 2 + 1  # equivalent to print((x * 2) + 1)
+  print x |> f     # equivalent to print(f(x)) -- pipeline is consumed greedily as argument
   ```
 - To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
+- Similarly, to pass a call result into a pipeline, use parentheses `(print x) |> f` or pipeline the call directly: `x |> f |> print`.
 
 ### 3. Block Arguments (Ruby-like `do` blocks)
 - Trailing block syntax:
@@ -243,6 +245,8 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
 
   val = 10 |> add(20) # Equivalent to: add(10, 20)
   ```
+- **Interaction with Parenthesis-Omission Calls**:
+  Parenthesis-omitted call statements (`print expr`) bind greedily, so `print x |> f` is parsed as `print(f(x))`. To pipe into subsequent functions, chain with `|>`: `x |> f |> print`.
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 

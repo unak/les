@@ -38,38 +38,38 @@ const (
 	TokenContinue
 
 	// Punctuation
-	TokenAssign    // =
-	TokenColon     // :
-	TokenSemicolon // ;
-	TokenComma     // ,
-	TokenDot       // .
-	TokenAt        // @
-	TokenQuestion  // ?
-	TokenPipe      // |
+	TokenAssign      // =
+	TokenColon       // :
+	TokenSemicolon   // ;
+	TokenComma       // ,
+	TokenDot         // .
+	TokenAt          // @
+	TokenQuestion    // ?
+	TokenPipe        // |
 	TokenPipeGreater // |>
-	TokenArrow     // ->
-	TokenLParen    // (
-	TokenRParen    // )
-	TokenLBracket  // [
-	TokenRBracket  // ]
-	TokenLBrace    // {
-	TokenRBrace    // }
+	TokenArrow       // ->
+	TokenLParen      // (
+	TokenRParen      // )
+	TokenLBracket    // [
+	TokenRBracket    // ]
+	TokenLBrace      // {
+	TokenRBrace      // }
 
 	// Operators
-	TokenPlus      // +
-	TokenMinus     // -
-	TokenStar      // *
-	TokenSlash     // /
-	TokenPercent   // %
-	TokenEq        // ==
-	TokenNotEq     // !=
-	TokenLt        // <
-	TokenLte       // <=
-	TokenGt        // >
-	TokenGte       // >=
-	TokenNot       // !
-	TokenAnd       // &&
-	TokenOr        // ||
+	TokenPlus    // +
+	TokenMinus   // -
+	TokenStar    // *
+	TokenSlash   // /
+	TokenPercent // %
+	TokenEq      // ==
+	TokenNotEq   // !=
+	TokenLt      // <
+	TokenLte     // <=
+	TokenGt      // >
+	TokenGte     // >=
+	TokenNot     // !
+	TokenAnd     // &&
+	TokenOr      // ||
 )
 
 // Token holds token information.
