@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"fmt"
 	"io"
 
 	"les/pkg/ast"
@@ -10,12 +11,13 @@ import (
 func (ev *Evaluator) initIOModule() {
 	ioExports := make(map[string]Value)
 
-	// Reader interface definition: read(n: Int): String | Nil
+	// Reader interface definition: Read(n: Int): String | Nil
 	readerIface := &InterfaceDefValue{
-		Name: "Reader",
+		Name:       "Reader",
+		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
-			"read": {
-				Name:       "read",
+			"Read": {
+				Name:       "Read",
 				Params:     []ast.FuncParam{{Name: "n", TypeAnnot: "Int"}},
 				ReturnType: "String | Nil",
 			},
@@ -23,12 +25,13 @@ func (ev *Evaluator) initIOModule() {
 	}
 	ioExports["Reader"] = readerIface
 
-	// Writer interface definition: write(s: String): Int
+	// Writer interface definition: Write(s: String): Int
 	writerIface := &InterfaceDefValue{
-		Name: "Writer",
+		Name:       "Writer",
+		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
-			"write": {
-				Name:       "write",
+			"Write": {
+				Name:       "Write",
 				Params:     []ast.FuncParam{{Name: "s", TypeAnnot: "String"}},
 				ReturnType: "Int",
 			},
@@ -36,12 +39,13 @@ func (ev *Evaluator) initIOModule() {
 	}
 	ioExports["Writer"] = writerIface
 
-	// Closer interface definition: close(): ()
+	// Closer interface definition: Close(): ()
 	closerIface := &InterfaceDefValue{
-		Name: "Closer",
+		Name:       "Closer",
+		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
-			"close": {
-				Name:       "close",
+			"Close": {
+				Name:       "Close",
 				Params:     []ast.FuncParam{},
 				ReturnType: "()",
 			},
@@ -51,17 +55,19 @@ func (ev *Evaluator) initIOModule() {
 
 	// ReadCloser interface definition: Reader, Closer
 	readCloserIface := &InterfaceDefValue{
-		Name:     "ReadCloser",
-		Embedded: []string{"Reader", "Closer"},
-		Methods:  make(map[string]ast.MethodSig),
+		Name:       "ReadCloser",
+		ModuleName: "io",
+		Embedded:   []string{"Reader", "Closer"},
+		Methods:    make(map[string]ast.MethodSig),
 	}
 	ioExports["ReadCloser"] = readCloserIface
 
 	// WriteCloser interface definition: Writer, Closer
 	writeCloserIface := &InterfaceDefValue{
-		Name:     "WriteCloser",
-		Embedded: []string{"Writer", "Closer"},
-		Methods:  make(map[string]ast.MethodSig),
+		Name:       "WriteCloser",
+		ModuleName: "io",
+		Embedded:   []string{"Writer", "Closer"},
+		Methods:    make(map[string]ast.MethodSig),
 	}
 	ioExports["WriteCloser"] = writeCloserIface
 
@@ -72,16 +78,16 @@ func (ev *Evaluator) initIOModule() {
 		FieldDefaults: make(map[string]ast.Expr),
 		EmbeddedNames: []string{},
 		Methods: map[string]*ast.FuncDef{
-			"read": {
-				Name: "read",
+			"Read": {
+				Name: "Read",
 				Params: []ast.FuncParam{
 					{Name: "self"},
 					{Name: "n", TypeAnnot: "Int"},
 				},
 				ReturnType: "String | Nil",
 			},
-			"close": {
-				Name:       "close",
+			"Close": {
+				Name:       "Close",
 				Params:     []ast.FuncParam{{Name: "self"}},
 				ReturnType: "()",
 			},
@@ -95,45 +101,226 @@ func (ev *Evaluator) initIOModule() {
 		Embedded: make(map[string]*StructInstance),
 	}
 
-	// Bind custom built-in method closures for stdin
-	stdinInstance.Fields["read"] = &BuiltinFunc{
-		Name: "read",
+	stdinInstance.Fields["Read"] = &BuiltinFunc{
+		Name: "Read",
 		Fn: func(args []Value) (Value, error) {
-			numBytes := int64(1024)
-			if len(args) > 0 {
-				forced := Force(args[0])
-				if iv, ok := forced.(IntValue); ok {
-					numBytes = int64(iv)
-				}
+			if len(args) != 1 {
+				return nil, fmt.Errorf("Read expects 1 argument, got %d", len(args))
+			}
+			forced := Force(args[0])
+			iv, ok := forced.(IntValue)
+			if !ok {
+				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
+			}
+			numBytes := int64(iv)
+			if numBytes < 0 {
+				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
+			}
+			if numBytes == 0 {
+				return StringValue(""), nil
 			}
 			return NewActionThunk(func() (Value, error) {
 				r := ev.globalEnv.GetStdinReader()
-				buf := make([]byte, numBytes)
+				allocSize := numBytes
+				if allocSize > 64*1024 {
+					allocSize = 64 * 1024
+				}
+				buf := make([]byte, allocSize)
 				n, err := r.Read(buf)
 				if n > 0 {
 					return StringValue(string(buf[:n])), nil
 				}
-				if err == io.EOF {
+				if err == io.EOF || err == io.ErrNoProgress {
 					return NilValue{}, nil
 				}
 				if err != nil {
 					return nil, err
 				}
-				return NilValue{}, nil
+				return StringValue(""), nil
 			}), nil
 		},
 	}
-	stdinInstance.Fields["close"] = &BuiltinFunc{
-		Name: "close",
+	stdinInstance.Fields["Close"] = &BuiltinFunc{
+		Name: "Close",
 		Fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
+			}
 			return &TupleValue{Elements: []Value{}}, nil
 		},
 	}
-
 	ioExports["Stdin"] = stdinInstance
 
-	// Register module in global environment
-	ev.globalEnv.RegisterModule(&ModuleValue{
+	// Stdout struct definition implementing WriteCloser
+	stdoutStructDef := &StructDefValue{
+		Name:          "StdoutType",
+		FieldOrder:    []string{},
+		FieldDefaults: make(map[string]ast.Expr),
+		EmbeddedNames: []string{},
+		Methods: map[string]*ast.FuncDef{
+			"Write": {
+				Name: "Write",
+				Params: []ast.FuncParam{
+					{Name: "self"},
+					{Name: "s", TypeAnnot: "String"},
+				},
+				ReturnType: "Int",
+			},
+			"Close": {
+				Name:       "Close",
+				Params:     []ast.FuncParam{{Name: "self"}},
+				ReturnType: "()",
+			},
+			"Flush": {
+				Name:       "Flush",
+				Params:     []ast.FuncParam{{Name: "self"}},
+				ReturnType: "()",
+			},
+		},
+		Env: ev.globalEnv,
+	}
+
+	stdoutInstance := &StructInstance{
+		Def:      stdoutStructDef,
+		Fields:   make(map[string]Value),
+		Embedded: make(map[string]*StructInstance),
+	}
+	stdoutInstance.Fields["Write"] = &BuiltinFunc{
+		Name: "Write",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
+			}
+			forced := Force(args[0])
+			sv, ok := forced.(StringValue)
+			if !ok {
+				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+			}
+			// C/Ruby behavior: flush buffered stdout before writing directly
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
+			}
+			w := ev.globalEnv.GetRawStdout()
+			n, err := w.Write([]byte(string(sv)))
+			if err != nil {
+				return nil, err
+			}
+			return IntValue(n), nil
+		},
+	}
+	stdoutInstance.Fields["Close"] = &BuiltinFunc{
+		Name: "Close",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
+			}
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
+			}
+			return &TupleValue{Elements: []Value{}}, nil
+		},
+	}
+	stdoutInstance.Fields["Flush"] = &BuiltinFunc{
+		Name: "Flush",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return nil, fmt.Errorf("Flush expects 0 arguments, got %d", len(args))
+			}
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
+			}
+			return &TupleValue{Elements: []Value{}}, nil
+		},
+	}
+	ioExports["Stdout"] = stdoutInstance
+
+	// Stderr struct definition implementing WriteCloser (Unbuffered)
+	stderrStructDef := &StructDefValue{
+		Name:          "StderrType",
+		FieldOrder:    []string{},
+		FieldDefaults: make(map[string]ast.Expr),
+		EmbeddedNames: []string{},
+		Methods: map[string]*ast.FuncDef{
+			"Write": {
+				Name: "Write",
+				Params: []ast.FuncParam{
+					{Name: "self"},
+					{Name: "s", TypeAnnot: "String"},
+				},
+				ReturnType: "Int",
+			},
+			"Close": {
+				Name:       "Close",
+				Params:     []ast.FuncParam{{Name: "self"}},
+				ReturnType: "()",
+			},
+			"Flush": {
+				Name:       "Flush",
+				Params:     []ast.FuncParam{{Name: "self"}},
+				ReturnType: "()",
+			},
+		},
+		Env: ev.globalEnv,
+	}
+
+	stderrInstance := &StructInstance{
+		Def:      stderrStructDef,
+		Fields:   make(map[string]Value),
+		Embedded: make(map[string]*StructInstance),
+	}
+	stderrInstance.Fields["Write"] = &BuiltinFunc{
+		Name: "Write",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
+			}
+			forced := Force(args[0])
+			sv, ok := forced.(StringValue)
+			if !ok {
+				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+			}
+			// C/Ruby behavior: flush buffered stdout before writing to stderr
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				if err := stdoutWriter.Flush(); err != nil {
+					return nil, err
+				}
+			}
+			w := ev.globalEnv.GetRawStderr()
+			n, err := w.Write([]byte(string(sv)))
+			if err != nil {
+				return nil, err
+			}
+			return IntValue(n), nil
+		},
+	}
+	stderrInstance.Fields["Close"] = &BuiltinFunc{
+		Name: "Close",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
+			}
+			return &TupleValue{Elements: []Value{}}, nil
+		},
+	}
+	stderrInstance.Fields["Flush"] = &BuiltinFunc{
+		Name: "Flush",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) != 0 {
+				return nil, fmt.Errorf("Flush expects 0 arguments, got %d", len(args))
+			}
+			return &TupleValue{Elements: []Value{}}, nil
+		},
+	}
+	ioExports["Stderr"] = stderrInstance
+
+	// Register module in built-in environment
+	ev.builtinsEnv.RegisterModule(&ModuleValue{
 		Name:    "io",
 		Exports: ioExports,
 	})

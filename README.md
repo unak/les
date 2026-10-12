@@ -476,6 +476,9 @@ Les provides predefined variables for command-line arguments and file path inspe
 |---|---|---|---|
 | `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
 | `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
+| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`@bufio.Reader` wrapping `@io.Stdin`). |
+| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`@bufio.Writer` wrapping `@io.Stdout`). |
+| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`@io.Stderr` with no-op `Flush()`). |
 | `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
 | `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
 
@@ -672,8 +675,30 @@ import io
 #### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
   - `@io.Stdin.Read(n)` reads up to `n` bytes.
+- **`@io.Stdout`**: Standard output instance satisfying `Writer`.
+  - `@io.Stdout.Write(s)` writes `s` to standard output.
+- **`@io.Stderr`**: Standard error instance satisfying `Writer`.
+  - `@io.Stderr.Write(s)` writes `s` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
 
-### 16. Error Handling & `interface Error`
+### 16. Buffered I/O Module (`@bufio`)
+
+The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
+
+```python
+import bufio
+```
+
+#### Structs & Constructors
+- **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
+  - `Read(n: Int): String | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns `""`; `n < 0` produces a runtime error.
+  - `ReadLine(): String | Nil`: Reads a single line, stripping trailing `\n` or `\r\n`.
+  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
+  - `Peek(n: Int): String | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns `""`; `n < 0` produces a runtime error.
+- **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
+  - `Write(s: String): Int`: Appends `s` to write buffer.
+  - `Flush(): ()`: Flushes buffered data to the underlying stream.
+
+### 17. Error Handling & `interface Error`
 
 Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
 
@@ -823,6 +848,9 @@ Extending Hindley-Milner type inference to user-defined parameterized structs an
 
 - Syntax: `struct Box[T]: value: T`, `def map[T, U](items: (T, ...), fn: (T) -> U): (U, ...)`
 - Complements the existing built-in type parameters like `Dict[K, V]` and tuple stream types `(T, ...)`.
+
+### 8. Binary / Byte Stream I/O vs Rune Strings
+Currently, stream I/O methods like `Read(n)` and `Peek(n)` operate on raw bytes (`n` bytes) while string indexing (`s[i]`) and `len(s)` operate on Unicode runes. Future work will introduce dedicated binary/buffer data types (e.g. `Bytes` / `ByteBuffer`) and clarify the distinction between byte-level stream processing and rune-level text processing.
 
 ## License
 

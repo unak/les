@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -247,10 +249,10 @@ y = gets()
 		t.Fatalf("expected 'i/o error', got %v", err)
 	}
 
-	// Test shared buffer between gets() and @io.Stdin.read
+	// Test shared buffer between gets() and @io.Stdin.Read
 	codeMixed := `import io
 l = gets()
-rest = @io.Stdin.read(5)
+rest = @io.Stdin.Read(5)
 print l, "|", rest
 `
 	evMixed := NewEvaluator()
@@ -1921,3 +1923,1029 @@ print b
 		t.Fatalf("expected '6 36', got %q", strings.TrimSpace(outArith))
 	}
 }
+
+func TestGlobalStdoutAndStderr(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	var stderr strings.Builder
+	ev.SetOutput(&stdout)
+	ev.SetErrorOutput(&stderr)
+
+	code := `
+Stdout.Write("stdout text\n")
+Stdout.Flush()
+Stderr.Write("stderr text\n")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	if stdout.String() != "stdout text\n" {
+		t.Fatalf("expected 'stdout text\\n', got %q", stdout.String())
+	}
+	// Stderr is unbuffered: text must be present immediately
+	if stderr.String() != "stderr text\n" {
+		t.Fatalf("expected 'stderr text\\n', got %q", stderr.String())
+	}
+}
+
+func TestPrintRoutesToStdout(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+print "hello", " ", 42, "\n"
+Stdout.Write("direct write\n")
+Stdout.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "hello 42\ndirect write\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestBufioReaderMethods(t *testing.T) {
+	ev := NewEvaluator()
+	inputData := "first:second\r\nthird\nfourth"
+	ev.SetInput(strings.NewReader(inputData))
+
+	code := `
+# Test Peek
+peeked = Stdin.Peek(5)
+# Test ReadString with delimiter
+part1 = Stdin.ReadString(":")
+# Test ReadLine (strips \r\n)
+line2 = Stdin.ReadLine()
+# Test ReadLine (strips \n)
+line3 = Stdin.ReadLine()
+# Test ReadLine EOF
+line4 = Stdin.ReadLine()
+line5 = Stdin.ReadLine()
+
+print peeked, "|", part1, "|", line2, "|", line3, "|", line4, "|", line5 is Nil
+`
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "first|first:|second|third|fourth|true"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestIOAndBufioModules(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	var stderr strings.Builder
+	ev.SetOutput(&stdout)
+	ev.SetErrorOutput(&stderr)
+	ev.SetInput(strings.NewReader("buffered input\n"))
+
+	code := `
+import io
+import bufio
+
+# Test @io raw streams
+n1 = @io.Stdout.Write("raw out\n")
+n2 = @io.Stderr.Write("raw err\n")
+
+# Test @bufio.Reader constructor on @io.Stdin
+br = @bufio.Reader(@io.Stdin)
+line = br.ReadLine()
+
+print line, " (", n1, ", ", n2, ")"
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	if stderr.String() != "raw err\n" {
+		t.Fatalf("expected stderr 'raw err\\n', got %q", stderr.String())
+	}
+	expectedStdout := "raw out\nbuffered input (8, 8)"
+	if stdout.String() != expectedStdout {
+		t.Fatalf("expected stdout %q, got %q", expectedStdout, stdout.String())
+	}
+}
+
+func TestUserStructBufioAdapters(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+import bufio
+
+struct InnerReader:
+    def Read(n: Int):
+        "embedded-data\n"
+
+struct MyReader:
+    InnerReader
+
+struct MyWriter:
+    output: String = ""
+    def Write(s: String):
+        print "[W:", s, "]"
+        len(s)
+
+mr = MyReader()
+mw = MyWriter()
+
+br = @bufio.Reader(mr)
+bw = @bufio.Writer(mw)
+
+line = br.ReadLine()
+print "Read:", line, "\n"
+
+bw.Write("hello")
+bw.Write(" world")
+bw.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "Read:embedded-data\n[W:hello world]"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestBufioWriterAutoFlushAtExit(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+import bufio
+
+# Write without explicit Flush
+Stdout.Write("buffered global\n")
+
+bw = @bufio.Writer(Stdout)
+bw.Write("user writer\n")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "buffered global\nuser writer\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestStreamInterleavingOrder(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	var stderr strings.Builder
+	ev.SetOutput(&stdout)
+	ev.SetErrorOutput(&stderr)
+
+	code := `
+import io
+
+# Stdout is buffered, @io.Stdout.Write flushes Stdout first (C/Ruby style)
+Stdout.Write("first-")
+@io.Stdout.Write("second-")
+Stdout.Write("third\n")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "first-second-third\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestBufioReadPeekEdgeCases(t *testing.T) {
+	ev := NewEvaluator()
+	ev.SetInput(strings.NewReader("hello world:::foo:::bar"))
+
+	code := `
+import bufio
+
+r0 = Stdin.Read(0)
+p0 = Stdin.Peek(0)
+del1 = Stdin.ReadString(":::")
+del2 = Stdin.ReadString(":::")
+
+print r0 == "", "|", p0 == "", "|", del1, "|", del2
+`
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "true|true|hello world:::|foo:::"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestEmptyStringCustomRead(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	// Test custom reader that returns "" several times then EOF (Nil).
+	// bufio.Reader handles io.ErrNoProgress without crash.
+	code := `
+import bufio
+
+struct EmptyReader:
+    def Read(n: Int):
+        ""
+
+er = EmptyReader()
+br = @bufio.Reader(er)
+
+# bufio.ReadLine on reader returning only "" should eventually see ErrNoProgress as EOF -> Nil
+line = br.ReadLine()
+print line is Nil
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "true"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestFlushPanicRecovery(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct FailingWriter:
+    def Write(s: String):
+        len(s) - 1000 # negative write count causes error
+
+fw = FailingWriter()
+bw = @bufio.Writer(fw)
+bw.Write("trigger")! # force demand point so write buffers
+# Program exits, auto-flush triggers failure in Write
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from failing flush, got nil")
+	}
+	if !strings.Contains(err.Error(), "negative count") {
+		t.Fatalf("expected negative count error, got %v", err)
+	}
+}
+
+func TestFlushDrainDependencies(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	// Custom writer whose Write callback refills Stdout.Write
+	// Tests that FlushAllBufioWriters drains all writers iteratively.
+	code := `
+import bufio
+
+struct LoggingWriter:
+    def Write(s: String):
+        Stdout.Write("logged:" + s + "\n")
+        len(s)
+
+lw = LoggingWriter()
+bw = @bufio.Writer(lw)
+
+# Initial write to Stdout (registered before bw)
+Stdout.Write("first\n")
+bw.Write("payload")!
+# Program exits, auto-flush flushes Stdout, then flushes bw which refills Stdout,
+# and iterative drain loop flushes Stdout again.
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "first\nlogged:payload\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestRuntimeQualifiedTypeMatching(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	// User struct named Reader must NOT match @bufio.Reader by name alone
+	code := `
+import io
+import bufio
+
+struct Reader:
+    def Read(n: Int): "custom"
+
+userR = Reader()
+
+print Stdin is @bufio.Reader, "|"
+print Stdout is @bufio.Writer, "|"
+print @io.Stdin is @io.Reader, "|"
+print @io.Stdout is @io.Writer, "|"
+print userR is @bufio.Reader # must be false (different identity)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "true|true|true|true|false"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestWriterResultExceedingBuffer(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct LyingWriter:
+    def Write(s: String):
+        999999 # claims to write way more than len(s)
+
+lw = LyingWriter()
+bw = @bufio.Writer(lw)
+bw.Write("hello")!
+bw.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from lying writer, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeding buffer length") {
+		t.Fatalf("expected 'exceeding buffer length' error, got %v", err)
+	}
+}
+
+func TestWriterResultNonInt(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct BadWriter:
+    def Write(s: String):
+        "not an integer"
+
+bw_custom = BadWriter()
+bw = @bufio.Writer(bw_custom)
+bw.Write("hello")!
+bw.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from non-int write, got nil")
+	}
+	if !strings.Contains(err.Error(), "Write returned unexpected type") {
+		t.Fatalf("expected 'Write returned unexpected type' error, got %v", err)
+	}
+}
+
+func TestFileModuleLoaderAccessBuiltins(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Submodule uses built-in bufio, io, and Stdin / Stdout
+	helperCode := `
+import bufio
+import io
+
+def Greet(name: String): String:
+    bw = @bufio.Writer(@io.Stdout)
+    bw.Write("greeting: ")!
+    bw.Flush()!
+    name
+`
+	helperPath := filepath.Join(tempDir, "helper.les")
+	if err := os.WriteFile(helperPath, []byte(helperCode), 0644); err != nil {
+		t.Fatalf("failed to write helper.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	mainCode := `
+import helper
+
+msg = @helper.Greet("Les")
+print msg
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error with imported module: %v", err)
+	}
+
+	if out.String() != "greeting: Les" {
+		t.Fatalf("expected 'greeting: Les', got %q", out.String())
+	}
+}
+
+func TestCustomWriterExitRePanic(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct ExitingWriter:
+    def Write(s: String):
+        exit(42)
+
+ew = ExitingWriter()
+bw = @bufio.Writer(ew)
+bw.Write("trigger exit")!
+bw.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected ExitError, got nil")
+	}
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected error to be *ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != 42 {
+		t.Fatalf("expected exit code 42, got %d", exitErr.Code)
+	}
+}
+
+func TestModuleIsolationCallerShadowing(t *testing.T) {
+	tempDir := t.TempDir()
+
+	modCode := `
+def UseStdout(): String:
+    Stdout.Write("from module")!
+    Stdout.Flush()!
+    "ok"
+`
+	modPath := filepath.Join(tempDir, "mod.les")
+	if err := os.WriteFile(modPath, []byte(modCode), 0644); err != nil {
+		t.Fatalf("failed to write mod.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	// Caller script shadows Stdout with an Int
+	callerCode := `
+import mod
+
+Stdout = 12345
+res = @mod.UseStdout()
+print res
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error when caller shadows Stdout: %v", err)
+	}
+	if out.String() != "from moduleok" {
+		t.Fatalf("expected 'from moduleok', got %q", out.String())
+	}
+}
+
+func TestModuleInheritsProgramNameAndArgs(t *testing.T) {
+	tempDir := t.TempDir()
+
+	modCode := `
+def Inspect(): String:
+    ProgramName + ":" + Args[0] + ":" + scriptName
+`
+	modPath := filepath.Join(tempDir, "modinfo.les")
+	if err := os.WriteFile(modPath, []byte(modCode), 0644); err != nil {
+		t.Fatalf("failed to write modinfo.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	ev.SetProgramName("main_app.les")
+	ev.SetArgs([]string{"foo", "bar"})
+	ev.SetScriptName("main_app.les")
+
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	callerCode := `
+import modinfo
+
+info = @modinfo.Inspect()
+print info, "|", scriptName
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	expectedPrefix := "main_app.les:foo:" + modPath + "|main_app.les"
+	if out.String() != expectedPrefix {
+		t.Fatalf("expected %q, got %q", expectedPrefix, out.String())
+	}
+}
+
+func TestEmbeddedInterfaceOwningModuleResolution(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// localmod exports its own 'Reader' interface with completely different signature: Read(n: String): Int
+	localModCode := `
+interface Reader:
+    def Read(n: String): Int
+`
+	localModPath := filepath.Join(tempDir, "localmod.les")
+	if err := os.WriteFile(localModPath, []byte(localModCode), 0644); err != nil {
+		t.Fatalf("failed to write localmod.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	// Even though localmod has a different Reader, @io.Stdin is @io.ReadCloser should resolve
+	// ReadCloser's embedded Reader from the owning 'io' module, NOT localmod!
+	callerCode := `
+import io
+import localmod
+
+stdin = @io.Stdin
+isRC = stdin is @io.ReadCloser
+print isRC
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "true" {
+		t.Fatalf("expected 'true', got %q", out.String())
+	}
+}
+
+func TestEvaluatorReuseAfterRuntimeErrorDoesNotFlushStaleBuffers(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	// First run: writes to custom writer and Stdout, then panics with division by zero
+	firstCode := `
+import bufio
+
+struct Buffer:
+    content: String
+    def Write(s: String): Int:
+        content = content + s
+        len(s)
+
+buf = Buffer(content: "")
+bw = @bufio.Writer(buf)
+bw.Write("stale custom output")!
+Stdout.Write("stale stdout output")!
+(1 / 0)!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
+	_, err1 := ev.EvalProgram(prog1)
+	if err1 == nil {
+		t.Fatalf("expected runtime error, got nil")
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no output flushed on runtime error, got %q", out.String())
+	}
+
+	// Second run on the same evaluator: normal execution
+	secondCode := `
+Stdout.Write("clean output")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 != nil {
+		t.Fatalf("unexpected eval error in second run: %v", err2)
+	}
+	if out.String() != "clean output" {
+		t.Fatalf("expected %q, got %q", "clean output", out.String())
+	}
+}
+
+func TestDrainedCustomBufioWritersCleanedUp(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+import bufio
+
+struct LoggingWriter:
+    def Write(s: String): Int:
+        Stdout.Write("logged:" + s)
+        len(s)
+
+lw = LoggingWriter()
+bw = @bufio.Writer(lw)
+bw.Write("hello")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "logged:hello" {
+		t.Fatalf("expected 'logged:hello', got %q", out.String())
+	}
+
+	// After evaluation finishes and flushes, custom writer should be drained and removed from root ActiveBufioWriters
+	for _, bw := range ev.builtinsEnv.ActiveBufioWriters {
+		if bw != ev.builtinsEnv.StdoutWriter {
+			t.Fatalf("expected no custom writers retained in ActiveBufioWriters, found %v", bw)
+		}
+	}
+
+	out.Reset()
+	// Now execute a Write on bw again in a subsequent run, verifying it gets re-registered and writes to lw
+	code2 := `
+bw.Write("world")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	_, err = ev.EvalProgram(prog2)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	for _, bw := range ev.builtinsEnv.ActiveBufioWriters {
+		if bw != ev.builtinsEnv.StdoutWriter {
+			t.Fatalf("expected no custom writers retained after second run, found %v", bw)
+		}
+	}
+	if out.String() != "logged:world" {
+		t.Fatalf("expected 'logged:world', got %q", out.String())
+	}
+}
+
+func TestCustomWriterExitDuringShutdownPreservesExitCode(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+import bufio
+
+struct ExitingBuffer:
+    def Write(s: String): Int:
+        exit(42)
+        0
+
+eb = ExitingBuffer()
+bw = @bufio.Writer(eb)
+bw.Write("trigger exit during flush")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected exit error, got nil")
+	}
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected error to be *ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != 42 {
+		t.Fatalf("expected exit code 42, got %d", exitErr.Code)
+	}
+}
+
+func TestCustomWriterReusedAfterRuntimeErrorNotDetached(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	firstCode := `
+import bufio
+
+struct LoggingWriter:
+    def Write(s: String): Int:
+        Stdout.Write("logged:" + s)
+        len(s)
+
+lw = LoggingWriter()
+bw = @bufio.Writer(lw)
+bw.Write("abandoned")!
+(1 / 0)!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
+	_, err1 := ev.EvalProgram(prog1)
+	if err1 == nil {
+		t.Fatalf("expected runtime error, got nil")
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no output on error, got %q", out.String())
+	}
+
+	// Verify that bw can still write to lw in subsequent run and was not detached to io.Discard
+	secondCode := `
+bw.Write("valid")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 != nil {
+		t.Fatalf("unexpected eval error in second run: %v", err2)
+	}
+	// "abandoned" was discarded on runtime error, "valid" was successfully written
+	if out.String() != "logged:valid" {
+		t.Fatalf("expected 'logged:valid', got %q", out.String())
+	}
+}
+
+func TestShutdownFlushErrorResetsWriterState(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	firstCode := `
+import bufio
+
+struct BrokenBuffer:
+    def Write(s: String): Int:
+        (1 / 0)!
+        0
+
+bb = BrokenBuffer()
+bw = @bufio.Writer(bb)
+bw.Write("will fail on flush")!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
+	_, err1 := ev.EvalProgram(prog1)
+	if err1 == nil {
+		t.Fatalf("expected flush error, got nil")
+	}
+
+	// On the next run with the same evaluator, the failed writer must have been reset and removed
+	secondCode := `
+Stdout.Write("recovered")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 != nil {
+		t.Fatalf("unexpected error in second run: %v", err2)
+	}
+	if out.String() != "recovered" {
+		t.Fatalf("expected 'recovered', got %q", out.String())
+	}
+}
+
+func TestPeekTreatsNoProgressAsEOF(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+import bufio
+
+struct EmptyReader:
+    def Read(n: Int): String:
+        ""
+
+er = EmptyReader()
+br = @bufio.Reader(er)
+res = br.Peek(5)!
+print res
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error in Peek: %v", err)
+	}
+	if out.String() != "nil" {
+		t.Fatalf("expected nil representation 'nil', got %q", out.String())
+	}
+}
+
+func TestEmbeddedInterfaceResolutionWhenImportPathDiffersFromModuleName(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Module declares "module mymod" but is imported as "pkg"
+	modCode := `
+module mymod
+
+interface Inner:
+    Foo(): Int
+
+interface Outer:
+    Inner
+    Bar(): Int
+`
+	modPath := filepath.Join(tempDir, "pkg.les")
+	if err := os.WriteFile(modPath, []byte(modCode), 0644); err != nil {
+		t.Fatalf("failed to write pkg.les: %v", err)
+	}
+
+	// Another module in root dir with conflicting "Inner" interface:
+	conflictingModCode := `
+interface Inner:
+    Unrelated(): String
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "conflict.les"), []byte(conflictingModCode), 0644); err != nil {
+		t.Fatalf("failed to write conflict.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	callerCode := `
+import conflict
+import pkg
+
+struct Implementer:
+    def Foo(): Int: 1
+    def Bar(): Int: 2
+
+impl = Implementer()
+res = impl is @pkg.Outer
+print res
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "true" {
+		t.Fatalf("expected 'true', got %q", out.String())
+	}
+}
+
+type errorOnFlushWriter struct{}
+
+func (e *errorOnFlushWriter) Write(p []byte) (n int, err error) {
+	return 0, fmt.Errorf("write error")
+}
+
+func TestSetOutputRemovesFailedOldWriter(t *testing.T) {
+	ev := NewEvaluator()
+	// Set output to a writer that fails
+	ev.SetOutput(&errorOnFlushWriter{})
+
+	// Buffer some data into Stdout
+	code := `
+Stdout.Write("buffered in bad output")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, _ = ev.EvalProgram(prog)
+
+	// Switch output to clean buffer: old failing writer must be reset and removed from ActiveBufioWriters
+	var cleanOut strings.Builder
+	ev.SetOutput(&cleanOut)
+
+	if len(ev.builtinsEnv.ActiveBufioWriters) != 1 || ev.builtinsEnv.ActiveBufioWriters[0] != ev.builtinsEnv.StdoutWriter {
+		t.Fatalf("expected exactly 1 active writer (new StdoutWriter), got %d", len(ev.builtinsEnv.ActiveBufioWriters))
+	}
+
+	// Subsequent evaluation must succeed cleanly without encountering old failing writer
+	code2 := `
+Stdout.Write("hello clean")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	_, err := ev.EvalProgram(prog2)
+	if err != nil {
+		t.Fatalf("unexpected eval error after switching output: %v", err)
+	}
+	if cleanOut.String() != "hello clean" {
+		t.Fatalf("expected 'hello clean', got %q", cleanOut.String())
+	}
+}
+
+func TestStdoutFlushAndCloseFlushesBuffered(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+Stdout.Write("buffered content")!
+@io.Stdout.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "buffered content" {
+		t.Fatalf("expected @io.Stdout.Flush() to flush buffered output, got %q", out.String())
+	}
+
+	out.Reset()
+	codeClose := `
+Stdout.Write("close content")!
+@io.Stdout.Close()
+`
+	progClose := parser.NewParser(lexer.NewLexer(codeClose)).ParseProgram()
+	_, err = ev.EvalProgram(progClose)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	if out.String() != "close content" {
+		t.Fatalf("expected @io.Stdout.Close() to flush buffered output, got %q", out.String())
+	}
+}
+
+func TestCustomReaderPanicRecovery(t *testing.T) {
+	ev := NewEvaluator()
+	code := `
+struct PanicReader:
+    def Read(self, n: Int):
+        1 / 0
+r = @bufio.Reader(PanicReader())
+r.ReadLine()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from PanicReader, got nil")
+	}
+	if !strings.Contains(err.Error(), "Reader.Read") && !strings.Contains(err.Error(), "division by zero") {
+		t.Fatalf("expected runtime error mentioning Reader.Read or division by zero, got %v", err)
+	}
+}
+
+func TestCustomWriterShortWrite(t *testing.T) {
+	ev := NewEvaluator()
+	code := `
+struct ShortWriter:
+    def Write(self, s: String):
+        0
+w = @bufio.Writer(ShortWriter())
+w.Write("test")!
+w.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from short write, got nil")
+	}
+}
+
+func TestStdinReadZeroBytesAndEOF(t *testing.T) {
+	ev := NewEvaluator()
+	ev.SetInput(strings.NewReader("abc"))
+
+	code := `
+z = @io.Stdin.Read(0)!
+a = @io.Stdin.Read(2)!
+b = @io.Stdin.Read(2)!
+c = @io.Stdin.Read(2)!
+if z != "":
+    1 / 0
+if a != "ab":
+    1 / 0
+if b != "c":
+    1 / 0
+if c != nil:
+    1 / 0
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error in Stdin.Read tests: %v", err)
+	}
+}
+
+

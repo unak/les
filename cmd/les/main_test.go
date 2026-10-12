@@ -64,7 +64,7 @@ func TestExamples(t *testing.T) {
 			var out strings.Builder
 			ev.SetOutput(&out)
 			eLoader := eval.NewFileModuleLoader(examplesDir)
-			ev.SetModuleLoader(eLoader.Load)
+			ev.SetFileModuleLoader(eLoader)
 
 			if _, err := ev.EvalProgram(progExec); err != nil {
 				t.Fatalf("runtime error in %s: %v", fileName, err)

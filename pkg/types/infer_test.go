@@ -534,6 +534,18 @@ x = @calc.helper(5)
 	if err := infPrivate.InferProgram(progPrivate); err == nil {
 		t.Fatalf("expected error accessing unexported/private member 'helper', got nil")
 	}
+
+	// 3. Predeclared globals (Stdout, Stdin, Stderr, etc.) are not spuriously exported by user modules
+	infBuiltins := NewInferencer()
+	infBuiltins.SetModuleLoader(loader.Load)
+	builtinLeakCode := `
+import calc
+s = @calc.Stdout
+`
+	progBuiltins := parser.NewParser(lexer.NewLexer(builtinLeakCode)).ParseProgram()
+	if err := infBuiltins.InferProgram(progBuiltins); err == nil {
+		t.Fatalf("expected error accessing unexported predeclared global 'Stdout' on user module, got nil")
+	}
 }
 
 func TestBuiltinToStringAndShowInterfaceTypeInference(t *testing.T) {
@@ -761,3 +773,137 @@ res = add(1)
 		t.Fatalf("expected arity mismatch error for missing arguments, got nil")
 	}
 }
+
+func TestIOAndBufioTypeInference(t *testing.T) {
+	code := `
+import io
+import bufio
+
+# Test globals
+w1: Int = Stdout.Write("text")
+w2: Int = Stderr.Write("err")
+Stdout.Flush()
+Stderr.Flush()
+
+l: String | Nil = Stdin.ReadLine()
+s: String | Nil = Stdin.ReadString(":")
+p: String | Nil = Stdin.Peek(5)
+
+# Test @io module
+rawW: Int = @io.Stdout.Write("raw")
+rawR: String | Nil = @io.Stdin.Read(10)
+@io.Stdout.Flush()
+@io.Stderr.Flush()
+
+# Test @bufio module constructors
+br = @bufio.Reader(@io.Stdin)
+bw = @bufio.Writer(@io.Stdout)
+l2: String | Nil = br.ReadLine()
+bw.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("type inference error for io/bufio: %v", err)
+	}
+}
+
+func TestIOAndBufioTypeAnnotations(t *testing.T) {
+	code := `
+import io
+import bufio
+
+def readAll(r: @io.Reader): String | Nil:
+    r.Read(100)
+
+struct CustomReader:
+    def Read(n: Int): String | Nil:
+        "hello"
+
+cr = CustomReader()
+res: String | Nil = readAll(cr)
+
+# Test @bufio.Reader and @bufio.Writer type annotations
+def wrapBuf(br: @bufio.Reader, bw: @bufio.Writer): ():
+    bw.Flush()
+
+# Test assignability of global Stdin/Stdout to @bufio.Reader/@bufio.Writer
+rGlobal: @bufio.Reader = Stdin
+wGlobal: @bufio.Writer = Stdout
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("type inference error for qualified type annotations: %v", err)
+	}
+}
+
+func TestOrdinaryExportedFunctionTypeAnnotationNotUnwrapped(t *testing.T) {
+	tempDir := t.TempDir()
+
+	mathCode := `
+def Add(a: Int, b: Int): Int:
+    a + b
+`
+	mathPath := filepath.Join(tempDir, "math.les")
+	if err := os.WriteFile(mathPath, []byte(mathCode), 0644); err != nil {
+		t.Fatalf("failed to write math.les: %v", err)
+	}
+
+	loader := NewFileModuleLoader(tempDir)
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	// An annotation referencing @math.Add should be the function type (Int, Int) -> Int,
+	// NOT unwrapped to its return type Int!
+	testCode := `
+import math
+
+fn: @math.Add = @math.Add
+res: Int = fn(10, 20)
+`
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error when using exported function type annotation: %v", err)
+	}
+
+	// Verify that annotating an Int with @math.Add fails because @math.Add is a function type, not Int
+	testMismatchCode := `
+import math
+
+notInt: @math.Add = 42
+`
+	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
+	infMismatch := NewInferencer()
+	infMismatch.SetModuleLoader(loader.Load)
+	if err := infMismatch.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type mismatch annotating Int with @math.Add, but got nil")
+	}
+}
+
+func TestBuiltinModuleTypeAnnotationsWithoutImport(t *testing.T) {
+	inf := NewInferencer()
+	testCode := `
+def readStream(r: @bufio.Reader): String | Nil:
+    r.ReadLine()
+
+res: String | Nil = readStream(Stdin)
+`
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error when using @bufio.Reader without import: %v", err)
+	}
+
+	testMismatchCode := `
+def readStream(r: @bufio.Reader): String | Nil:
+    r.ReadLine()
+
+bad: String | Nil = readStream(Stdout)
+`
+	inf2 := NewInferencer()
+	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
+	if err := inf2.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type error passing Stdout to @bufio.Reader parameter, got nil")
+	}
+}
+

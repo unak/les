@@ -19,37 +19,76 @@ func nextCallID() uint64 {
 
 // Evaluator runs Les AST nodes.
 type Evaluator struct {
-	globalEnv *Environment
+	builtinsEnv *Environment
+	globalEnv   *Environment
 }
 
 func NewEvaluator() *Evaluator {
-	env := NewEnvironment(nil)
-	ev := &Evaluator{globalEnv: env}
-	ev.registerBuiltins()
+	bEnv := NewEnvironment(nil)
+	ev := &Evaluator{builtinsEnv: bEnv, globalEnv: NewEnvironment(bEnv)}
 	ev.initIOModule()
+	ev.initBufioModule()
+	ev.registerBuiltins()
 	return ev
 }
 
-func (ev *Evaluator) SetOutput(sb *strings.Builder) {
-	ev.globalEnv.Output = sb
+func (ev *Evaluator) SetOutput(w io.Writer) {
+	if oldBW := ev.builtinsEnv.StdoutWriter; oldBW != nil {
+		_ = oldBW.Flush()
+		oldBW.Reset(io.Discard)
+		ev.builtinsEnv.UnregisterBufioWriter(oldBW)
+	}
+	ev.builtinsEnv.RawStdout = w
+	if w != nil {
+		bw := bufio.NewWriter(w)
+		ev.builtinsEnv.StdoutWriter = bw
+		ev.builtinsEnv.RegisterBufioWriter(bw, w)
+	} else {
+		ev.builtinsEnv.StdoutWriter = nil
+	}
+}
+
+func (ev *Evaluator) SetErrorOutput(w io.Writer) {
+	ev.builtinsEnv.RawStderr = w
 }
 
 func (ev *Evaluator) SetInput(r io.Reader) {
-	ev.globalEnv.Input = r
+	ev.builtinsEnv.RawStdin = r
 	if r != nil {
-		ev.globalEnv.StdinReader = bufio.NewReader(r)
+		ev.builtinsEnv.StdinReader = bufio.NewReader(r)
 	} else {
-		ev.globalEnv.StdinReader = nil
+		ev.builtinsEnv.StdinReader = nil
+	}
+}
+
+func (ev *Evaluator) callValue(calleeVal Value, args []Value) (Value, error) {
+	forced := Force(calleeVal)
+	switch fn := forced.(type) {
+	case *BuiltinFunc:
+		return fn.Fn(args)
+	case *Closure:
+		return ev.globalEnv.invokeClosure(fn, args)
+	default:
+		return nil, fmt.Errorf("cannot call non-function value: %v", forced)
 	}
 }
 
 func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, error)) {
+	ev.builtinsEnv.Loader = loader
 	ev.globalEnv.Loader = loader
+}
+
+func (ev *Evaluator) SetFileModuleLoader(fml *FileModuleLoader) {
+	if fml != nil {
+		fml.SetParentEnv(ev.builtinsEnv)
+		ev.builtinsEnv.Loader = fml.Load
+		ev.globalEnv.Loader = fml.Load
+	}
 }
 
 func (ev *Evaluator) registerBuiltins() {
 	// print: built-in effect boundary. Demands evaluation of its arguments without automatic newline.
-	ev.globalEnv.Set("print", &BuiltinFunc{
+	ev.builtinsEnv.Set("print", &BuiltinFunc{
 		Name: "print",
 		Fn: func(args []Value) (Value, error) {
 			parts := make([]string, len(args))
@@ -61,17 +100,19 @@ func (ev *Evaluator) registerBuiltins() {
 				parts[i] = val.String()
 			}
 			out := strings.Join(parts, "")
-			if ev.globalEnv.Output != nil {
-				ev.globalEnv.Output.WriteString(out)
-			} else {
-				fmt.Print(out)
+			w := ev.globalEnv.GetStdoutWriter()
+			if _, err := w.WriteString(out); err != nil {
+				return nil, err
+			}
+			if err := w.Flush(); err != nil {
+				return nil, err
 			}
 			return &TupleValue{Elements: []Value{}}, nil
 		},
 	})
 
 	// type: returns string representation of the runtime type of the value(s).
-	ev.globalEnv.Set("type", &BuiltinFunc{
+	ev.builtinsEnv.Set("type", &BuiltinFunc{
 		Name: "type",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -90,7 +131,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// len: returns integer length of tuple, string, or dict.
-	ev.globalEnv.Set("len", &BuiltinFunc{
+	ev.builtinsEnv.Set("len", &BuiltinFunc{
 		Name: "len",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
@@ -111,7 +152,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// exit: terminates process with exit code (0 or 1 arg, Bool or Int).
-	ev.globalEnv.Set("exit", &BuiltinFunc{
+	ev.builtinsEnv.Set("exit", &BuiltinFunc{
 		Name: "exit",
 		Fn: func(args []Value) (Value, error) {
 			code := 0
@@ -139,7 +180,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// force: strictly evaluates (forces) its argument and returns it.
-	ev.globalEnv.Set("force", &BuiltinFunc{
+	ev.builtinsEnv.Set("force", &BuiltinFunc{
 		Name: "force",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
@@ -149,38 +190,39 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
+	// Global standard I/O streams
+	bufioMod, _ := ev.builtinsEnv.GetModule("bufio")
+	ioMod, _ := ev.builtinsEnv.GetModule("io")
+
+	stdinConstructor := bufioMod.Exports["Reader"].(*BuiltinFunc)
+	stdoutConstructor := bufioMod.Exports["Writer"].(*BuiltinFunc)
+
+	stdinInst, _ := stdinConstructor.Fn([]Value{ioMod.Exports["Stdin"]})
+	stdoutInst, _ := stdoutConstructor.Fn([]Value{ioMod.Exports["Stdout"]})
+	stderrInst := ioMod.Exports["Stderr"]
+
+	ev.builtinsEnv.Set("Stdin", stdinInst)
+	ev.builtinsEnv.Set("Stdout", stdoutInst)
+	ev.builtinsEnv.Set("Stderr", stderrInst)
+
 	// gets: reads a single line from standard input, returning String or Nil on EOF.
 	// Returns a lazy ActionThunk that only blocks when demanded.
-	ev.globalEnv.Set("gets", &BuiltinFunc{
+	ev.builtinsEnv.Set("gets", &BuiltinFunc{
 		Name: "gets",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("gets expects 0 arguments, got %d", len(args))
 			}
-			return NewActionThunk(func() (Value, error) {
-				reader := ev.globalEnv.GetStdinReader()
-				line, err := reader.ReadString('\n')
-				if err != nil && err != io.EOF {
-					return nil, err
-				}
-				if len(line) > 0 {
-					if line[len(line)-1] == '\n' {
-						line = line[:len(line)-1]
-						if len(line) > 0 && line[len(line)-1] == '\r' {
-							line = line[:len(line)-1]
-						}
-					}
-					return StringValue(line), nil
-				}
-				return NilValue{}, nil
-			}), nil
+			si := stdinInst.(*StructInstance)
+			rlFn := si.Fields["ReadLine"].(*BuiltinFunc)
+			return rlFn.Fn([]Value{})
 		},
 	})
 
 	// Default CLI arguments & program name
-	ev.globalEnv.Set("Args", &TupleValue{Elements: []Value{}})
-	ev.globalEnv.Set("ProgramName", StringValue(""))
-	ev.globalEnv.Set("scriptName", StringValue(""))
+	ev.builtinsEnv.Set("Args", &TupleValue{Elements: []Value{}})
+	ev.builtinsEnv.Set("ProgramName", StringValue(""))
+	ev.builtinsEnv.Set("scriptName", StringValue(""))
 
 	// Built-in Error constructor & default Error struct definition
 	errorStructDef := &StructDefValue{
@@ -214,10 +256,10 @@ func (ev *Evaluator) registerBuiltins() {
 				},
 			},
 		},
-		Env: ev.globalEnv,
+		Env: ev.builtinsEnv,
 	}
 
-	ev.globalEnv.Set("Error", &BuiltinFunc{
+	ev.builtinsEnv.Set("Error", &BuiltinFunc{
 		Name: "Error",
 		Fn: func(args []Value) (Value, error) {
 			msg := "error"
@@ -237,7 +279,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// Built-in Show interface definition: ToString(): String
-	ev.globalEnv.Set("Show", &InterfaceDefValue{
+	ev.builtinsEnv.Set("Show", &InterfaceDefValue{
 		Name: "Show",
 		Methods: map[string]ast.MethodSig{
 			"ToString": {
@@ -253,11 +295,11 @@ func (ev *Evaluator) SetArgs(args []string) {
 	for i, a := range args {
 		elems[i] = StringValue(a)
 	}
-	ev.globalEnv.Set("Args", &TupleValue{Elements: elems})
+	ev.builtinsEnv.Set("Args", &TupleValue{Elements: elems})
 }
 
 func (ev *Evaluator) SetProgramName(name string) {
-	ev.globalEnv.Set("ProgramName", StringValue(name))
+	ev.builtinsEnv.Set("ProgramName", StringValue(name))
 }
 
 func (ev *Evaluator) SetScriptName(name string) {
@@ -315,9 +357,19 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if exitErr, ok := r.(*ExitError); ok {
+				// Normal termination via exit() or top-level return: flush all bufio writers
+				flushErr := ev.globalEnv.FlushAllBufioWriters()
+				if flushErr != nil {
+					ev.globalEnv.ResetBufioWritersOnError()
+					if exitErr.Code == 0 {
+						err = flushErr
+						return
+					}
+				}
 				err = exitErr
 				return
 			}
+			ev.globalEnv.ResetBufioWritersOnError()
 			if _, ok := r.(*ReturnSignal); ok {
 				err = fmt.Errorf("return outside of function")
 				return
@@ -326,7 +378,18 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 				err = fmt.Errorf("break outside of closure")
 				return
 			}
+			// Runtime error (panic): A3: do NOT flush on runtime error
 			err = fmt.Errorf("%v", r)
+			return
+		}
+		// Normal completion without panic/exit
+		if err == nil {
+			if flushErr := ev.globalEnv.FlushAllBufioWriters(); flushErr != nil {
+				ev.globalEnv.ResetBufioWritersOnError()
+				err = flushErr
+			}
+		} else {
+			ev.globalEnv.ResetBufioWritersOnError()
 		}
 	}()
 
@@ -596,12 +659,19 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to import module '%s': %w", s.Path, err)
 		}
+		canonicalName := modVal.Name
 		if alias == "" {
 			alias = modVal.Name
 		}
 		// Register module with alias name
 		modVal.Name = alias
 		env.RegisterModule(modVal)
+		if s.Path != alias {
+			env.RegisterModule(&ModuleValue{Name: s.Path, Exports: modVal.Exports})
+		}
+		if canonicalName != "" && canonicalName != alias && canonicalName != s.Path {
+			env.RegisterModule(&ModuleValue{Name: canonicalName, Exports: modVal.Exports})
+		}
 		return nil, nil
 
 	default:
@@ -1349,15 +1419,32 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		}
 
 		if searchEnv != nil {
-			// Check if typeAnnot is module qualified: @io.Reader
+			// Check if typeAnnot is module qualified: @io.Reader or @bufio.Reader
 			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {
 				parts := strings.SplitN(typeAnnot[1:], ".", 2)
 				modName := parts[0]
 				typeName := parts[1]
 				if modVal, found := searchEnv.GetModule(modName); found {
 					if expVal, ok := modVal.Exports[typeName]; ok {
-						if ifaceDef, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+						forcedExp := Force(expVal)
+						// If the exported item is a constructor BuiltinFunc with TypeDef, unwrap it
+						if bf, isBF := forcedExp.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+							forcedExp = Force(bf.TypeDef)
+						}
+						if ifaceDef, isIface := forcedExp.(*InterfaceDefValue); isIface {
 							return valueImplementsInterfaceValue(val, ifaceDef, searchEnv)
+						}
+						if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
+							if si, ok := val.(*StructInstance); ok && si.Def != nil {
+								if si.Def == structDef {
+									return true
+								}
+								for _, emb := range si.Embedded {
+									if emb.Def == structDef {
+										return true
+									}
+								}
+							}
 						}
 					}
 				}
@@ -1424,19 +1511,36 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 	for _, embName := range iface.Embedded {
 		var embDef *InterfaceDefValue
 		if env != nil {
-			if embVal, found := env.Get(embName); found {
-				if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
-					embDef = ed
-				}
-			}
-			if embDef == nil {
-				// Try finding in imported modules
-				for _, mod := range env.modules {
+			// If iface belongs to a specific module, resolve embedded interface from that owning module first
+			if iface.ModuleName != "" {
+				if mod, found := env.GetModule(iface.ModuleName); found {
 					if expVal, exists := mod.Exports[embName]; exists {
 						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
 							embDef = ed
-							break
 						}
+					}
+				}
+			}
+			if embDef == nil {
+				if embVal, found := env.Get(embName); found {
+					if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
+						embDef = ed
+					}
+				}
+			}
+			if embDef == nil {
+				// Try finding in imported modules across environment hierarchy
+				for cur := env; cur != nil; cur = cur.parent {
+					for _, mod := range cur.modules {
+						if expVal, exists := mod.Exports[embName]; exists {
+							if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+								embDef = ed
+								break
+							}
+						}
+					}
+					if embDef != nil {
+						break
 					}
 				}
 			}
