@@ -71,6 +71,18 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 	}
 	defer func() {
 		if r := recover(); r != nil {
+			if exitErr, ok := r.(*ExitError); ok {
+				panic(exitErr)
+			}
+			if retSig, ok := r.(*ReturnSignal); ok {
+				panic(retSig)
+			}
+			if brkSig, ok := r.(*BreakSignal); ok {
+				panic(brkSig)
+			}
+			if contSig, ok := r.(*ContinueSignal); ok {
+				panic(contSig)
+			}
 			err = fmt.Errorf("runtime error in Writer.Write: %v", r)
 		}
 	}()
@@ -243,7 +255,7 @@ func (ev *Evaluator) initBufioModule() {
 	}
 	bufioExports["Writer"] = writerConstructor
 
-	ev.globalEnv.RegisterModule(&ModuleValue{
+	ev.builtinsEnv.RegisterModule(&ModuleValue{
 		Name:    "bufio",
 		Exports: bufioExports,
 	})

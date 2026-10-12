@@ -591,6 +591,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					},
 				},
 			}
+			stdoutStruct := &StructType{
+				Name: "io.Stdout",
+				Methods: map[string]*FuncType{
+					"Write": writerIface.Methods["Write"],
+					"Close": closerIface.Methods["Close"],
+					"Flush": {
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: &TupleType{Elems: []Type{}},
+					},
+				},
+			}
 
 			alias := s.Alias
 			if alias == "" {
@@ -605,7 +616,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"ReadCloser":  readCloserIface,
 					"WriteCloser": writeCloserIface,
 					"Stdin":       readCloserIface,
-					"Stdout":      writeCloserIface,
+					"Stdout":      stdoutStruct,
 					"Stderr":      stderrStruct,
 				},
 			}

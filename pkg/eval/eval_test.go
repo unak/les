@@ -2377,3 +2377,70 @@ print msg
 		t.Fatalf("expected 'greeting: Les', got %q", out.String())
 	}
 }
+
+func TestCustomWriterExitRePanic(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct ExitingWriter:
+    def Write(s: String):
+        exit(42)
+
+ew = ExitingWriter()
+bw = @bufio.Writer(ew)
+bw.Write("trigger exit")!
+bw.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected ExitError, got nil")
+	}
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected error to be *ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != 42 {
+		t.Fatalf("expected exit code 42, got %d", exitErr.Code)
+	}
+}
+
+func TestModuleIsolationCallerShadowing(t *testing.T) {
+	tempDir := t.TempDir()
+
+	modCode := `
+def UseStdout(): String:
+    Stdout.Write("from module")!
+    Stdout.Flush()!
+    "ok"
+`
+	modPath := filepath.Join(tempDir, "mod.les")
+	if err := os.WriteFile(modPath, []byte(modCode), 0644); err != nil {
+		t.Fatalf("failed to write mod.les: %v", err)
+	}
+
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	fml := NewFileModuleLoader(tempDir)
+	ev.SetFileModuleLoader(fml)
+
+	// Caller script shadows Stdout with an Int
+	callerCode := `
+import mod
+
+Stdout = 12345
+res = @mod.UseStdout()
+print res
+`
+	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error when caller shadows Stdout: %v", err)
+	}
+	if out.String() != "from moduleok" {
+		t.Fatalf("expected 'from moduleok', got %q", out.String())
+	}
+}

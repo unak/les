@@ -792,6 +792,7 @@ p: String | Nil = Stdin.Peek(5)
 # Test @io module
 rawW: Int = @io.Stdout.Write("raw")
 rawR: String | Nil = @io.Stdin.Read(10)
+@io.Stdout.Flush()
 @io.Stderr.Flush()
 
 # Test @bufio module constructors

@@ -19,12 +19,13 @@ func nextCallID() uint64 {
 
 // Evaluator runs Les AST nodes.
 type Evaluator struct {
-	globalEnv *Environment
+	builtinsEnv *Environment
+	globalEnv   *Environment
 }
 
 func NewEvaluator() *Evaluator {
-	env := NewEnvironment(nil)
-	ev := &Evaluator{globalEnv: env}
+	bEnv := NewEnvironment(nil)
+	ev := &Evaluator{builtinsEnv: bEnv, globalEnv: NewEnvironment(bEnv)}
 	ev.initIOModule()
 	ev.initBufioModule()
 	ev.registerBuiltins()
@@ -32,29 +33,29 @@ func NewEvaluator() *Evaluator {
 }
 
 func (ev *Evaluator) SetOutput(w io.Writer) {
-	if ev.globalEnv.StdoutWriter != nil {
-		_ = ev.globalEnv.StdoutWriter.Flush()
+	if ev.builtinsEnv.StdoutWriter != nil {
+		_ = ev.builtinsEnv.StdoutWriter.Flush()
 	}
-	ev.globalEnv.RawStdout = w
+	ev.builtinsEnv.RawStdout = w
 	if w != nil {
 		bw := bufio.NewWriter(w)
-		ev.globalEnv.StdoutWriter = bw
-		ev.globalEnv.RegisterBufioWriter(bw)
+		ev.builtinsEnv.StdoutWriter = bw
+		ev.builtinsEnv.RegisterBufioWriter(bw)
 	} else {
-		ev.globalEnv.StdoutWriter = nil
+		ev.builtinsEnv.StdoutWriter = nil
 	}
 }
 
 func (ev *Evaluator) SetErrorOutput(w io.Writer) {
-	ev.globalEnv.RawStderr = w
+	ev.builtinsEnv.RawStderr = w
 }
 
 func (ev *Evaluator) SetInput(r io.Reader) {
-	ev.globalEnv.RawStdin = r
+	ev.builtinsEnv.RawStdin = r
 	if r != nil {
-		ev.globalEnv.StdinReader = bufio.NewReader(r)
+		ev.builtinsEnv.StdinReader = bufio.NewReader(r)
 	} else {
-		ev.globalEnv.StdinReader = nil
+		ev.builtinsEnv.StdinReader = nil
 	}
 }
 
@@ -71,19 +72,21 @@ func (ev *Evaluator) callValue(calleeVal Value, args []Value) (Value, error) {
 }
 
 func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, error)) {
+	ev.builtinsEnv.Loader = loader
 	ev.globalEnv.Loader = loader
 }
 
 func (ev *Evaluator) SetFileModuleLoader(fml *FileModuleLoader) {
 	if fml != nil {
-		fml.SetParentEnv(ev.globalEnv)
+		fml.SetParentEnv(ev.builtinsEnv)
+		ev.builtinsEnv.Loader = fml.Load
 		ev.globalEnv.Loader = fml.Load
 	}
 }
 
 func (ev *Evaluator) registerBuiltins() {
 	// print: built-in effect boundary. Demands evaluation of its arguments without automatic newline.
-	ev.globalEnv.Set("print", &BuiltinFunc{
+	ev.builtinsEnv.Set("print", &BuiltinFunc{
 		Name: "print",
 		Fn: func(args []Value) (Value, error) {
 			parts := make([]string, len(args))
@@ -107,7 +110,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// type: returns string representation of the runtime type of the value(s).
-	ev.globalEnv.Set("type", &BuiltinFunc{
+	ev.builtinsEnv.Set("type", &BuiltinFunc{
 		Name: "type",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) == 0 {
@@ -126,7 +129,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// len: returns integer length of tuple, string, or dict.
-	ev.globalEnv.Set("len", &BuiltinFunc{
+	ev.builtinsEnv.Set("len", &BuiltinFunc{
 		Name: "len",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
@@ -147,7 +150,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// exit: terminates process with exit code (0 or 1 arg, Bool or Int).
-	ev.globalEnv.Set("exit", &BuiltinFunc{
+	ev.builtinsEnv.Set("exit", &BuiltinFunc{
 		Name: "exit",
 		Fn: func(args []Value) (Value, error) {
 			code := 0
@@ -175,7 +178,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// force: strictly evaluates (forces) its argument and returns it.
-	ev.globalEnv.Set("force", &BuiltinFunc{
+	ev.builtinsEnv.Set("force", &BuiltinFunc{
 		Name: "force",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
@@ -186,8 +189,8 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// Global standard I/O streams
-	bufioMod, _ := ev.globalEnv.GetModule("bufio")
-	ioMod, _ := ev.globalEnv.GetModule("io")
+	bufioMod, _ := ev.builtinsEnv.GetModule("bufio")
+	ioMod, _ := ev.builtinsEnv.GetModule("io")
 
 	stdinConstructor := bufioMod.Exports["Reader"].(*BuiltinFunc)
 	stdoutConstructor := bufioMod.Exports["Writer"].(*BuiltinFunc)
@@ -196,13 +199,13 @@ func (ev *Evaluator) registerBuiltins() {
 	stdoutInst, _ := stdoutConstructor.Fn([]Value{ioMod.Exports["Stdout"]})
 	stderrInst := ioMod.Exports["Stderr"]
 
-	ev.globalEnv.Set("Stdin", stdinInst)
-	ev.globalEnv.Set("Stdout", stdoutInst)
-	ev.globalEnv.Set("Stderr", stderrInst)
+	ev.builtinsEnv.Set("Stdin", stdinInst)
+	ev.builtinsEnv.Set("Stdout", stdoutInst)
+	ev.builtinsEnv.Set("Stderr", stderrInst)
 
 	// gets: reads a single line from standard input, returning String or Nil on EOF.
 	// Returns a lazy ActionThunk that only blocks when demanded.
-	ev.globalEnv.Set("gets", &BuiltinFunc{
+	ev.builtinsEnv.Set("gets", &BuiltinFunc{
 		Name: "gets",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
@@ -215,9 +218,9 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// Default CLI arguments & program name
-	ev.globalEnv.Set("Args", &TupleValue{Elements: []Value{}})
-	ev.globalEnv.Set("ProgramName", StringValue(""))
-	ev.globalEnv.Set("scriptName", StringValue(""))
+	ev.builtinsEnv.Set("Args", &TupleValue{Elements: []Value{}})
+	ev.builtinsEnv.Set("ProgramName", StringValue(""))
+	ev.builtinsEnv.Set("scriptName", StringValue(""))
 
 	// Built-in Error constructor & default Error struct definition
 	errorStructDef := &StructDefValue{
@@ -251,10 +254,10 @@ func (ev *Evaluator) registerBuiltins() {
 				},
 			},
 		},
-		Env: ev.globalEnv,
+		Env: ev.builtinsEnv,
 	}
 
-	ev.globalEnv.Set("Error", &BuiltinFunc{
+	ev.builtinsEnv.Set("Error", &BuiltinFunc{
 		Name: "Error",
 		Fn: func(args []Value) (Value, error) {
 			msg := "error"
@@ -274,7 +277,7 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 
 	// Built-in Show interface definition: ToString(): String
-	ev.globalEnv.Set("Show", &InterfaceDefValue{
+	ev.builtinsEnv.Set("Show", &InterfaceDefValue{
 		Name: "Show",
 		Methods: map[string]ast.MethodSig{
 			"ToString": {
@@ -1498,13 +1501,18 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 			}
 			if embDef == nil {
-				// Try finding in imported modules
-				for _, mod := range env.modules {
-					if expVal, exists := mod.Exports[embName]; exists {
-						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
-							embDef = ed
-							break
+				// Try finding in imported modules across environment hierarchy
+				for cur := env; cur != nil; cur = cur.parent {
+					for _, mod := range cur.modules {
+						if expVal, exists := mod.Exports[embName]; exists {
+							if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+								embDef = ed
+								break
+							}
 						}
+					}
+					if embDef != nil {
+						break
 					}
 				}
 			}

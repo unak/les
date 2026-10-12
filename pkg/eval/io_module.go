@@ -304,8 +304,8 @@ func (ev *Evaluator) initIOModule() {
 	}
 	ioExports["Stderr"] = stderrInstance
 
-	// Register module in global environment
-	ev.globalEnv.RegisterModule(&ModuleValue{
+	// Register module in built-in environment
+	ev.builtinsEnv.RegisterModule(&ModuleValue{
 		Name:    "io",
 		Exports: ioExports,
 	})
