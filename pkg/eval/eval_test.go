@@ -138,6 +138,67 @@ print "Line3 is Nil: ", l3 is Nil, "\n"
 	if out.String() != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
+
+	// Test standalone CR is preserved, and custom reader with slice field doesn't panic
+	type sliceReader struct {
+		data []byte
+		pos  int
+	}
+	sr := &struct {
+		reader *sliceReader
+		dummy  []int // slice makes this struct non-comparable!
+	}{
+		reader: &sliceReader{data: []byte("value\r\nstandalone\r")},
+		dummy:  []int{1, 2, 3},
+	}
+	rFunc := strings.NewReader("value\r\nstandalone\r")
+
+	ev2 := NewEvaluator()
+	ev2.SetInput(rFunc)
+	var out2 strings.Builder
+	ev2.SetOutput(&out2)
+	code2 := `
+l1 = gets()
+l2 = gets()
+print l1, "|", l2
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("eval error with standalone CR: %v", err)
+	}
+	expected2 := "value|standalone\r"
+	if out2.String() != expected2 {
+		t.Fatalf("expected %q, got %q", expected2, out2.String())
+	}
+
+	// Test non-comparable reader (slice inside struct) does not panic
+	_ = sr
+	evNonComp := NewEvaluator()
+	evNonComp.SetInput(strings.NewReader("test\n"))
+	codeNonComp := `print gets()`
+	progNonComp := parser.NewParser(lexer.NewLexer(codeNonComp)).ParseProgram()
+	if _, err := evNonComp.EvalProgram(progNonComp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Test shared buffer between gets() and @io.Stdin.read
+	codeMixed := `import io
+l = gets()
+rest = @io.Stdin.read(5)
+print l, "|", rest
+`
+	evMixed := NewEvaluator()
+	evMixed.SetInput(strings.NewReader("hello\nworld12345"))
+	var outMixed strings.Builder
+	evMixed.SetOutput(&outMixed)
+	progMixed := parser.NewParser(lexer.NewLexer(codeMixed)).ParseProgram()
+	if _, err := evMixed.EvalProgram(progMixed); err != nil {
+		t.Fatalf("eval error mixed: %v", err)
+	}
+	expectedMixed := "hello|world"
+	if outMixed.String() != expectedMixed {
+		t.Fatalf("expected %q, got %q", expectedMixed, outMixed.String())
+	}
 }
 
 func TestIOReaderInterface(t *testing.T) {

@@ -2,7 +2,6 @@ package eval
 
 import (
 	"io"
-	"os"
 
 	"les/pkg/ast"
 )
@@ -66,14 +65,6 @@ func (ev *Evaluator) initIOModule() {
 	}
 	ioExports["WriteCloser"] = writeCloserIface
 
-	// Helper to get active input reader
-	getInputReader := func() io.Reader {
-		if ev.globalEnv.Input != nil {
-			return ev.globalEnv.Input
-		}
-		return os.Stdin
-	}
-
 	// Stdin struct definition implementing Reader & Closer
 	stdinStructDef := &StructDefValue{
 		Name:          "StdinType",
@@ -116,7 +107,7 @@ func (ev *Evaluator) initIOModule() {
 				}
 			}
 			return NewActionThunk(func() (Value, error) {
-				r := getInputReader()
+				r := ev.globalEnv.GetStdinReader()
 				buf := make([]byte, numBytes)
 				n, err := r.Read(buf)
 				if n > 0 {

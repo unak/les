@@ -1,8 +1,10 @@
 package eval
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"les/pkg/ast"
@@ -354,6 +356,7 @@ type Environment struct {
 	parent          *Environment
 	Output          *strings.Builder                        // captures print output if specified
 	Input           io.Reader                               // custom standard input if specified
+	StdinReader     *bufio.Reader                           // shared buffered reader for input
 	Loader          func(path string) (*ModuleValue, error) // module loader callback
 	EnclosingFuncID uint64                                  // 0 means top-level
 	ActiveClosureID uint64                                  // 0 means not directly inside a closure call
@@ -369,6 +372,7 @@ func NewEnvironment(parent *Environment) *Environment {
 	if parent != nil {
 		env.Output = parent.Output
 		env.Input = parent.Input
+		env.StdinReader = parent.StdinReader
 		env.Loader = parent.Loader
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID
@@ -433,4 +437,19 @@ func (env *Environment) GetModule(name string) (*ModuleValue, bool) {
 		return env.parent.GetModule(name)
 	}
 	return nil, false
+}
+
+// GetStdinReader returns the shared buffered stdin reader, initializing with os.Stdin if nil.
+func (env *Environment) GetStdinReader() *bufio.Reader {
+	if env.parent != nil {
+		return env.parent.GetStdinReader()
+	}
+	if env.StdinReader == nil {
+		in := env.Input
+		if in == nil {
+			in = os.Stdin
+		}
+		env.StdinReader = bufio.NewReader(in)
+	}
+	return env.StdinReader
 }

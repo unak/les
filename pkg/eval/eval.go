@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -37,6 +36,11 @@ func (ev *Evaluator) SetOutput(sb *strings.Builder) {
 
 func (ev *Evaluator) SetInput(r io.Reader) {
 	ev.globalEnv.Input = r
+	if r != nil {
+		ev.globalEnv.StdinReader = bufio.NewReader(r)
+	} else {
+		ev.globalEnv.StdinReader = nil
+	}
 }
 
 func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, error)) {
@@ -147,8 +151,6 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// gets: reads a single line from standard input, returning String or Nil on EOF.
 	// Returns a lazy ActionThunk that only blocks when demanded.
-	var stdinReader *bufio.Reader
-	var currentReader io.Reader
 	ev.globalEnv.Set("gets", &BuiltinFunc{
 		Name: "gets",
 		Fn: func(args []Value) (Value, error) {
@@ -156,21 +158,14 @@ func (ev *Evaluator) registerBuiltins() {
 				return nil, fmt.Errorf("gets expects 0 arguments, got %d", len(args))
 			}
 			return NewActionThunk(func() (Value, error) {
-				in := ev.globalEnv.Input
-				if in == nil {
-					in = os.Stdin
-				}
-				if stdinReader == nil || currentReader != in {
-					currentReader = in
-					stdinReader = bufio.NewReader(in)
-				}
-				line, err := stdinReader.ReadString('\n')
+				reader := ev.globalEnv.GetStdinReader()
+				line, err := reader.ReadString('\n')
 				if len(line) > 0 {
 					if line[len(line)-1] == '\n' {
 						line = line[:len(line)-1]
-					}
-					if len(line) > 0 && line[len(line)-1] == '\r' {
-						line = line[:len(line)-1]
+						if len(line) > 0 && line[len(line)-1] == '\r' {
+							line = line[:len(line)-1]
+						}
 					}
 					return StringValue(line), nil
 				}
