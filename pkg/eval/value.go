@@ -362,6 +362,7 @@ type Environment struct {
 	StdinReader        *bufio.Reader                           // shared buffered reader for input
 	StdoutWriter       *bufio.Writer                           // shared buffered writer for output
 	ActiveBufioWriters []*bufio.Writer                         // all active bufio.Writers created in this environment tree
+	bufioUnderlying    map[*bufio.Writer]io.Writer             // underlying target writer for custom bufio writers
 	Loader             func(path string) (*ModuleValue, error) // module loader callback
 	EnclosingFuncID    uint64                                  // 0 means top-level
 	ActiveClosureID    uint64                                  // 0 means not directly inside a closure call
@@ -370,9 +371,10 @@ type Environment struct {
 
 func NewEnvironment(parent *Environment) *Environment {
 	env := &Environment{
-		store:   make(map[string]Value),
-		modules: make(map[string]*ModuleValue),
-		parent:  parent,
+		store:           make(map[string]Value),
+		modules:         make(map[string]*ModuleValue),
+		parent:          parent,
+		bufioUnderlying: make(map[*bufio.Writer]io.Writer),
 	}
 	if parent != nil {
 		env.Loader = parent.Loader
@@ -492,19 +494,25 @@ func (env *Environment) GetStdoutWriter() *bufio.Writer {
 	}
 	if env.StdoutWriter == nil {
 		env.StdoutWriter = bufio.NewWriter(env.GetRawStdout())
-		env.RegisterBufioWriter(env.StdoutWriter)
+		env.RegisterBufioWriter(env.StdoutWriter, env.GetRawStdout())
 	}
 	return env.StdoutWriter
 }
 
 // RegisterBufioWriter tracks a bufio.Writer to be flushed at program termination.
-func (env *Environment) RegisterBufioWriter(bw *bufio.Writer) {
+func (env *Environment) RegisterBufioWriter(bw *bufio.Writer, underlying io.Writer) {
 	if env.parent != nil {
-		env.parent.RegisterBufioWriter(bw)
+		env.parent.RegisterBufioWriter(bw, underlying)
 		return
 	}
 	if bw == nil {
 		return
+	}
+	if env.bufioUnderlying == nil {
+		env.bufioUnderlying = make(map[*bufio.Writer]io.Writer)
+	}
+	if underlying != nil {
+		env.bufioUnderlying[bw] = underlying
 	}
 	for _, existing := range env.ActiveBufioWriters {
 		if existing == bw {
@@ -512,6 +520,14 @@ func (env *Environment) RegisterBufioWriter(bw *bufio.Writer) {
 		}
 	}
 	env.ActiveBufioWriters = append(env.ActiveBufioWriters, bw)
+}
+
+// GetActiveBufioWriters returns the active bufio writers tracked in the root environment.
+func (env *Environment) GetActiveBufioWriters() []*bufio.Writer {
+	if env.parent != nil {
+		return env.parent.GetActiveBufioWriters()
+	}
+	return env.ActiveBufioWriters
 }
 
 // FlushAllBufioWriters flushes all tracked bufio.Writers iteratively until all buffered
@@ -539,7 +555,11 @@ func (env *Environment) FlushAllBufioWriters() error {
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
-						roundErr = fmt.Errorf("panic during flush: %v", r)
+						if exitErr, ok := r.(*ExitError); ok {
+							roundErr = exitErr
+						} else {
+							roundErr = fmt.Errorf("panic during flush: %v", r)
+						}
 						failed[bw] = true
 						if firstErr == nil {
 							firstErr = roundErr
@@ -589,6 +609,8 @@ func (env *Environment) FlushAllBufioWriters() error {
 	for _, bw := range env.ActiveBufioWriters {
 		if bw == env.StdoutWriter || bw.Buffered() > 0 {
 			retained = append(retained, bw)
+		} else {
+			delete(env.bufioUnderlying, bw)
 		}
 	}
 	env.ActiveBufioWriters = retained
@@ -596,8 +618,8 @@ func (env *Environment) FlushAllBufioWriters() error {
 }
 
 // ResetBufioWritersOnError discards any unflushed buffered data from StdoutWriter and
-// resets and removes all custom bufio writers.
-// Used after evaluation errors to prevent abandoned buffers from leaking into subsequent program runs.
+// resets all custom bufio writers back to their underlying targets while discarding unflushed data.
+// Used after evaluation errors or flush failures to prevent abandoned buffers from leaking into subsequent program runs.
 func (env *Environment) ResetBufioWritersOnError() {
 	if env.parent != nil {
 		env.parent.ResetBufioWritersOnError()
@@ -605,7 +627,11 @@ func (env *Environment) ResetBufioWritersOnError() {
 	}
 	for _, bw := range env.ActiveBufioWriters {
 		if bw != env.StdoutWriter {
-			bw.Reset(io.Discard)
+			if underlying := env.bufioUnderlying[bw]; underlying != nil {
+				bw.Reset(underlying)
+			} else {
+				bw.Reset(io.Discard)
+			}
 		}
 	}
 	if env.StdoutWriter != nil {
@@ -614,6 +640,7 @@ func (env *Environment) ResetBufioWritersOnError() {
 	} else {
 		env.ActiveBufioWriters = nil
 	}
+	env.bufioUnderlying = make(map[*bufio.Writer]io.Writer)
 }
 
 // ClearCustomBufioWriters is an alias for ResetBufioWritersOnError.

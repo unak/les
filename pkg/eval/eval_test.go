@@ -2576,14 +2576,13 @@ func TestDrainedCustomBufioWritersCleanedUp(t *testing.T) {
 	code := `
 import bufio
 
-struct Buffer:
-    content: String
+struct LoggingWriter:
     def Write(s: String): Int:
-        content = content + s
+        Stdout.Write("logged:" + s)
         len(s)
 
-buf = Buffer(content: "")
-bw = @bufio.Writer(buf)
+lw = LoggingWriter()
+bw = @bufio.Writer(lw)
 bw.Write("hello")!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2591,15 +2590,19 @@ bw.Write("hello")!
 	if err != nil {
 		t.Fatalf("unexpected eval error: %v", err)
 	}
+	if out.String() != "logged:hello" {
+		t.Fatalf("expected 'logged:hello', got %q", out.String())
+	}
 
-	// After evaluation finishes and flushes, custom writer should be drained and removed from ActiveBufioWriters
-	for _, bw := range ev.globalEnv.ActiveBufioWriters {
-		if bw != ev.globalEnv.StdoutWriter {
+	// After evaluation finishes and flushes, custom writer should be drained and removed from root ActiveBufioWriters
+	for _, bw := range ev.builtinsEnv.ActiveBufioWriters {
+		if bw != ev.builtinsEnv.StdoutWriter {
 			t.Fatalf("expected no custom writers retained in ActiveBufioWriters, found %v", bw)
 		}
 	}
 
-	// Now execute a Write on bw again in a subsequent run, verifying it gets re-registered
+	out.Reset()
+	// Now execute a Write on bw again in a subsequent run, verifying it gets re-registered and writes to lw
 	code2 := `
 bw.Write("world")!
 `
@@ -2608,9 +2611,122 @@ bw.Write("world")!
 	if err != nil {
 		t.Fatalf("unexpected eval error: %v", err)
 	}
-	for _, bw := range ev.globalEnv.ActiveBufioWriters {
-		if bw != ev.globalEnv.StdoutWriter {
+	for _, bw := range ev.builtinsEnv.ActiveBufioWriters {
+		if bw != ev.builtinsEnv.StdoutWriter {
 			t.Fatalf("expected no custom writers retained after second run, found %v", bw)
 		}
+	}
+	if out.String() != "logged:world" {
+		t.Fatalf("expected 'logged:world', got %q", out.String())
+	}
+}
+
+func TestCustomWriterExitDuringShutdownPreservesExitCode(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+import bufio
+
+struct ExitingBuffer:
+    def Write(s: String): Int:
+        exit(42)
+        0
+
+eb = ExitingBuffer()
+bw = @bufio.Writer(eb)
+bw.Write("trigger exit during flush")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected exit error, got nil")
+	}
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected error to be *ExitError, got %T: %v", err, err)
+	}
+	if exitErr.Code != 42 {
+		t.Fatalf("expected exit code 42, got %d", exitErr.Code)
+	}
+}
+
+func TestCustomWriterReusedAfterRuntimeErrorNotDetached(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	firstCode := `
+import bufio
+
+struct LoggingWriter:
+    def Write(s: String): Int:
+        Stdout.Write("logged:" + s)
+        len(s)
+
+lw = LoggingWriter()
+bw = @bufio.Writer(lw)
+bw.Write("abandoned")!
+(1 / 0)!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
+	_, err1 := ev.EvalProgram(prog1)
+	if err1 == nil {
+		t.Fatalf("expected runtime error, got nil")
+	}
+	if out.String() != "" {
+		t.Fatalf("expected no output on error, got %q", out.String())
+	}
+
+	// Verify that bw can still write to lw in subsequent run and was not detached to io.Discard
+	secondCode := `
+bw.Write("valid")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 != nil {
+		t.Fatalf("unexpected eval error in second run: %v", err2)
+	}
+	// "abandoned" was discarded on runtime error, "valid" was successfully written
+	if out.String() != "logged:valid" {
+		t.Fatalf("expected 'logged:valid', got %q", out.String())
+	}
+}
+
+func TestShutdownFlushErrorResetsWriterState(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	firstCode := `
+import bufio
+
+struct BrokenBuffer:
+    def Write(s: String): Int:
+        (1 / 0)!
+        0
+
+bb = BrokenBuffer()
+bw = @bufio.Writer(bb)
+bw.Write("will fail on flush")!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
+	_, err1 := ev.EvalProgram(prog1)
+	if err1 == nil {
+		t.Fatalf("expected flush error, got nil")
+	}
+
+	// On the next run with the same evaluator, the failed writer must have been reset and removed
+	secondCode := `
+Stdout.Write("recovered")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
+	_, err2 := ev.EvalProgram(prog2)
+	if err2 != nil {
+		t.Fatalf("unexpected error in second run: %v", err2)
+	}
+	if out.String() != "recovered" {
+		t.Fatalf("expected 'recovered', got %q", out.String())
 	}
 }

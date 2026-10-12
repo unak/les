@@ -40,7 +40,7 @@ func (ev *Evaluator) SetOutput(w io.Writer) {
 	if w != nil {
 		bw := bufio.NewWriter(w)
 		ev.builtinsEnv.StdoutWriter = bw
-		ev.builtinsEnv.RegisterBufioWriter(bw)
+		ev.builtinsEnv.RegisterBufioWriter(bw, w)
 	} else {
 		ev.builtinsEnv.StdoutWriter = nil
 	}
@@ -357,9 +357,12 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 			if exitErr, ok := r.(*ExitError); ok {
 				// Normal termination via exit() or top-level return: flush all bufio writers
 				flushErr := ev.globalEnv.FlushAllBufioWriters()
-				if flushErr != nil && exitErr.Code == 0 {
-					err = flushErr
-					return
+				if flushErr != nil {
+					ev.globalEnv.ResetBufioWritersOnError()
+					if exitErr.Code == 0 {
+						err = flushErr
+						return
+					}
 				}
 				err = exitErr
 				return
@@ -380,6 +383,7 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 		// Normal completion without panic/exit
 		if err == nil {
 			if flushErr := ev.globalEnv.FlushAllBufioWriters(); flushErr != nil {
+				ev.globalEnv.ResetBufioWritersOnError()
 				err = flushErr
 			}
 		} else {

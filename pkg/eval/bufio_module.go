@@ -233,9 +233,11 @@ func (ev *Evaluator) initBufioModule() {
 			}
 
 			var getWriter func() *bufio.Writer
+			var getUnderlying func() io.Writer
 			ioMod, _ := ev.globalEnv.GetModule("io")
 			if ioMod != nil && target == ioMod.Exports["Stdout"] {
 				getWriter = func() *bufio.Writer { return ev.globalEnv.GetStdoutWriter() }
+				getUnderlying = func() io.Writer { return ev.globalEnv.GetRawStdout() }
 			} else {
 				// Eager check: verify target has callable Write
 				if inst, ok := target.(*StructInstance); ok {
@@ -247,10 +249,11 @@ func (ev *Evaluator) initBufioModule() {
 				}
 				adapter := &customWriterAdapter{ev: ev, target: target}
 				bw := bufio.NewWriter(adapter)
-				ev.globalEnv.RegisterBufioWriter(bw)
+				ev.globalEnv.RegisterBufioWriter(bw, adapter)
 				getWriter = func() *bufio.Writer { return bw }
+				getUnderlying = func() io.Writer { return adapter }
 			}
-			return ev.makeBufioWriterInstance(getWriter, writerDef), nil
+			return ev.makeBufioWriterInstance(getWriter, getUnderlying, writerDef), nil
 		},
 	}
 	bufioExports["Writer"] = writerConstructor
@@ -422,7 +425,7 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 }
 
 // makeBufioWriterInstance wraps a *bufio.Writer getter into a Les StructInstance.
-func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, def *StructDefValue) *StructInstance {
+func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, getUnderlying func() io.Writer, def *StructDefValue) *StructInstance {
 	inst := &StructInstance{
 		Def:      def,
 		Fields:   make(map[string]Value),
@@ -445,7 +448,11 @@ func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, def
 			if err != nil {
 				return nil, err
 			}
-			ev.globalEnv.RegisterBufioWriter(bw)
+			var und io.Writer
+			if getUnderlying != nil {
+				und = getUnderlying()
+			}
+			ev.globalEnv.RegisterBufioWriter(bw, und)
 			return IntValue(n), nil
 		},
 	}
