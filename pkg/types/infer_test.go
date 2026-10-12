@@ -580,6 +580,36 @@ fail_error(42)
 	}
 }
 
+func TestPrintRequiresShowStaticTypeCheck(t *testing.T) {
+	// 1. Valid print with Show types
+	codeOk := `
+struct Item:
+    def ToString():
+        "item"
+
+print 42, "hello", (1, 2), Item()
+`
+	progOk := parser.NewParser(lexer.NewLexer(codeOk)).ParseProgram()
+	infOk := NewInferencer()
+	if err := infOk.InferProgram(progOk); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	// 2. Invalid print with non-Show type (struct without ToString)
+	codeErr := `
+struct NoShow:
+    x: Int
+
+print NoShow(x: 1)
+`
+	progErr := parser.NewParser(lexer.NewLexer(codeErr)).ParseProgram()
+	infErr := NewInferencer()
+	if err := infErr.InferProgram(progErr); err == nil {
+		t.Fatalf("expected type error printing non-Show struct, got nil")
+	}
+}
+
+
 
 
 

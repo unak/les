@@ -48,6 +48,9 @@ func (ev *Evaluator) registerBuiltins() {
 			parts := make([]string, len(args))
 			for i, a := range args {
 				val := Force(a)
+				if !checkValueMatchesType(val, "Show", ev.globalEnv) {
+					return nil, fmt.Errorf("type error in print: argument %d of type %s does not implement Show interface", i+1, typeNameOf(val))
+				}
 				parts[i] = val.String()
 			}
 			out := strings.Join(parts, "")

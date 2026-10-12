@@ -56,31 +56,7 @@ type Inferencer struct {
 
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
-	// Built-in print: (Any) -> Any
-	_ = rootScope.Declare("print", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeAny,
-	})
-	// Built-in type: (Any) -> String
-	_ = rootScope.Declare("type", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeString,
-	})
-	// Built-in len: (Any) -> Int
-	_ = rootScope.Declare("len", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeInt,
-	})
-	// Built-in exit: (Any) -> Nil
-	_ = rootScope.Declare("exit", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeNil,
-	})
-	// Built-in Args: (String, ...)
-	_ = rootScope.Declare("Args", &TupleType{
-		Elems:      []Type{TypeString},
-		IsVariadic: true,
-	})
+
 	// Built-in Error interface: Message(): String, ToString(): String
 	errorIface := &InterfaceType{
 		Name: "Error",
@@ -110,6 +86,35 @@ func NewInferencer() *Inferencer {
 		Embedded: []*InterfaceType{},
 	}
 	_ = rootScope.Declare("Show", showIface)
+
+	// Built-in print: (*args: Show) -> ()
+	_ = rootScope.Declare("print", &FuncType{
+		Arg: &TupleType{
+			Elems:      []Type{showIface},
+			IsVariadic: true,
+		},
+		Ret: &TupleType{Elems: []Type{}},
+	})
+	// Built-in type: (Any) -> String
+	_ = rootScope.Declare("type", &FuncType{
+		Arg: TypeAny,
+		Ret: TypeString,
+	})
+	// Built-in len: (Any) -> Int
+	_ = rootScope.Declare("len", &FuncType{
+		Arg: TypeAny,
+		Ret: TypeInt,
+	})
+	// Built-in exit: (Any) -> Nil
+	_ = rootScope.Declare("exit", &FuncType{
+		Arg: TypeAny,
+		Ret: TypeNil,
+	})
+	// Built-in Args: (String, ...)
+	_ = rootScope.Declare("Args", &TupleType{
+		Elems:      []Type{TypeString},
+		IsVariadic: true,
+	})
 
 	return &Inferencer{
 		nextVarID: 0,
@@ -179,16 +184,21 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 	case *ast.FuncDef:
 		paramTypes := make([]Type, len(s.Params))
+		callerParamTypes := make([]Type, len(s.Params))
+		isVariadic := false
 		for i, p := range s.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
 				elemType = inf.parseTypeAnnot(p.TypeAnnot)
 			}
 			if p.IsVariadic {
+				isVariadic = true
+				callerParamTypes[i] = elemType
 				emptyTuple := &TupleType{Elems: []Type{}}
 				streamTuple := &TupleType{Elems: []Type{elemType}, IsVariadic: true}
 				paramTypes[i] = NewUnionType(emptyTuple, streamTuple)
 			} else {
+				callerParamTypes[i] = elemType
 				paramTypes[i] = elemType
 			}
 		}
@@ -198,7 +208,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		fnType := &FuncType{
-			Arg: &TupleType{Elems: paramTypes},
+			Arg: &TupleType{
+				Elems:      callerParamTypes,
+				IsVariadic: isVariadic,
+			},
 			Ret: declaredRetType,
 		}
 		// Function declaration in current scope

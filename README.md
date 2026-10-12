@@ -339,11 +339,11 @@ Listed from highest to lowest precedence:
 
 ### 8. Built-in Functions
 
-#### `def print(*args: Any): ()`
+#### `def print(*args: Show): ()`
 Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
 
 - **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
-- **Arguments**: `*args: Any` — variable number of values to print.
+- **Arguments**: `*args: Show` — variable number of values satisfying the `Show` interface (`ToString(): String`).
 - **Returns**: `()` (empty tuple).
 - **Usage**:
   ```python

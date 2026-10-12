@@ -1440,6 +1440,24 @@ print s_int, "\n", s_float, "\n", s_str, "\n", s_bool1, "\n", s_bool2, "\n", s_n
 	}
 }
 
+func TestPrintRequiresShow(t *testing.T) {
+	code := `
+struct NoShow:
+    x: Int
+
+n = NoShow(x: 10)
+print n
+`
+	_, err := runLesCode(code)
+	if err == nil {
+		t.Fatalf("expected error printing non-Show value, got nil")
+	}
+	if !strings.Contains(err.Error(), "does not implement Show interface") {
+		t.Fatalf("expected Show interface error, got: %v", err)
+	}
+}
+
+
 
 
 
