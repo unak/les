@@ -93,7 +93,7 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 			return 0, fmt.Errorf("Write returned negative count %d", nVal)
 		}
 		if nVal > len(p) {
-			return len(p), nil
+			return 0, fmt.Errorf("Write returned count %d exceeding buffer length %d", nVal, len(p))
 		}
 		return nVal, nil
 	}
@@ -170,7 +170,8 @@ func (ev *Evaluator) initBufioModule() {
 
 	// Reader constructor: @bufio.Reader(r)
 	readerConstructor := &BuiltinFunc{
-		Name: "Reader",
+		Name:    "Reader",
+		TypeDef: readerDef,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Reader constructor expects 1 argument, got %d", len(args))
@@ -206,7 +207,8 @@ func (ev *Evaluator) initBufioModule() {
 
 	// Writer constructor: @bufio.Writer(w)
 	writerConstructor := &BuiltinFunc{
-		Name: "Writer",
+		Name:    "Writer",
+		TypeDef: writerDef,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Writer constructor expects 1 argument, got %d", len(args))

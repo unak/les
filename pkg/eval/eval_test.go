@@ -2252,3 +2252,53 @@ bw.Write("payload")!
 		t.Fatalf("expected %q, got %q", expected, stdout.String())
 	}
 }
+
+func TestRuntimeQualifiedTypeMatching(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+import io
+import bufio
+
+print Stdin is @bufio.Reader, "|"
+print Stdout is @bufio.Writer, "|"
+print @io.Stdin is @io.Reader, "|"
+print @io.Stdout is @io.Writer
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "true|true|true|true"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestWriterResultExceedingBuffer(t *testing.T) {
+	ev := NewEvaluator()
+
+	code := `
+import bufio
+
+struct LyingWriter:
+    def Write(s: String):
+        999999 # claims to write way more than len(s)
+
+lw = LyingWriter()
+bw = @bufio.Writer(lw)
+bw.Write("hello")!
+bw.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected error from lying writer, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeding buffer length") {
+		t.Fatalf("expected 'exceeding buffer length' error, got %v", err)
+	}
+}

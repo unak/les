@@ -106,8 +106,9 @@ func (c *Closure) String() string { return "<function>" }
 
 // BuiltinFunc represents built-in effect / primitive functions.
 type BuiltinFunc struct {
-	Name string
-	Fn   func(args []Value) (Value, error)
+	Name    string
+	Fn      func(args []Value) (Value, error)
+	TypeDef Value // optional underlying StructDefValue or InterfaceDefValue (for type checking / constructors)
 }
 
 func (b *BuiltinFunc) String() string { return fmt.Sprintf("<builtin %s>", b.Name) }
@@ -515,11 +516,13 @@ func (env *Environment) RegisterBufioWriter(bw *bufio.Writer) {
 // FlushAllBufioWriters flushes all tracked bufio.Writers iteratively until all buffered
 // data is completely drained, properly handling writers whose Write method refills other writers
 // (e.g. custom writer writing to Stdout) or dynamically registers new writers.
+// Writers that fail or panic during flush are recorded and skipped on subsequent rounds.
 func (env *Environment) FlushAllBufioWriters() error {
 	if env.parent != nil {
 		return env.parent.FlushAllBufioWriters()
 	}
 	var firstErr error
+	failed := make(map[*bufio.Writer]bool)
 	const maxRounds = 100 // protect against infinite refill cycles
 
 	for round := 0; round < maxRounds; round++ {
@@ -527,26 +530,37 @@ func (env *Environment) FlushAllBufioWriters() error {
 		// Read slice index by index since env.ActiveBufioWriters might grow dynamically during callbacks
 		for i := 0; i < len(env.ActiveBufioWriters); i++ {
 			bw := env.ActiveBufioWriters[i]
-			if bw.Buffered() > 0 {
-				progress = true
+			if failed[bw] {
+				continue
 			}
+			beforeBuf := bw.Buffered()
+			var roundErr error
 			func() {
 				defer func() {
 					if r := recover(); r != nil {
+						roundErr = fmt.Errorf("panic during flush: %v", r)
+						failed[bw] = true
 						if firstErr == nil {
-							firstErr = fmt.Errorf("panic during flush: %v", r)
+							firstErr = roundErr
 						}
 					}
 				}()
-				if err := bw.Flush(); err != nil && firstErr == nil {
-					firstErr = err
+				if err := bw.Flush(); err != nil {
+					roundErr = err
+					failed[bw] = true
+					if firstErr == nil {
+						firstErr = err
+					}
 				}
 			}()
+			if roundErr == nil && beforeBuf > 0 && bw.Buffered() < beforeBuf {
+				progress = true
+			}
 		}
-		// Check if any writer still has buffered data or if new writers were added
+		// Check if any non-failed writer still has buffered data or if new writers were added
 		anyRemaining := false
 		for _, bw := range env.ActiveBufioWriters {
-			if bw.Buffered() > 0 {
+			if !failed[bw] && bw.Buffered() > 0 {
 				anyRemaining = true
 				break
 			}
@@ -555,7 +569,7 @@ func (env *Environment) FlushAllBufioWriters() error {
 			break
 		}
 		if !progress {
-			// No bytes were flushed in this round despite remaining buffers; break to avoid infinite loop
+			// No bytes were successfully flushed in this round by remaining writers; break to avoid infinite loop
 			break
 		}
 	}

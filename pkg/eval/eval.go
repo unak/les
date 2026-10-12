@@ -1393,15 +1393,32 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		}
 
 		if searchEnv != nil {
-			// Check if typeAnnot is module qualified: @io.Reader
+			// Check if typeAnnot is module qualified: @io.Reader or @bufio.Reader
 			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {
 				parts := strings.SplitN(typeAnnot[1:], ".", 2)
 				modName := parts[0]
 				typeName := parts[1]
 				if modVal, found := searchEnv.GetModule(modName); found {
 					if expVal, ok := modVal.Exports[typeName]; ok {
-						if ifaceDef, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+						forcedExp := Force(expVal)
+						// If the exported item is a constructor BuiltinFunc with TypeDef, unwrap it
+						if bf, isBF := forcedExp.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+							forcedExp = Force(bf.TypeDef)
+						}
+						if ifaceDef, isIface := forcedExp.(*InterfaceDefValue); isIface {
 							return valueImplementsInterfaceValue(val, ifaceDef, searchEnv)
+						}
+						if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
+							if si, ok := val.(*StructInstance); ok && si.Def != nil {
+								if si.Def == structDef || si.Def.Name == structDef.Name {
+									return true
+								}
+								for _, emb := range si.Embedded {
+									if emb.Def == structDef || emb.Def.Name == structDef.Name {
+										return true
+									}
+								}
+							}
 						}
 					}
 				}
