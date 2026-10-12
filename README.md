@@ -689,16 +689,14 @@ import bufio
 ```
 
 #### Structs & Constructors
-- **`@bufio.Reader`**: Buffered reader wrapping an underlying `Reader`.
-  - `Read(n: Int): String | Nil`: Reads up to `n` bytes from buffer/stream.
+- **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
+  - `Read(n: Int): String | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns `""`; `n < 0` produces a runtime error.
   - `ReadLine(): String | Nil`: Reads a single line, stripping trailing `\n` or `\r\n`.
-  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string.
-  - `Peek(n: Int): String | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor.
-- **`@bufio.Writer`**: Buffered writer wrapping an underlying `Writer`.
+  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text including delimiter, or `nil` on EOF.
+  - `Peek(n: Int): String | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns `""`; `n < 0` produces a runtime error.
+- **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
   - `Write(s: String): Int`: Appends `s` to write buffer.
   - `Flush(): ()`: Flushes buffered data to the underlying stream.
-- **`@bufio.NewReader(r: Reader): Reader`**: Constructs a buffered `@bufio.Reader`.
-- **`@bufio.NewWriter(w: Writer): Writer`**: Constructs a buffered `@bufio.Writer`.
 
 ### 17. Error Handling & `interface Error`
 
@@ -850,6 +848,9 @@ Extending Hindley-Milner type inference to user-defined parameterized structs an
 
 - Syntax: `struct Box[T]: value: T`, `def map[T, U](items: (T, ...), fn: (T) -> U): (U, ...)`
 - Complements the existing built-in type parameters like `Dict[K, V]` and tuple stream types `(T, ...)`.
+
+### 8. Binary / Byte Stream I/O vs Rune Strings
+Currently, stream I/O methods like `Read(n)` and `Peek(n)` operate on raw bytes (`n` bytes) while string indexing (`s[i]`) and `len(s)` operate on Unicode runes. Future work will introduce dedicated binary/buffer data types (e.g. `Bytes` / `ByteBuffer`) and clarify the distinction between byte-level stream processing and rune-level text processing.
 
 ## License
 

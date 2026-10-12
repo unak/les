@@ -163,9 +163,26 @@ func NewInferencer() *Inferencer {
 			},
 		},
 	}
+	stderrGlobal := &StructType{
+		Name: "io.Stderr",
+		Methods: map[string]*FuncType{
+			"Write": {
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: TypeInt,
+			},
+			"Close": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
+		},
+	}
 	_ = rootScope.Declare("Stdin", bufioReaderGlobal)
 	_ = rootScope.Declare("Stdout", bufioWriterGlobal)
-	_ = rootScope.Declare("Stderr", bufioWriterGlobal)
+	_ = rootScope.Declare("Stderr", stderrGlobal)
 
 	return &Inferencer{
 		nextVarID: 0,
@@ -559,14 +576,24 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"Close": closerIface.Methods["Close"],
 				},
 			}
-			_ = inf.scope.Declare("Reader", readerIface)
-			_ = inf.scope.Declare("Writer", writerIface)
-			_ = inf.scope.Declare("Closer", closerIface)
-			_ = inf.scope.Declare("ReadCloser", readCloserIface)
-			_ = inf.scope.Declare("WriteCloser", writeCloserIface)
+			stderrStruct := &StructType{
+				Name: "io.Stderr",
+				Methods: map[string]*FuncType{
+					"Write": writerIface.Methods["Write"],
+					"Close": closerIface.Methods["Close"],
+					"Flush": {
+						Arg: &TupleType{Elems: []Type{}},
+						Ret: &TupleType{Elems: []Type{}},
+					},
+				},
+			}
 
-			inf.modules["io"] = &ModuleType{
-				Name: "io",
+			alias := s.Alias
+			if alias == "" {
+				alias = "io"
+			}
+			inf.modules[alias] = &ModuleType{
+				Name: alias,
 				Exports: map[string]Type{
 					"Reader":      readerIface,
 					"Writer":      writerIface,
@@ -575,10 +602,28 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					"WriteCloser": writeCloserIface,
 					"Stdin":       readCloserIface,
 					"Stdout":      writeCloserIface,
-					"Stderr":      writeCloserIface,
+					"Stderr":      stderrStruct,
 				},
 			}
 		} else if s.Path == "bufio" {
+			readerIface := &InterfaceType{
+				Name: "Reader",
+				Methods: map[string]*FuncType{
+					"Read": {
+						Arg: &TupleType{Elems: []Type{TypeInt}},
+						Ret: NewUnionType(TypeString, TypeNil),
+					},
+				},
+			}
+			writerIface := &InterfaceType{
+				Name: "Writer",
+				Methods: map[string]*FuncType{
+					"Write": {
+						Arg: &TupleType{Elems: []Type{TypeString}},
+						Ret: TypeInt,
+					},
+				},
+			}
 			readerStruct := &StructType{
 				Name: "Reader",
 				Methods: map[string]*FuncType{
@@ -613,24 +658,24 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					},
 				},
 			}
-			newReaderFunc := &FuncType{
-				Arg: &TupleType{Elems: []Type{TypeAny}},
+			readerConstructorFunc := &FuncType{
+				Arg: &TupleType{Elems: []Type{readerIface}},
 				Ret: readerStruct,
 			}
-			newWriterFunc := &FuncType{
-				Arg: &TupleType{Elems: []Type{TypeAny}},
+			writerConstructorFunc := &FuncType{
+				Arg: &TupleType{Elems: []Type{writerIface}},
 				Ret: writerStruct,
 			}
-			_ = inf.scope.Declare("Reader", readerStruct)
-			_ = inf.scope.Declare("Writer", writerStruct)
 
-			inf.modules["bufio"] = &ModuleType{
-				Name: "bufio",
+			alias := s.Alias
+			if alias == "" {
+				alias = "bufio"
+			}
+			inf.modules[alias] = &ModuleType{
+				Name: alias,
 				Exports: map[string]Type{
-					"Reader":    readerStruct,
-					"Writer":    writerStruct,
-					"NewReader": newReaderFunc,
-					"NewWriter": newWriterFunc,
+					"Reader": readerConstructorFunc,
+					"Writer": writerConstructorFunc,
 				},
 			}
 		} else if inf.moduleLoader != nil {
@@ -1116,9 +1161,23 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		}
 	}
 
-	if inf != nil && inf.scope != nil {
-		if t, ok := inf.scope.Lookup(annot); ok {
-			return t
+	if inf != nil {
+		if strings.HasPrefix(annot, "@") {
+			parts := strings.SplitN(annot[1:], ".", 2)
+			if len(parts) == 2 {
+				modName := parts[0]
+				typeName := parts[1]
+				if mod, ok := inf.modules[modName]; ok {
+					if t, ok := mod.Exports[typeName]; ok {
+						return t
+					}
+				}
+			}
+		}
+		if inf.scope != nil {
+			if t, ok := inf.scope.Lookup(annot); ok {
+				return t
+			}
 		}
 	}
 

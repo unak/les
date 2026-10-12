@@ -32,9 +32,14 @@ func NewEvaluator() *Evaluator {
 }
 
 func (ev *Evaluator) SetOutput(w io.Writer) {
+	if ev.globalEnv.StdoutWriter != nil {
+		_ = ev.globalEnv.StdoutWriter.Flush()
+	}
 	ev.globalEnv.RawStdout = w
 	if w != nil {
-		ev.globalEnv.StdoutWriter = bufio.NewWriter(w)
+		bw := bufio.NewWriter(w)
+		ev.globalEnv.StdoutWriter = bw
+		ev.globalEnv.RegisterBufioWriter(bw)
 	} else {
 		ev.globalEnv.StdoutWriter = nil
 	}
@@ -175,12 +180,13 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// Global standard I/O streams
 	bufioMod, _ := ev.globalEnv.GetModule("bufio")
-	readerDef := bufioMod.Exports["Reader"].(*StructDefValue)
-	writerDef := bufioMod.Exports["Writer"].(*StructDefValue)
 	ioMod, _ := ev.globalEnv.GetModule("io")
 
-	stdinInst := ev.makeBufioReaderInstance(func() *bufio.Reader { return ev.globalEnv.GetStdinReader() }, readerDef)
-	stdoutInst := ev.makeBufioWriterInstance(func() *bufio.Writer { return ev.globalEnv.GetStdoutWriter() }, writerDef)
+	stdinConstructor := bufioMod.Exports["Reader"].(*BuiltinFunc)
+	stdoutConstructor := bufioMod.Exports["Writer"].(*BuiltinFunc)
+
+	stdinInst, _ := stdinConstructor.Fn([]Value{ioMod.Exports["Stdin"]})
+	stdoutInst, _ := stdoutConstructor.Fn([]Value{ioMod.Exports["Stdout"]})
 	stderrInst := ioMod.Exports["Stderr"]
 
 	ev.globalEnv.Set("Stdin", stdinInst)
@@ -195,7 +201,8 @@ func (ev *Evaluator) registerBuiltins() {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("gets expects 0 arguments, got %d", len(args))
 			}
-			rlFn := stdinInst.Fields["ReadLine"].(*BuiltinFunc)
+			si := stdinInst.(*StructInstance)
+			rlFn := si.Fields["ReadLine"].(*BuiltinFunc)
 			return rlFn.Fn([]Value{})
 		},
 	})
@@ -338,6 +345,8 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if exitErr, ok := r.(*ExitError); ok {
+				// Normal termination via exit() or top-level return: flush all bufio writers
+				_ = ev.globalEnv.FlushAllBufioWriters()
 				err = exitErr
 				return
 			}
@@ -349,7 +358,13 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 				err = fmt.Errorf("break outside of closure")
 				return
 			}
+			// Runtime error (panic): A3: do NOT flush on runtime error
 			err = fmt.Errorf("%v", r)
+			return
+		}
+		// Normal completion without panic/exit
+		if err == nil {
+			_ = ev.globalEnv.FlushAllBufioWriters()
 		}
 	}()
 

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 
@@ -10,18 +11,29 @@ import (
 
 // customReaderAdapter adapts a Les value with a Read method into an io.Reader.
 type customReaderAdapter struct {
-	ev     *Evaluator
-	target Value
+	ev       *Evaluator
+	target   Value
+	leftover []byte
 }
 
 func (a *customReaderAdapter) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	// Drain leftover bytes if any
+	if len(a.leftover) > 0 {
+		n := copy(p, a.leftover)
+		a.leftover = a.leftover[n:]
+		return n, nil
+	}
+
 	inst, ok := a.target.(*StructInstance)
 	if !ok {
 		return 0, fmt.Errorf("expected StructInstance for Reader, got %s", typeNameOf(a.target))
 	}
-	readVal, ok := inst.Fields["Read"]
-	if !ok {
-		return 0, fmt.Errorf("Reader has no Read method")
+	readVal, err := inst.LookupMember("Read")
+	if err != nil {
+		return 0, fmt.Errorf("Reader has no Read method: %w", err)
 	}
 	resVal, err := a.ev.callValue(readVal, []Value{IntValue(len(p))})
 	if err != nil {
@@ -30,7 +42,15 @@ func (a *customReaderAdapter) Read(p []byte) (int, error) {
 	forced := Force(resVal)
 	switch v := forced.(type) {
 	case StringValue:
-		n := copy(p, []byte(string(v)))
+		data := []byte(string(v))
+		if len(data) == 0 {
+			// A12: Empty string means no data yet / progress made, not EOF.
+			return 0, nil
+		}
+		n := copy(p, data)
+		if n < len(data) {
+			a.leftover = append(a.leftover, data[n:]...)
+		}
 		return n, nil
 	case NilValue:
 		return 0, io.EOF
@@ -46,13 +66,16 @@ type customWriterAdapter struct {
 }
 
 func (a *customWriterAdapter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	inst, ok := a.target.(*StructInstance)
 	if !ok {
 		return 0, fmt.Errorf("expected StructInstance for Writer, got %s", typeNameOf(a.target))
 	}
-	writeVal, ok := inst.Fields["Write"]
-	if !ok {
-		return 0, fmt.Errorf("Writer has no Write method")
+	writeVal, err := inst.LookupMember("Write")
+	if err != nil {
+		return 0, fmt.Errorf("Writer has no Write method: %w", err)
 	}
 	resVal, err := a.ev.callValue(writeVal, []Value{StringValue(string(p))})
 	if err != nil {
@@ -60,7 +83,14 @@ func (a *customWriterAdapter) Write(p []byte) (int, error) {
 	}
 	forced := Force(resVal)
 	if iv, ok := forced.(IntValue); ok {
-		return int(iv), nil
+		n := int(iv)
+		if n < 0 {
+			return 0, fmt.Errorf("Write returned negative count %d", n)
+		}
+		if n > len(p) {
+			return len(p), nil
+		}
+		return n, nil
 	}
 	return len(p), nil
 }
@@ -69,6 +99,7 @@ func (a *customWriterAdapter) Write(p []byte) (int, error) {
 func (ev *Evaluator) initBufioModule() {
 	bufioExports := make(map[string]Value)
 
+	// Reader struct definition
 	readerDef := &StructDefValue{
 		Name:          "Reader",
 		FieldOrder:    []string{},
@@ -107,8 +138,8 @@ func (ev *Evaluator) initBufioModule() {
 		},
 		Env: ev.globalEnv,
 	}
-	bufioExports["Reader"] = readerDef
 
+	// Writer struct definition
 	writerDef := &StructDefValue{
 		Name:          "Writer",
 		FieldOrder:    []string{},
@@ -131,20 +162,34 @@ func (ev *Evaluator) initBufioModule() {
 		},
 		Env: ev.globalEnv,
 	}
-	bufioExports["Writer"] = writerDef
 
-	bufioExports["NewReader"] = &BuiltinFunc{
-		Name: "NewReader",
+	// Reader constructor: @bufio.Reader(r)
+	readerConstructor := &BuiltinFunc{
+		Name: "Reader",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
-				return nil, fmt.Errorf("NewReader expects 1 argument, got %d", len(args))
+				return nil, fmt.Errorf("Reader constructor expects 1 argument, got %d", len(args))
 			}
 			target := Force(args[0])
+
+			// A7: If target is already a @bufio.Reader instance, return it directly.
+			if si, ok := target.(*StructInstance); ok && si.Def == readerDef {
+				return si, nil
+			}
+
 			var getReader func() *bufio.Reader
 			ioMod, _ := ev.globalEnv.GetModule("io")
 			if ioMod != nil && target == ioMod.Exports["Stdin"] {
 				getReader = func() *bufio.Reader { return ev.globalEnv.GetStdinReader() }
 			} else {
+				// Eager check: verify target has callable Read
+				if inst, ok := target.(*StructInstance); ok {
+					if _, err := inst.LookupMember("Read"); err != nil {
+						return nil, fmt.Errorf("Reader requires an object with a Read method: %w", err)
+					}
+				} else {
+					return nil, fmt.Errorf("Reader requires an object with a Read method, got %s", typeNameOf(target))
+				}
 				adapter := &customReaderAdapter{ev: ev, target: target}
 				br := bufio.NewReader(adapter)
 				getReader = func() *bufio.Reader { return br }
@@ -152,26 +197,44 @@ func (ev *Evaluator) initBufioModule() {
 			return ev.makeBufioReaderInstance(getReader, readerDef), nil
 		},
 	}
+	bufioExports["Reader"] = readerConstructor
 
-	bufioExports["NewWriter"] = &BuiltinFunc{
-		Name: "NewWriter",
+	// Writer constructor: @bufio.Writer(w)
+	writerConstructor := &BuiltinFunc{
+		Name: "Writer",
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
-				return nil, fmt.Errorf("NewWriter expects 1 argument, got %d", len(args))
+				return nil, fmt.Errorf("Writer constructor expects 1 argument, got %d", len(args))
 			}
 			target := Force(args[0])
+
+			// A7: If target is already a @bufio.Writer instance, return it directly.
+			if si, ok := target.(*StructInstance); ok && si.Def == writerDef {
+				return si, nil
+			}
+
 			var getWriter func() *bufio.Writer
 			ioMod, _ := ev.globalEnv.GetModule("io")
 			if ioMod != nil && target == ioMod.Exports["Stdout"] {
 				getWriter = func() *bufio.Writer { return ev.globalEnv.GetStdoutWriter() }
 			} else {
+				// Eager check: verify target has callable Write
+				if inst, ok := target.(*StructInstance); ok {
+					if _, err := inst.LookupMember("Write"); err != nil {
+						return nil, fmt.Errorf("Writer requires an object with a Write method: %w", err)
+					}
+				} else {
+					return nil, fmt.Errorf("Writer requires an object with a Write method, got %s", typeNameOf(target))
+				}
 				adapter := &customWriterAdapter{ev: ev, target: target}
 				bw := bufio.NewWriter(adapter)
+				ev.globalEnv.RegisterBufioWriter(bw)
 				getWriter = func() *bufio.Writer { return bw }
 			}
 			return ev.makeBufioWriterInstance(getWriter, writerDef), nil
 		},
 	}
+	bufioExports["Writer"] = writerConstructor
 
 	ev.globalEnv.RegisterModule(&ModuleValue{
 		Name:    "bufio",
@@ -199,9 +262,22 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
 			numBytes := int64(iv)
+			// A6: n < 0 is error; n == 0 returns ""
+			if numBytes < 0 {
+				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
+			}
+			if numBytes == 0 {
+				return StringValue(""), nil
+			}
+
 			return NewActionThunk(func() (Value, error) {
 				br := getReader()
-				buf := make([]byte, numBytes)
+				// Cap allocation to avoid huge allocations
+				allocSize := numBytes
+				if allocSize > 64*1024 {
+					allocSize = 64 * 1024
+				}
+				buf := make([]byte, allocSize)
 				n, err := br.Read(buf)
 				if n > 0 {
 					return StringValue(string(buf[:n])), nil
@@ -255,19 +331,35 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				return nil, fmt.Errorf("ReadString expects String, got %s", typeNameOf(forced))
 			}
 			if len(sv) == 0 {
-				return nil, fmt.Errorf("delimiter cannot be empty")
+				return nil, fmt.Errorf("ReadString: delimiter cannot be empty")
 			}
-			delimByte := sv[0]
+			delimStr := string(sv)
+
 			return NewActionThunk(func() (Value, error) {
 				br := getReader()
-				res, err := br.ReadString(delimByte)
-				if err != nil && err != io.EOF {
-					return nil, err
+				// A5: Support arbitrary multi-character delimiter
+				delimBytes := []byte(delimStr)
+				lastByte := delimBytes[len(delimBytes)-1]
+				var accumulated []byte
+
+				for {
+					chunk, err := br.ReadBytes(lastByte)
+					if len(chunk) > 0 {
+						accumulated = append(accumulated, chunk...)
+						if bytes.HasSuffix(accumulated, delimBytes) {
+							return StringValue(string(accumulated)), nil
+						}
+					}
+					if err == io.EOF {
+						if len(accumulated) > 0 {
+							return StringValue(string(accumulated)), nil
+						}
+						return NilValue{}, nil
+					}
+					if err != nil {
+						return nil, err
+					}
 				}
-				if len(res) > 0 {
-					return StringValue(res), nil
-				}
-				return NilValue{}, nil
 			}), nil
 		},
 	}
@@ -284,6 +376,14 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				return nil, fmt.Errorf("Peek expects Int, got %s", typeNameOf(forced))
 			}
 			numBytes := int(iv)
+			// A6: n < 0 is error; n == 0 returns ""
+			if numBytes < 0 {
+				return nil, fmt.Errorf("Peek: negative byte count %d", numBytes)
+			}
+			if numBytes == 0 {
+				return StringValue(""), nil
+			}
+
 			return NewActionThunk(func() (Value, error) {
 				br := getReader()
 				bytes, err := br.Peek(numBytes)

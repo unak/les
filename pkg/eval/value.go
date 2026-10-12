@@ -351,18 +351,19 @@ func Force(v Value) Value {
 
 // Environment stores bindings in current scope.
 type Environment struct {
-	store           map[string]Value
-	modules         map[string]*ModuleValue
-	parent          *Environment
-	RawStdin        io.Reader                               // raw standard input
-	RawStdout       io.Writer                               // raw standard output
-	RawStderr       io.Writer                               // raw standard error
-	StdinReader     *bufio.Reader                           // shared buffered reader for input
-	StdoutWriter    *bufio.Writer                           // shared buffered writer for output
-	Loader          func(path string) (*ModuleValue, error) // module loader callback
-	EnclosingFuncID uint64                                  // 0 means top-level
-	ActiveClosureID uint64                                  // 0 means not directly inside a closure call
-	ActiveLoopID    uint64                                  // 0 means not inside a loop
+	store              map[string]Value
+	modules            map[string]*ModuleValue
+	parent             *Environment
+	RawStdin           io.Reader                               // raw standard input
+	RawStdout          io.Writer                               // raw standard output
+	RawStderr          io.Writer                               // raw standard error
+	StdinReader        *bufio.Reader                           // shared buffered reader for input
+	StdoutWriter       *bufio.Writer                           // shared buffered writer for output
+	ActiveBufioWriters []*bufio.Writer                         // all active bufio.Writers created in this environment tree
+	Loader             func(path string) (*ModuleValue, error) // module loader callback
+	EnclosingFuncID    uint64                                  // 0 means top-level
+	ActiveClosureID    uint64                                  // 0 means not directly inside a closure call
+	ActiveLoopID       uint64                                  // 0 means not inside a loop
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -372,11 +373,6 @@ func NewEnvironment(parent *Environment) *Environment {
 		parent:  parent,
 	}
 	if parent != nil {
-		env.RawStdin = parent.RawStdin
-		env.RawStdout = parent.RawStdout
-		env.RawStderr = parent.RawStderr
-		env.StdinReader = parent.StdinReader
-		env.StdoutWriter = parent.StdoutWriter
 		env.Loader = parent.Loader
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID
@@ -494,6 +490,38 @@ func (env *Environment) GetStdoutWriter() *bufio.Writer {
 	}
 	if env.StdoutWriter == nil {
 		env.StdoutWriter = bufio.NewWriter(env.GetRawStdout())
+		env.RegisterBufioWriter(env.StdoutWriter)
 	}
 	return env.StdoutWriter
+}
+
+// RegisterBufioWriter tracks a bufio.Writer to be flushed at program termination.
+func (env *Environment) RegisterBufioWriter(bw *bufio.Writer) {
+	if env.parent != nil {
+		env.parent.RegisterBufioWriter(bw)
+		return
+	}
+	if bw == nil {
+		return
+	}
+	for _, existing := range env.ActiveBufioWriters {
+		if existing == bw {
+			return
+		}
+	}
+	env.ActiveBufioWriters = append(env.ActiveBufioWriters, bw)
+}
+
+// FlushAllBufioWriters flushes all tracked bufio.Writers.
+func (env *Environment) FlushAllBufioWriters() error {
+	if env.parent != nil {
+		return env.parent.FlushAllBufioWriters()
+	}
+	var firstErr error
+	for _, bw := range env.ActiveBufioWriters {
+		if err := bw.Flush(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

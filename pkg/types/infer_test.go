@@ -780,10 +780,11 @@ p: String | Nil = Stdin.Peek(5)
 # Test @io module
 rawW: Int = @io.Stdout.Write("raw")
 rawR: String | Nil = @io.Stdin.Read(10)
+@io.Stderr.Flush()
 
-# Test @bufio module
-br = @bufio.NewReader(@io.Stdin)
-bw = @bufio.NewWriter(@io.Stdout)
+# Test @bufio module constructors
+br = @bufio.Reader(@io.Stdin)
+bw = @bufio.Writer(@io.Stdout)
 l2: String | Nil = br.ReadLine()
 bw.Flush()
 `
@@ -791,5 +792,27 @@ bw.Flush()
 	inf := NewInferencer()
 	if err := inf.InferProgram(prog); err != nil {
 		t.Fatalf("type inference error for io/bufio: %v", err)
+	}
+}
+
+func TestIOAndBufioTypeAnnotations(t *testing.T) {
+	code := `
+import io
+import bufio
+
+def readAll(r: @io.Reader): String | Nil:
+    r.Read(100)
+
+struct CustomReader:
+    def Read(n: Int): String | Nil:
+        "hello"
+
+cr = CustomReader()
+res: String | Nil = readAll(cr)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("type inference error for qualified type annotations: %v", err)
 	}
 }

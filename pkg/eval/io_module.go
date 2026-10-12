@@ -108,9 +108,19 @@ func (ev *Evaluator) initIOModule() {
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
 			numBytes := int64(iv)
+			if numBytes < 0 {
+				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
+			}
+			if numBytes == 0 {
+				return StringValue(""), nil
+			}
 			return NewActionThunk(func() (Value, error) {
 				r := ev.globalEnv.GetStdinReader()
-				buf := make([]byte, numBytes)
+				allocSize := numBytes
+				if allocSize > 64*1024 {
+					allocSize = 64 * 1024
+				}
+				buf := make([]byte, allocSize)
 				n, err := r.Read(buf)
 				if n > 0 {
 					return StringValue(string(buf[:n])), nil
@@ -180,6 +190,10 @@ func (ev *Evaluator) initIOModule() {
 			sv, ok := forced.(StringValue)
 			if !ok {
 				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+			}
+			// C/Ruby behavior: flush buffered stdout before writing directly
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				_ = stdoutWriter.Flush()
 			}
 			w := ev.globalEnv.GetRawStdout()
 			n, err := w.Write([]byte(string(sv)))
@@ -253,6 +267,10 @@ func (ev *Evaluator) initIOModule() {
 			sv, ok := forced.(StringValue)
 			if !ok {
 				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+			}
+			// C/Ruby behavior: flush buffered stdout before writing to stderr
+			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
+				_ = stdoutWriter.Flush()
 			}
 			w := ev.globalEnv.GetRawStderr()
 			n, err := w.Write([]byte(string(sv)))

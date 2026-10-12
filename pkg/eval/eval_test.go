@@ -2018,8 +2018,8 @@ import bufio
 n1 = @io.Stdout.Write("raw out\n")
 n2 = @io.Stderr.Write("raw err\n")
 
-# Test @bufio.NewReader on @io.Stdin
-br = @bufio.NewReader(@io.Stdin)
+# Test @bufio.Reader constructor on @io.Stdin
+br = @bufio.Reader(@io.Stdin)
 line = br.ReadLine()
 
 print line, " (", n1, ", ", n2, ")"
@@ -2035,5 +2035,128 @@ print line, " (", n1, ", ", n2, ")"
 	expectedStdout := "raw out\nbuffered input (8, 8)"
 	if stdout.String() != expectedStdout {
 		t.Fatalf("expected stdout %q, got %q", expectedStdout, stdout.String())
+	}
+}
+
+func TestUserStructBufioAdapters(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+import bufio
+
+struct InnerReader:
+    def Read(n: Int):
+        "embedded-data\n"
+
+struct MyReader:
+    InnerReader
+
+struct MyWriter:
+    output: String = ""
+    def Write(s: String):
+        print "[W:", s, "]"
+        len(s)
+
+mr = MyReader()
+mw = MyWriter()
+
+br = @bufio.Reader(mr)
+bw = @bufio.Writer(mw)
+
+line = br.ReadLine()
+print "Read:", line, "\n"
+
+bw.Write("hello")
+bw.Write(" world")
+bw.Flush()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "Read:embedded-data\n[W:hello world]"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestBufioWriterAutoFlushAtExit(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	code := `
+import bufio
+
+# Write without explicit Flush
+Stdout.Write("buffered global\n")
+
+bw = @bufio.Writer(Stdout)
+bw.Write("user writer\n")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "buffered global\nuser writer\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestStreamInterleavingOrder(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	var stderr strings.Builder
+	ev.SetOutput(&stdout)
+	ev.SetErrorOutput(&stderr)
+
+	code := `
+import io
+
+# Stdout is buffered, @io.Stdout.Write flushes Stdout first (C/Ruby style)
+Stdout.Write("first-")
+@io.Stdout.Write("second-")
+Stdout.Write("third\n")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "first-second-third\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
+
+func TestBufioReadPeekEdgeCases(t *testing.T) {
+	ev := NewEvaluator()
+	ev.SetInput(strings.NewReader("hello world:::foo:::bar"))
+
+	code := `
+import bufio
+
+r0 = Stdin.Read(0)
+p0 = Stdin.Peek(0)
+del1 = Stdin.ReadString(":::")
+del2 = Stdin.ReadString(":::")
+
+print r0 == "", "|", p0 == "", "|", del1, "|", del2
+`
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "true|true|hello world:::|foo:::"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
 	}
 }
