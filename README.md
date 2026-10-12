@@ -728,7 +728,56 @@ Rich numeric literal representations with full radix symmetry and visual separat
   - Direct method invocation on literals (e.g., `42.ToString()`, `3.14.ToString()`).
   - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.ToString()`) is disambiguated as a method call on integer `42`.
 
+### 4. String Interpolation (`#{}`)
 
+Ruby-style string interpolation within double-quoted strings:
 
+- **Double-quoted Strings (`"..."`)**: Expressions inside `#{...}` are evaluated and converted to strings via their `ToString()` method (satisfying `Show`):
+  ```python
+  name = "Alice"
+  age = 30
+  print "User: #{name}, Age: #{age}\n"
+  print "Result: #{1 + 2 * 3}\n"
+  ```
+- **Single-quoted Strings (`'...'`)**: Raw / literal strings without expression interpolation; `#{expr}` is treated literally as text:
+  ```python
+  print 'Literal #{name}\n'  # prints "Literal #{name}\n"
+  ```
 
+### 5. Null-Safe Navigation (`?.`) & Coalescing Operator (`??`)
+
+Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
+
+- **Safe Navigation (`?.`)**: Safely navigates fields or methods without runtime errors if the target is `nil`, evaluating to `nil`:
+  ```python
+  user?.Profile?.Name
+  ```
+- **Null Coalescing (`??`)**: Fallback expression if the left operand is `nil` (equivalent to `a != nil ? a : b`):
+  ```python
+  displayName = user?.Name ?? "Guest"
+  ```
+
+### 6. Pipeline Operator (`|>`)
+
+Functional pipelining to cleanly express transformation chains on immutable data and lazy streams without nested parentheses:
+
+- Syntax: `expr |> fn` evaluates as `fn(expr)`:
+  ```python
+  result = raw_input |> clean |> parse |> format
+  # Equivalent to: format(parse(clean(raw_input)))
+  ```
+
+### 7. Bitwise Operators
+
+Bitwise operations for integers:
+
+- Binary operations: AND (`&`), XOR (`^`), left shift (`<<`), right shift (`>>`), NOT (`~`).
+- Bitwise OR: Disambiguated or dedicated operator syntax avoiding grammatical collision with union types (`A | B`) and lambda argument delimiters (`|x|:`).
+
+### 8. User-Defined Generics (Type Parameters `[T]`)
+
+Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
+
+- Syntax: `struct Box[T]: value: T`, `def map[T, U](items: (T, ...), fn: (T) -> U): (U, ...)`
+- Complements the existing built-in type parameters like `Dict[K, V]` and tuple stream types `(T, ...)`.
 
