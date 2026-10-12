@@ -531,7 +531,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if s.Path == "io" {
 			// Register standard @io module interfaces in scope
 			readerIface := &InterfaceType{
-				Name: "Reader",
+				Name: "io.Reader",
 				Methods: map[string]*FuncType{
 					"Read": {
 						Arg: &TupleType{Elems: []Type{TypeInt}},
@@ -541,7 +541,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				Embedded: []*InterfaceType{},
 			}
 			writerIface := &InterfaceType{
-				Name: "Writer",
+				Name: "io.Writer",
 				Methods: map[string]*FuncType{
 					"Write": {
 						Arg: &TupleType{Elems: []Type{TypeString}},
@@ -551,7 +551,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				Embedded: []*InterfaceType{},
 			}
 			closerIface := &InterfaceType{
-				Name: "Closer",
+				Name: "io.Closer",
 				Methods: map[string]*FuncType{
 					"Close": {
 						Arg: &TupleType{Elems: []Type{}},
@@ -561,7 +561,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				Embedded: []*InterfaceType{},
 			}
 			readCloserIface := &InterfaceType{
-				Name:     "ReadCloser",
+				Name:     "io.ReadCloser",
 				Embedded: []*InterfaceType{readerIface, closerIface},
 				Methods: map[string]*FuncType{
 					"Read":  readerIface.Methods["Read"],
@@ -569,7 +569,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				},
 			}
 			writeCloserIface := &InterfaceType{
-				Name:     "WriteCloser",
+				Name:     "io.WriteCloser",
 				Embedded: []*InterfaceType{writerIface, closerIface},
 				Methods: map[string]*FuncType{
 					"Write": writerIface.Methods["Write"],
@@ -607,7 +607,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		} else if s.Path == "bufio" {
 			readerIface := &InterfaceType{
-				Name: "Reader",
+				Name: "io.Reader",
 				Methods: map[string]*FuncType{
 					"Read": {
 						Arg: &TupleType{Elems: []Type{TypeInt}},
@@ -616,7 +616,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				},
 			}
 			writerIface := &InterfaceType{
-				Name: "Writer",
+				Name: "io.Writer",
 				Methods: map[string]*FuncType{
 					"Write": {
 						Arg: &TupleType{Elems: []Type{TypeString}},
@@ -625,7 +625,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				},
 			}
 			readerStruct := &StructType{
-				Name: "Reader",
+				Name: "bufio.Reader",
 				Methods: map[string]*FuncType{
 					"Read": {
 						Arg: &TupleType{Elems: []Type{TypeInt}},
@@ -646,7 +646,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				},
 			}
 			writerStruct := &StructType{
-				Name: "Writer",
+				Name: "bufio.Writer",
 				Methods: map[string]*FuncType{
 					"Write": {
 						Arg: &TupleType{Elems: []Type{TypeString}},

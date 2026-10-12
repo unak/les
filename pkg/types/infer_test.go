@@ -813,6 +813,10 @@ res: String | Nil = readAll(cr)
 # Test @bufio.Reader and @bufio.Writer type annotations
 def wrapBuf(br: @bufio.Reader, bw: @bufio.Writer): ():
     bw.Flush()
+
+# Test assignability of global Stdin/Stdout to @bufio.Reader/@bufio.Writer
+rGlobal: @bufio.Reader = Stdin
+wGlobal: @bufio.Writer = Stdout
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()

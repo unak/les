@@ -512,25 +512,52 @@ func (env *Environment) RegisterBufioWriter(bw *bufio.Writer) {
 	env.ActiveBufioWriters = append(env.ActiveBufioWriters, bw)
 }
 
-// FlushAllBufioWriters flushes all tracked bufio.Writers.
+// FlushAllBufioWriters flushes all tracked bufio.Writers iteratively until all buffered
+// data is completely drained, properly handling writers whose Write method refills other writers
+// (e.g. custom writer writing to Stdout) or dynamically registers new writers.
 func (env *Environment) FlushAllBufioWriters() error {
 	if env.parent != nil {
 		return env.parent.FlushAllBufioWriters()
 	}
 	var firstErr error
-	for _, bw := range env.ActiveBufioWriters {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					if firstErr == nil {
-						firstErr = fmt.Errorf("panic during flush: %v", r)
+	const maxRounds = 100 // protect against infinite refill cycles
+
+	for round := 0; round < maxRounds; round++ {
+		progress := false
+		// Read slice index by index since env.ActiveBufioWriters might grow dynamically during callbacks
+		for i := 0; i < len(env.ActiveBufioWriters); i++ {
+			bw := env.ActiveBufioWriters[i]
+			if bw.Buffered() > 0 {
+				progress = true
+			}
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						if firstErr == nil {
+							firstErr = fmt.Errorf("panic during flush: %v", r)
+						}
 					}
+				}()
+				if err := bw.Flush(); err != nil && firstErr == nil {
+					firstErr = err
 				}
 			}()
-			if err := bw.Flush(); err != nil && firstErr == nil {
-				firstErr = err
+		}
+		// Check if any writer still has buffered data or if new writers were added
+		anyRemaining := false
+		for _, bw := range env.ActiveBufioWriters {
+			if bw.Buffered() > 0 {
+				anyRemaining = true
+				break
 			}
-		}()
+		}
+		if !anyRemaining {
+			break
+		}
+		if !progress {
+			// No bytes were flushed in this round despite remaining buffers; break to avoid infinite loop
+			break
+		}
 	}
 	return firstErr
 }

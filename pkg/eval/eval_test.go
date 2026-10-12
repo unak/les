@@ -2217,3 +2217,38 @@ bw.Write("trigger")! # force demand point so write buffers
 		t.Fatalf("expected negative count error, got %v", err)
 	}
 }
+
+func TestFlushDrainDependencies(t *testing.T) {
+	ev := NewEvaluator()
+	var stdout strings.Builder
+	ev.SetOutput(&stdout)
+
+	// Custom writer whose Write callback refills Stdout.Write
+	// Tests that FlushAllBufioWriters drains all writers iteratively.
+	code := `
+import bufio
+
+struct LoggingWriter:
+    def Write(s: String):
+        Stdout.Write("logged:" + s + "\n")
+        len(s)
+
+lw = LoggingWriter()
+bw = @bufio.Writer(lw)
+
+# Initial write to Stdout (registered before bw)
+Stdout.Write("first\n")
+bw.Write("payload")!
+# Program exits, auto-flush flushes Stdout, then flushes bw which refills Stdout,
+# and iterative drain loop flushes Stdout again.
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("eval failed: %v", err)
+	}
+
+	expected := "first\nlogged:payload\n"
+	if stdout.String() != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout.String())
+	}
+}
