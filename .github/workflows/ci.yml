@@ -91,5 +91,6 @@ jobs:
           gh release create "$TAG" \
             dist/les-windows-amd64-v${VERSION}.zip \
             dist/les-source-v${VERSION}.tar.gz \
+            --target master \
             --title "Les v${VERSION}" \
             --generate-notes
