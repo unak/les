@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -103,5 +104,18 @@ func TestCLIInlineOneLiner(t *testing.T) {
 
 	if strings.TrimSpace(out.String()) != "30" {
 		t.Fatalf("expected output '30', got %q", out.String())
+	}
+}
+
+func TestVersionAndPlatform(t *testing.T) {
+	v := getVersion()
+	if !strings.HasPrefix(v, "0.1.") {
+		t.Fatalf("expected version starting with '0.1.', got %q", v)
+	}
+
+	p := getPlatform()
+	expectedPlat := runtime.GOOS + "/" + runtime.GOARCH
+	if p != expectedPlat {
+		t.Fatalf("expected platform %q, got %q", expectedPlat, p)
 	}
 }

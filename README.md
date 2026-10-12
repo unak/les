@@ -37,12 +37,16 @@ les -c -e "x = 10; y = 20"
 les -t script.les
 les -t -e "x: Int = 10"
 
+# Display version and exit (-v)
+les -v
+
 # Pass arguments to the script
 les script.les arg1 arg2
 les -e "print Args[0]" foo bar
 ```
 
 ### Options:
+- `-v`: Display version and platform information, then exit.
 - `-c`: Check syntax only without type checking or execution.
 - `-t`: Check syntax and static types (including resolving and verifying imported modules) without execution.
 - `-e <code>`: Evaluate the inline script string directly.
