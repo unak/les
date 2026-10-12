@@ -69,6 +69,12 @@ func TestExamples(t *testing.T) {
 			if _, err := ev.EvalProgram(progExec); err != nil {
 				t.Fatalf("runtime error in %s: %v", fileName, err)
 			}
+
+			if fileName == "quine.les" {
+				if out.String() != string(content) {
+					t.Fatalf("quine output mismatch:\nExpected (%d bytes):\n%s\nGot (%d bytes):\n%s", len(content), string(content), len(out.String()), out.String())
+				}
+			}
 		})
 	}
 
