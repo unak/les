@@ -1727,3 +1727,72 @@ print 65 is BadChrRet
 		t.Fatalf("expected %q, got %q", expectedOut, strings.TrimSpace(out))
 	}
 }
+
+func TestPipelineOperator(t *testing.T) {
+	code := `
+def inc(x: Int): Int:
+    x + 1
+
+def double(x: Int): Int:
+    x * 2
+
+def add(x: Int, y: Int): Int:
+    x + y
+
+a = 5 |> inc |> double
+b = 10 |> add(20)
+c = 3 |> (|x|: x * 3) |> inc
+
+print a
+print " "
+print b
+print " "
+print c
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error for pipeline operator: %v", err)
+	}
+	expected := "12 30 10"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected %q, got %q", expected, strings.TrimSpace(out))
+	}
+
+	// Verify parenthesis-omitted print consumes pipeline greedily: print 5 |> inc prints 6
+	codePrint := `
+def inc(x: Int): Int:
+    x + 1
+
+print 5 |> inc
+`
+	outPrint, err := runLesCode(codePrint)
+	if err != nil {
+		t.Fatalf("unexpected eval error for print with pipeline: %v", err)
+	}
+	if strings.TrimSpace(outPrint) != "6" {
+		t.Fatalf("expected 6, got %q", strings.TrimSpace(outPrint))
+	}
+
+	// Verify arithmetic precedence and call result piping
+	codeArithAndCall := `
+def double(x: Int): Int:
+    x * 2
+
+def square(x: Int): Int:
+    x * x
+
+a = 1 + 2 |> double
+b = double(3) |> square
+
+print a
+print " "
+print b
+`
+	outArith, err := runLesCode(codeArithAndCall)
+	if err != nil {
+		t.Fatalf("unexpected eval error for arithmetic pipeline: %v", err)
+	}
+	if strings.TrimSpace(outArith) != "6 36" {
+		t.Fatalf("expected '6 36', got %q", strings.TrimSpace(outArith))
+	}
+}

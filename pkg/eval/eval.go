@@ -214,7 +214,6 @@ func (ev *Evaluator) registerBuiltins() {
 	})
 }
 
-
 func (ev *Evaluator) SetArgs(args []string) {
 	elems := make([]Value, len(args))
 	for i, a := range args {
@@ -1422,5 +1421,3 @@ func structImplementsInterfaceValue(si *StructInstance, iface *InterfaceDefValue
 	}
 	return valueImplementsInterfaceValue(si, iface, env)
 }
-
-

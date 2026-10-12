@@ -116,9 +116,9 @@ func TestLexerLineContinuationError(t *testing.T) {
 	// '\' not followed by newline is an error
 	input := "x = 10 \\ 20"
 	l := NewLexer(input)
-	_ = l.NextToken() // x
-	_ = l.NextToken() // =
-	_ = l.NextToken() // 10
+	_ = l.NextToken()    // x
+	_ = l.NextToken()    // =
+	_ = l.NextToken()    // 10
 	tok := l.NextToken() // should be error
 	if tok.Type != TokenError {
 		t.Fatalf("expected TokenError for invalid line continuation, got %v (%s)", tok.Type, tok.Literal)

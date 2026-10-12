@@ -11,7 +11,8 @@ import (
 
 // Precedence levels for operator precedence parsing.
 const (
-	PREC_LOWEST = iota
+	PREC_LOWEST       = iota
+	PREC_PIPE         // |>
 	PREC_CALL_NOPAREN // lowest binary expr: f a + b binds as f(a + b)
 	PREC_TERNARY      // ? :
 	PREC_LOGICAL_OR   // ||
@@ -830,7 +831,6 @@ func (p *Parser) parseBreakStmt() *ast.BreakStmt {
 	return &ast.BreakStmt{Value: val}
 }
 
-
 func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	p.atStatementStart = true
 	expr := p.parseExpr(PREC_LOWEST)
@@ -1150,6 +1150,8 @@ func (p *Parser) parseDict() ast.Expr {
 
 func (p *Parser) peekPrecedence() int {
 	switch p.peekToken.Type {
+	case lexer.TokenPipeGreater:
+		return PREC_PIPE
 	case lexer.TokenQuestion:
 		return PREC_TERNARY
 	case lexer.TokenOr:
@@ -1181,6 +1183,8 @@ func (p *Parser) peekPrecedence() int {
 
 func (p *Parser) curPrecedence() int {
 	switch p.curToken.Type {
+	case lexer.TokenPipeGreater:
+		return PREC_PIPE
 	case lexer.TokenQuestion:
 		return PREC_TERNARY
 	case lexer.TokenOr:
@@ -1304,6 +1308,25 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		return &ast.IndexExpr{
 			Target: left,
 			Index:  idx,
+		}
+	case lexer.TokenPipeGreater:
+		// left |> right => right(left)
+		prec := p.curPrecedence()
+		p.nextToken()
+		right := p.parseExpr(prec)
+		if call, isCall := right.(*ast.CallExpr); isCall {
+			newArgs := make([]ast.Expr, 0, len(call.Args)+1)
+			newArgs = append(newArgs, left)
+			newArgs = append(newArgs, call.Args...)
+			return &ast.CallExpr{
+				Callee: call.Callee,
+				Args:   newArgs,
+				Block:  call.Block,
+			}
+		}
+		return &ast.CallExpr{
+			Callee: right,
+			Args:   []ast.Expr{left},
 		}
 	case lexer.TokenNot:
 		// expr! (postfix force)

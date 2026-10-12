@@ -12,9 +12,9 @@ import (
 
 // FileModuleLoader loads and executes other .les files as modules.
 type FileModuleLoader struct {
-	baseDir  string
-	cache    map[string]*ModuleValue
-	loading  map[string]bool // circular import detection
+	baseDir string
+	cache   map[string]*ModuleValue
+	loading map[string]bool // circular import detection
 }
 
 func NewFileModuleLoader(baseDir string) *FileModuleLoader {
