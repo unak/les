@@ -1124,7 +1124,7 @@ func evalBinary(op string, left, right Value) (Value, error) {
 }
 
 func lookupBuiltinMember(val Value, member string) (Value, error) {
-	if member == "ToString" || member == "to_string" {
+	if member == "ToString" {
 		return &BuiltinFunc{
 			Name: "ToString",
 			Fn: func(args []Value) (Value, error) {
@@ -1263,7 +1263,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 			}
 		case *BuiltinFunc:
 			// For ToString, 0 params
-			if mName == "ToString" || mName == "to_string" {
+			if mName == "ToString" {
 				if len(sig.Params) != 0 {
 					return false
 				}

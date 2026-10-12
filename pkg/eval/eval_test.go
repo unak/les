@@ -1186,10 +1186,10 @@ d = Dog(Animal(species: "Canine"), bark: "Woof")
 func TestEvalInterface(t *testing.T) {
 	code := `
 interface Stringer:
-    to_string(): String
+    ToString(): String
 
 interface Greeter:
-    greet(): String
+    Greet(): String
 
 interface PersonProtocol:
     Stringer
@@ -1198,16 +1198,16 @@ interface PersonProtocol:
 struct Person:
     name: String
 
-    def to_string():
+    def ToString():
         name
 
-    def greet():
+    def Greet():
         "hello, " + name
 
 struct Anonymous:
     id: Int
 
-    def to_string():
+    def ToString():
         "anon"
 
 p = Person(name: "Bob")

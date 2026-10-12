@@ -85,7 +85,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 - Ad-hoc polymorphism: Built-in functions like `print` accept any type implementing the `Show` / stringifiable interface:
   ```python
   interface Show:
-      to_string(): String
+      ToString(): String
   ```
 - All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
 - Future user-defined structs will automatically satisfy any matching interface structurally.
@@ -490,7 +490,7 @@ struct Point:
     x: Int = 0
     y: Int = 0
 
-    def dist_sq():
+    def DistSq():
         x * x + y * y
 
     def Add(self, other: Point):
@@ -507,7 +507,7 @@ struct Point:
   ```
 
 #### Dot Access
-- Member access: `p.x`, `p.dist_sq()`
+- Member access: `p.x`, `p.DistSq()`
 - Struct fields are lazily evaluated thunks.
 
 #### Go-style Struct Embedding & Promotion
@@ -517,14 +517,14 @@ struct Point:
 
 ```python
 struct Reader:
-    def read(): "read data"
+    def Read(): "read data"
 
 struct ReadCloser:
     Reader
-    def close(): "closed"
+    def Close(): "closed"
 
 rc = ReadCloser()
-print rc.read()         # "read data" (promoted method)
+print rc.Read()         # "read data" (promoted method)
 print rc is Reader      # True
 ```
 
@@ -543,10 +543,10 @@ Les provides Go-style implicit structural typing (duck typing) via interface dec
 
 ```python
 interface Reader:
-    read(n: Int): String
+    Read(n: Int): String
 
 interface Closer:
-    close(): ()
+    Close(): ()
 
 interface ReadCloser:
     Reader
@@ -561,10 +561,10 @@ interface ReadCloser:
 struct File:
     path: String
 
-    def read(n: Int):
+    def Read(n: Int):
         "read bytes"
 
-    def close():
+    def Close():
         ()
 
 # Statically assignable to ReadCloser
@@ -692,7 +692,7 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
             print "Unknown"
     ```
 - **Methods & Type System**:
-  - Native regex matching operations (`s =~ /re/` or `s is /re/`, `re.find(s)`, `re.replace(s, rep)`).
+  - Native regex matching operations (`s =~ /re/` or `s is /re/`, `re.Find(s)`, `re.Replace(s, rep)`).
   - Implicitly satisfies the `Show` interface for printing.
 
 ### 2. Arbitrary-Precision Integers (Multi-precision `Int`)

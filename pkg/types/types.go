@@ -339,7 +339,7 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 
 // LookupBuiltinTypeMethod returns the method signature if type t has a built-in method named mName.
 func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
-	if mName == "ToString" || mName == "to_string" {
+	if mName == "ToString" {
 		switch t.(type) {
 		case PrimType, *TupleType, *DictType, *FuncType, *TypeVar, *UnionType:
 			return &FuncType{

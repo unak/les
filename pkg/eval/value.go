@@ -158,13 +158,6 @@ func (si *StructInstance) String() string {
 			}
 		}
 	}
-	if m, err := si.LookupMember("to_string"); err == nil {
-		if fn, isClosure := Force(m).(*Closure); isClosure {
-			if res, err := fn.Env.invokeClosure(fn, nil); err == nil {
-				return Force(res).String()
-			}
-		}
-	}
 
 	var sb strings.Builder
 	sb.WriteString(si.Def.Name)
