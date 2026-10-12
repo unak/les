@@ -1513,3 +1513,94 @@ print check(true), " ", check(false), " ", check(nil), " ", check(42)
 	}
 }
 
+func TestForceBuiltinAndPostfixOperator(t *testing.T) {
+	// 1. Basic calculation with force() and postfix !
+	code1 := `
+a = (10 + 20)!
+b = force(30 + 40)
+print a, " ", b
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected1 := "30 70"
+	if strings.TrimSpace(out1) != expected1 {
+		t.Fatalf("expected %q, got %q", expected1, out1)
+	}
+
+	// 2. Unused argument without force does NOT trigger division by zero
+	codeLazy := `
+def pick(a, b):
+    a
+
+print pick(42, 1 / 0)
+`
+	outLazy, err := runLesCode(codeLazy)
+	if err != nil {
+		t.Fatalf("lazy argument unexpectedly failed: %v", err)
+	}
+	if strings.TrimSpace(outLazy) != "42" {
+		t.Fatalf("expected 42, got %q", outLazy)
+	}
+
+	// 3. Unused argument WITH postfix ! triggers division by zero immediately
+	codeForcePostfix := `
+def pick(a, b):
+    a
+
+print pick(42, (1 / 0)!)
+`
+	_, err = runLesCode(codeForcePostfix)
+	if err == nil {
+		t.Fatalf("expected division by zero error for postfix !, got nil")
+	}
+	if !strings.Contains(err.Error(), "division by zero") {
+		t.Fatalf("expected division by zero, got: %v", err)
+	}
+
+	// 5. Tuple with postfix ! evaluates elements at construction
+	codeTupleLazy := `
+t = (42, 1 / 0)
+print t[0]
+`
+	outTupleLazy, err := runLesCode(codeTupleLazy)
+	if err != nil {
+		t.Fatalf("lazy tuple unexpectedly failed: %v", err)
+	}
+	if strings.TrimSpace(outTupleLazy) != "42" {
+		t.Fatalf("expected 42, got %q", outTupleLazy)
+	}
+
+	codeTupleForce := `
+t = (42, (1 / 0)!)
+print t[0]
+`
+	_, err = runLesCode(codeTupleForce)
+	if err == nil {
+		t.Fatalf("expected division by zero error for tuple force, got nil")
+	}
+
+	// 6. Dict with postfix ! evaluates values at construction
+	codeDictLazy := `
+d = {"a": 42, "b": 1 / 0}
+print d["a"]
+`
+	outDictLazy, err := runLesCode(codeDictLazy)
+	if err != nil {
+		t.Fatalf("lazy dict unexpectedly failed: %v", err)
+	}
+	if strings.TrimSpace(outDictLazy) != "42" {
+		t.Fatalf("expected 42, got %q", outDictLazy)
+	}
+
+	codeDictForce := `
+d = {"a": 42, "b": force(1 / 0)}
+print d["a"]
+`
+	_, err = runLesCode(codeDictForce)
+	if err == nil {
+		t.Fatalf("expected division by zero error for dict force, got nil")
+	}
+}
+

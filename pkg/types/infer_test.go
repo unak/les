@@ -609,9 +609,18 @@ print NoShow(x: 1)
 	}
 }
 
-
-
-
+func TestForceExprTypeInference(t *testing.T) {
+	code := `
+a: Int = (10 + 20)!
+b: Any = force(30)
+c: String = ("hello")!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error in force expression inference: %v", err)
+	}
+}
 
 
 

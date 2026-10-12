@@ -110,6 +110,11 @@ func NewInferencer() *Inferencer {
 		Arg: TypeAny,
 		Ret: TypeNil,
 	})
+	// Built-in force: (Any) -> Any
+	_ = rootScope.Declare("force", &FuncType{
+		Arg: TypeAny,
+		Ret: TypeAny,
+	})
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -564,6 +569,8 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		return TypeBool, nil
 	case *ast.NilLit:
 		return TypeNil, nil
+	case *ast.ForceExpr:
+		return inf.inferExpr(e.Expr)
 	case *ast.Identifier:
 		if t, ok := inf.scope.Lookup(e.Name); ok {
 			return t, nil

@@ -166,6 +166,14 @@ type UnaryExpr struct {
 func (u *UnaryExpr) node() {}
 func (u *UnaryExpr) expr() {}
 
+// ForceExpr represents strict evaluation postfix operator: expr!
+type ForceExpr struct {
+	Expr Expr
+}
+
+func (f *ForceExpr) node() {}
+func (f *ForceExpr) expr() {}
+
 // TernaryExpr represents C-style ternary expression: cond ? then : else.
 type TernaryExpr struct {
 	Cond Expr

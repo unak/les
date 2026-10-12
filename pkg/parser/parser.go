@@ -25,6 +25,7 @@ const (
 	PREC_CALL         // f()
 	PREC_INDEX        // []
 	PREC_DOT          // .
+	PREC_POSTFIX      // ! (postfix force)
 )
 
 type Parser struct {
@@ -1171,6 +1172,8 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_INDEX
 	case lexer.TokenDot:
 		return PREC_DOT
+	case lexer.TokenNot:
+		return PREC_POSTFIX
 	default:
 		return PREC_LOWEST
 	}
@@ -1200,6 +1203,8 @@ func (p *Parser) curPrecedence() int {
 		return PREC_INDEX
 	case lexer.TokenDot:
 		return PREC_DOT
+	case lexer.TokenNot:
+		return PREC_POSTFIX
 	default:
 		return PREC_LOWEST
 	}
@@ -1299,6 +1304,11 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		return &ast.IndexExpr{
 			Target: left,
 			Index:  idx,
+		}
+	case lexer.TokenNot:
+		// expr! (postfix force)
+		return &ast.ForceExpr{
+			Expr: left,
 		}
 	default:
 		return left
