@@ -62,7 +62,7 @@ les -e "print Args[0]" foo bar
 | `Bool` | `true`, `false` | Boolean value. |
 | `Nil` | `nil` | Represents the absence of a value (singleton literal `nil`). Frequently used in union types (e.g., `String | Nil`). |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
-| `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. |
+| `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. Keys are strictly typed (e.g. `1` and `"1"` are distinct keys without coercion). |
 
 Type annotations are optional (full HM-style type inference):
 ```python
@@ -293,7 +293,7 @@ Listed from highest to lowest precedence:
 #### Indexing Details (`[]`)
 - `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
 - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
-- `Dict`: `d[key]` accesses value by key (`d["a"]`). Non-existent key raises a runtime error.
+- `Dict`: `d[key]` accesses value by key (`d["a"]`). Keys are strictly typed (e.g. `1` and `"1"` do not conflict). Non-existent key raises a runtime error.
 
 ### 6. Side Effects & I/O Semantics
 - **Output is a Demand Boundary (Strict Evaluation)**:
@@ -301,7 +301,7 @@ Listed from highest to lowest precedence:
   - Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
   - Ensures prompt output (e.g. `print "Name: "`) displays before subsequent reads.
 - **Explicit Demand Points (`expr!` / `force(expr)`)**:
-  - By default, function arguments, variable initializations, tuple elements, and dict values are wrapped in lazy `Thunk`s.
+  - By default, function arguments, variable initializations, tuple elements, and dict values are wrapped in lazy `Thunk`s (while constant literals are evaluated immediately to concrete values in WHNF).
   - Suffixing an expression with `!` (e.g. `expr!`) acts as an unconditional syntax-level strict evaluation demand point. Calling the unshadowed built-in `force(expr)` has the same effect.
   - When passed as a function argument (`f(expr!)`), bound to a variable (`x = expr!`), or stored in a container (`(expr!,)` or `{"k": expr!}`), the expression is strictly evaluated (forced) immediately at that site instead of creating a deferred lazy `Thunk`.
   - *Note*: If the identifier `force` is shadowed in local scope (e.g. by a parameter), `expr!` continues to strictly force evaluation at the syntax level, while `force(expr)` resolves to the shadowed local binding without creating an automatic eager demand point.
@@ -351,16 +351,19 @@ Listed from highest to lowest precedence:
       print "dict with String keys and Int values"
   ```
   > [!NOTE]
-  > When checking dictionary types with `expr is {K: V}`, all keys and **already-evaluated values** are verified. To preserve lazy evaluation semantics and prevent unintended side effects or evaluating unneeded infinite/error computations, unevaluated values (lazy thunks) are not forced during the `is` test.
-  >
-  > Consequently, the outcome of `is` depends on the current evaluation state of the dictionary's values:
-  > ```python
-  > d = {"a": "hello"}
-  > print (d is {String: Int})  # true (value is unevaluated thunk and skipped)
-  > _ = d["a"]!                 # forces evaluation of the value ("hello")
-  > print (d is {String: Int})  # false (now evaluated as String, mismatching Int)
-  > ```
-  > **Notice**: This runtime behavior is provisional and may change in future versions of Les (for instance, with static dictionary typing constraints or alternative deep validation semantics).
+  > **Dictionary type validation and laziness**:
+  > When checking dictionary types with `expr is {K: V}`, keys and values are verified while strictly preserving lazy evaluation semantics:
+  > - **Constant literals** (e.g. `{"a": "hello"}`) are evaluated immediately at creation (WHNF), so type mismatches are caught right away (`d is {String: Int}` evaluates to `false`).
+  > - **Lazy expressions** (e.g. `{"a": "he" + "llo"}`) carry their statically inferred types (`InferredType`). If the inferred type is incompatible with `V`, `is` returns `false` **without forcing the value**.
+  > - **Exceptions & deferred computations** (e.g. `{"a": 1 / 0}`) with matching inferred types are **not forced**, safely evaluating to `true` without triggering runtime exceptions.
+  > - **Dynamically typed values** (such as returns from unannotated functions inferred as `Any`) preserve laziness and are skipped until demanded:
+  >   ```python
+  >   def get_val(x): x               # inferred return type: Any
+  >   d = {"a": get_val("hello")}
+  >   print (d is {String: Int})       # true (skipped because static type is Any)
+  >   _ = d["a"]!                      # forces evaluation of the value ("hello")
+  >   print (d is {String: Int})       # false (now evaluated as String, mismatching Int)
+  >   ```
 
 - **Pattern Match Expression `match ... case`**:
   Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, and default `_`:
