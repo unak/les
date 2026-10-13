@@ -3,6 +3,7 @@ package types
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"les/pkg/lexer"
@@ -1119,6 +1120,159 @@ d: {String: Int} = {"a": get_val(42)}
 	}
 	if !IsAssignableTo(intDict, anyValDict) {
 		t.Fatalf("expected {String: Int} to be assignable to {String: Any}")
+	}
+}
+
+func TestUnknownTypeAnnotationError(t *testing.T) {
+	tests := []struct {
+		name        string
+		code        string
+		expectedErr string
+	}{
+		{
+			name:        "variable declaration unknown primitive typo",
+			code:        `x: Strng = 1`,
+			expectedErr: "unknown type 'Strng'",
+		},
+		{
+			name:        "dict value type typo",
+			code:        `d: {String: Intt} = {}`,
+			expectedErr: "unknown type 'Intt'",
+		},
+		{
+			name:        "dict key type typo",
+			code:        `d: {Strng: Int} = {}`,
+			expectedErr: "unknown type 'Strng'",
+		},
+		{
+			name:        "function param type typo",
+			code:        `def add(a: Integer, b: Int): Int: a + b`,
+			expectedErr: "unknown type 'Integer'",
+		},
+		{
+			name:        "function return type typo",
+			code:        `def add(a: Int, b: Int): Integ: a + b`,
+			expectedErr: "unknown type 'Integ'",
+		},
+		{
+			name: "struct field type typo",
+			code: `struct Point:
+    x: Int
+    y: Floatt
+`,
+			expectedErr: "unknown type 'Floatt'",
+		},
+		{
+			name: "struct method param type typo",
+			code: `struct Foo:
+    def bar(self, a: BadType): Int: 1
+`,
+			expectedErr: "unknown type 'BadType'",
+		},
+		{
+			name: "struct method return type typo",
+			code: `struct Foo:
+    def bar(self, a: Int): BadRet: 1
+`,
+			expectedErr: "unknown type 'BadRet'",
+		},
+		{
+			name: "interface method param type typo",
+			code: `interface Greeter:
+    Greet(name: Stringg): String
+`,
+			expectedErr: "unknown type 'Stringg'",
+		},
+		{
+			name: "interface method return type typo",
+			code: `interface Greeter:
+    Greet(name: String): Strng
+`,
+			expectedErr: "unknown type 'Strng'",
+		},
+		{
+			name:        "is expression unknown type",
+			code:        `b = 1 is Unk`,
+			expectedErr: "unknown type 'Unk'",
+		},
+		{
+			name:        "lambda parameter type typo",
+			code:        `f = |a: BadType|: a`,
+			expectedErr: "unknown type 'BadType'",
+		},
+		{
+			name:        "tuple element type typo",
+			code:        `t: (Int, BadType) = (1, 2)`,
+			expectedErr: "unknown type 'BadType'",
+		},
+		{
+			name:        "union member type typo",
+			code:        `u: Int | BadType = 1`,
+			expectedErr: "unknown type 'BadType'",
+		},
+		{
+			name:        "function type in annotation typo",
+			code:        `f: (BadType) -> Int = |x|: 1`,
+			expectedErr: "unknown type 'BadType'",
+		},
+		{
+			name:        "module type unknown",
+			code:        `x: @unknownmod.Type = 1`,
+			expectedErr: "unknown type '@unknownmod.Type'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog := parser.NewParser(lexer.NewLexer(tt.code)).ParseProgram()
+			inf := NewInferencer()
+			err := inf.InferProgram(prog)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tt.expectedErr)
+			}
+			if !strings.Contains(err.Error(), tt.expectedErr) {
+				t.Fatalf("expected error containing %q, got %q", tt.expectedErr, err.Error())
+			}
+		})
+	}
+}
+
+func TestValidTypeAnnotations(t *testing.T) {
+	validCodes := []string{
+		`x: Int = 1`,
+		`x: Float = 1.0`,
+		`x: String = "abc"`,
+		`x: Bytes = Bytes("abc")`,
+		`x: Bool = true`,
+		`x: Nil = nil`,
+		`x: Any = 123`,
+		`x: Tuple = (1, 2, 3)`,
+		`x: Dict = {"a": 1}`,
+		`x: {String: Int} = {"a": 1}`,
+		`x: (Int, String) = (1, "a")`,
+		`x: (Int, ...) = (1, 2, 3)`,
+		`x: Int | String = 1`,
+		`x: (Int) -> String = |a: Int|: "ok"`,
+		`
+struct Node:
+    val: Int
+    next: Node | Nil
+
+def make_node(): Node:
+    Node(val: 1, next: nil)
+`,
+		`
+interface Cloneable:
+    Clone(): Cloneable
+`,
+	}
+
+	for i, code := range validCodes {
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("case %d: unexpected error for valid code: %v\ncode:\n%s", i, err, code)
+		}
 	}
 }
 
