@@ -711,6 +711,38 @@ print "\n"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
+
+	// Non-forcing tuple type tests:
+	codeNonForcing := `
+def get_any(x):
+    x
+
+t1 = (1, 1 / 0)
+print type(t1)
+print "\n"
+t2 = (get_any(42),)
+print type(t2)
+print "\n"
+_ = t2[0]!
+print type(t2)
+`
+	var out2 strings.Builder
+	ev2 := NewEvaluator()
+	ev2.SetOutput(&out2)
+	l2 := lexer.NewLexer(codeNonForcing)
+	p2 := parser.NewParser(l2)
+	prog2 := p2.ParseProgram()
+	if len(p2.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p2.Errors())
+	}
+	_, err = ev2.EvalProgram(prog2)
+	if err != nil {
+		t.Fatalf("eval non-forcing tuple type failed: %v", err)
+	}
+	expected2 := "(Int, Int)\n(Any)\n(Int)"
+	if strings.TrimSpace(out2.String()) != expected2 {
+		t.Fatalf("expected %q, got %q", expected2, out2.String())
+	}
 }
 
 func TestPutsFunction(t *testing.T) {

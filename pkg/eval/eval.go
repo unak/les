@@ -378,6 +378,21 @@ func typeNameOf(val Value) string {
 	return typeNameWithDepth(val, 0)
 }
 
+func valueOrThunkTypeNameWithDepth(val Value, depth int) string {
+	if evaluated, ok := PeekEvaluated(val); ok {
+		return typeNameWithDepth(evaluated, depth)
+	}
+	if thunk, ok := val.(*Thunk); ok {
+		if thunk.InferredType != nil {
+			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeAny {
+				return t.String()
+			}
+		}
+		return "Any"
+	}
+	return typeNameWithDepth(Force(val), depth)
+}
+
 func typeNameWithDepth(val Value, depth int) string {
 	if depth > 10 {
 		return "..."
@@ -398,7 +413,7 @@ func typeNameWithDepth(val Value, depth int) string {
 	case *TupleValue:
 		parts := make([]string, len(v.Elements))
 		for i, el := range v.Elements {
-			parts[i] = typeNameWithDepth(Force(el), depth+1)
+			parts[i] = valueOrThunkTypeNameWithDepth(el, depth+1)
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *DictValue:
@@ -1132,13 +1147,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.CallExpr:
 		calleeVal := Force(NewThunk(e.Callee, env))
 
-		// Prepare argument thunks (pass-by-need) unless force-demanded
+		// Prepare argument thunks (pass-by-need) unless force-demanded or constant literal
 		argValues := make([]Value, len(e.Args))
 		for i, a := range e.Args {
 			if env.isForceDemand(a) {
-				argValues[i] = Force(NewThunk(a, env))
+				argValues[i] = Force(env.newThunk(a))
+			} else if val, ok := evalLiteral(a); ok {
+				argValues[i] = val
 			} else {
-				argValues[i] = NewThunk(a, env)
+				argValues[i] = env.newThunk(a)
 			}
 		}
 
