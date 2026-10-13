@@ -782,6 +782,30 @@ print type(d_any)
 	if strings.TrimSpace(out3.String()) != expected3 {
 		t.Fatalf("expected %q, got %q", expected3, out3.String())
 	}
+
+	// Direct argument nested dict and tuple type inference:
+	codeDirectNested := `
+print type({"outer": {"inner": 1}})
+print "\n"
+print type(((1 / 0), (2 > 1) ? 1 : "a"))
+`
+	var out4 strings.Builder
+	ev4 := NewEvaluator()
+	ev4.SetOutput(&out4)
+	l4 := lexer.NewLexer(codeDirectNested)
+	p4 := parser.NewParser(l4)
+	prog4 := p4.ParseProgram()
+	if len(p4.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p4.Errors())
+	}
+	_, err = ev4.EvalProgram(prog4)
+	if err != nil {
+		t.Fatalf("eval direct nested failed: %v", err)
+	}
+	expected4 := "{String: {String: Int}}\n(Int, Int | String)"
+	if strings.TrimSpace(out4.String()) != expected4 {
+		t.Fatalf("expected %q, got %q", expected4, out4.String())
+	}
 }
 
 func TestPutsFunction(t *testing.T) {
