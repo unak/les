@@ -378,6 +378,21 @@ func typeNameOf(val Value) string {
 	return typeNameWithDepth(val, 0)
 }
 
+func valueOrThunkTypeNameWithDepth(val Value, depth int) string {
+	if evaluated, ok := PeekEvaluated(val); ok {
+		return typeNameWithDepth(evaluated, depth)
+	}
+	if thunk, ok := val.(*Thunk); ok {
+		if thunk.InferredType != nil {
+			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeAny {
+				return t.String()
+			}
+		}
+		return "Any"
+	}
+	return typeNameWithDepth(Force(val), depth)
+}
+
 func typeNameWithDepth(val Value, depth int) string {
 	if depth > 10 {
 		return "..."
@@ -398,7 +413,7 @@ func typeNameWithDepth(val Value, depth int) string {
 	case *TupleValue:
 		parts := make([]string, len(v.Elements))
 		for i, el := range v.Elements {
-			parts[i] = typeNameWithDepth(Force(el), depth+1)
+			parts[i] = valueOrThunkTypeNameWithDepth(el, depth+1)
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *DictValue:
