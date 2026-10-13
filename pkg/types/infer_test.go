@@ -907,3 +907,47 @@ bad: String | Nil = readStream(Stdout)
 	}
 }
 
+func TestBytesTypeInference(t *testing.T) {
+	inf := NewInferencer()
+	testCode := `
+b1: Bytes = "hello".Bytes()
+b2: Bytes = Bytes("world")
+b3: Bytes = Bytes()
+b_cat: Bytes = b1 + b2
+first_byte: Int = b1[0]
+text: String = b1.String()
+valid: Bool = b1.IsValidString()
+hex_str: String = b1.ToString()
+hex_alias: String = b1.ToHex()
+is_eq: Bool = b1 == b2
+is_lt: Bool = b1 < b2
+length: Int = len(b1)
+`
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error in TestBytesTypeInference: %v", err)
+	}
+
+	// Negative test: indexing Bytes must return Int, not String
+	testMismatchCode := `
+b: Bytes = "hello".Bytes()
+wrong: String = b[0]
+`
+	inf2 := NewInferencer()
+	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
+	if err := inf2.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type error assigning Bytes index (Int) to String, got nil")
+	}
+
+	// Negative test: Bytes constructor with non-string argument
+	testInvalidCtorCode := `
+b = Bytes(123)
+`
+	inf3 := NewInferencer()
+	progInvalidCtor := parser.NewParser(lexer.NewLexer(testInvalidCtorCode)).ParseProgram()
+	if err := inf3.InferProgram(progInvalidCtor); err == nil {
+		t.Fatalf("expected type error passing Int to Bytes constructor, got nil")
+	}
+}
+
+

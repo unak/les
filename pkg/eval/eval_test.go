@@ -2948,4 +2948,135 @@ if c != nil:
 	}
 }
 
+func TestBytesBasicOperations(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+
+	code := `
+b1 = "hello".Bytes()
+b2 = Bytes("world")
+b_empty = Bytes()
+
+if len(b1) != 5:
+    1 / 0
+if len(b_empty) != 0:
+    1 / 0
+if b1[0] != 104:
+    1 / 0
+if b1[-1] != 111:
+    1 / 0
+if b1.String() != "hello":
+    1 / 0
+if b1.ToString() != "68656c6c6f":
+    1 / 0
+if b1.ToHex() != "68656c6c6f":
+    1 / 0
+if !b1.IsValidString():
+    1 / 0
+if !(b1 is Bytes):
+    1 / 0
+if !(b1 is Show):
+    1 / 0
+if type(b1) != "Bytes":
+    1 / 0
+
+b_cat = b1 + b2
+if b_cat.String() != "helloworld":
+    1 / 0
+if !(b1 < b2):
+    1 / 0
+if !(b1 != b2):
+    1 / 0
+if !(b1 == Bytes("hello")):
+    1 / 0
+
+print b1
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestBytesBasicOperations: %v", err)
+	}
+	if out.String() != "68656c6c6f" {
+		t.Fatalf("expected print b1 to output hex '68656c6c6f', got %q", out.String())
+	}
+}
+
+func TestBytesMultibyteRoundtrip(t *testing.T) {
+	ev := NewEvaluator()
+	code := `
+orig = "こんにちは世界"
+b = orig.Bytes()
+if len(b) != 21:
+    1 / 0
+if b.String() != orig:
+    1 / 0
+if !b.IsValidString():
+    1 / 0
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestBytesMultibyteRoundtrip: %v", err)
+	}
+}
+
+func TestBytesIndexOutOfBounds(t *testing.T) {
+	ev := NewEvaluator()
+	codePositive := `
+b = "abc".Bytes()
+x = b[3]!
+`
+	progPos := parser.NewParser(lexer.NewLexer(codePositive)).ParseProgram()
+	if _, err := ev.EvalProgram(progPos); err == nil {
+		t.Fatalf("expected out of bounds error for positive index, got nil")
+	}
+
+	codeNegative := `
+b = "abc".Bytes()
+x = b[-4]!
+`
+	progNeg := parser.NewParser(lexer.NewLexer(codeNegative)).ParseProgram()
+	if _, err := ev.EvalProgram(progNeg); err == nil {
+		t.Fatalf("expected out of bounds error for negative index, got nil")
+	}
+}
+
+func TestBytesInvalidUtf8(t *testing.T) {
+	ev := NewEvaluator()
+	// Inject invalid UTF-8 bytes: 0xFF, 0xFE, 0xFD
+	ev.builtinsEnv.Set("bad", BytesValue("\xff\xfe\xfd"))
+
+	code := `
+if bad.IsValidString():
+    1 / 0
+if len(bad) != 3:
+    1 / 0
+if bad[0] != 255:
+    1 / 0
+if bad[-1] != 253:
+    1 / 0
+if bad.ToString() != "fffefd":
+    1 / 0
+if bad.ToHex() != "fffefd":
+    1 / 0
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected error validating invalid UTF-8 bytes: %v", err)
+	}
+
+	codeDecode := `
+s = bad.String()!
+`
+	progDecode := parser.NewParser(lexer.NewLexer(codeDecode)).ParseProgram()
+	if _, err := ev.EvalProgram(progDecode); err == nil {
+		t.Fatalf("expected error from bad.String() on invalid UTF-8, got nil")
+	} else if !strings.Contains(err.Error(), "invalid UTF-8") {
+		t.Fatalf("expected error message mentioning invalid UTF-8, got: %v", err)
+	}
+}
+
+
 

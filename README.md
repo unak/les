@@ -465,6 +465,30 @@ Reads a single line from standard input, stripping any trailing newline (`\n` or
   (97).Chr()       # "a"
   ```
 
+- **`String.Bytes(): Bytes`**:
+  Returns the UTF-8 byte sequence of `self` as a `Bytes` value.
+  ```python
+  b = "hello".Bytes()  # Bytes with 5 bytes
+  ```
+
+- **`Bytes` Primitive Type**:
+  Immutable raw byte sequence (`Bytes`), representing binary data.
+  - **Constructor `Bytes(str: String = ""): Bytes`**:
+    `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
+  - **Index Access `b[i]: Int`**:
+    Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
+  - **Length `len(b): Int`**:
+    Returns the number of bytes in `b`.
+  - **`b.String(): String`**:
+    Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
+  - **`b.IsValidString(): Bool`**:
+    Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
+  - **`b.ToString(): String` / `b.ToHex(): String`**:
+    Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+  - **Operators**:
+    - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
+    - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
+
 - **`ToString(): String`**:
   Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
 

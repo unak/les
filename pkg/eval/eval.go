@@ -141,12 +141,14 @@ func (ev *Evaluator) registerBuiltins() {
 			switch v := val.(type) {
 			case StringValue:
 				return IntValue(len([]rune(string(v)))), nil
+			case BytesValue:
+				return IntValue(len(v)), nil
 			case *TupleValue:
 				return IntValue(len(v.Elements)), nil
 			case *DictValue:
 				return IntValue(len(v.Entries)), nil
 			default:
-				return nil, fmt.Errorf("len expects String, Tuple, or Dict, got %v", val)
+				return nil, fmt.Errorf("len expects String, Bytes, Tuple, or Dict, got %v", val)
 			}
 		},
 	})
@@ -187,6 +189,25 @@ func (ev *Evaluator) registerBuiltins() {
 				return nil, fmt.Errorf("force expects 1 argument, got %d", len(args))
 			}
 			return Force(args[0]), nil
+		},
+	})
+
+	// Bytes: creates Bytes from String or empty if 0 args
+	ev.builtinsEnv.Set("Bytes", &BuiltinFunc{
+		Name: "Bytes",
+		Fn: func(args []Value) (Value, error) {
+			if len(args) == 0 {
+				return BytesValue(""), nil
+			}
+			if len(args) == 1 {
+				forced := Force(args[0])
+				sv, ok := forced.(StringValue)
+				if !ok {
+					return nil, fmt.Errorf("Bytes constructor expects String, got %s", typeNameOf(forced))
+				}
+				return BytesValue(string(sv)), nil
+			}
+			return nil, fmt.Errorf("Bytes expects 0 or 1 arguments, got %d", len(args))
 		},
 	})
 
@@ -330,6 +351,8 @@ func typeNameWithDepth(val Value, depth int) string {
 		return "Float"
 	case StringValue:
 		return "String"
+	case BytesValue:
+		return "Bytes"
 	case BoolValue:
 		return "Bool"
 	case NilValue:
@@ -909,6 +932,20 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return nil, fmt.Errorf("string index out of bounds: %d (len %d)", int(i), len(runes))
 			}
 			return StringValue(string(runes[idx])), nil
+		case BytesValue:
+			i, ok := idxVal.(IntValue)
+			if !ok {
+				return nil, fmt.Errorf("bytes index must be Int, got %v", idxVal)
+			}
+			data := []byte(t)
+			idx := int(i)
+			if idx < 0 {
+				idx = len(data) + idx
+			}
+			if idx < 0 || idx >= len(data) {
+				return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", int(i), len(data))
+			}
+			return IntValue(data[idx]), nil
 		case *DictValue:
 			k := idxVal.String()
 			if v, ok := t.Entries[k]; ok {
@@ -916,7 +953,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			}
 			return nil, fmt.Errorf("key not found in dict: %s", k)
 		default:
-			return nil, fmt.Errorf("cannot index non-tuple/non-string/non-dict value: %v", targetVal)
+			return nil, fmt.Errorf("cannot index non-tuple/non-string/non-bytes/non-dict value: %v", targetVal)
 		}
 
 	case *ast.BinaryExpr:
@@ -1270,6 +1307,28 @@ func evalBinary(op string, left, right Value) (Value, error) {
 		}
 	}
 
+	// Bytes concatenation & comparison
+	if lb, ok := left.(BytesValue); ok {
+		if rb, ok := right.(BytesValue); ok {
+			switch op {
+			case "+":
+				return lb + rb, nil
+			case "==":
+				return BoolValue(lb == rb), nil
+			case "!=":
+				return BoolValue(lb != rb), nil
+			case "<":
+				return BoolValue(lb < rb), nil
+			case "<=":
+				return BoolValue(lb <= rb), nil
+			case ">":
+				return BoolValue(lb > rb), nil
+			case ">=":
+				return BoolValue(lb >= rb), nil
+			}
+		}
+	}
+
 	// Boolean operations
 	if lb, ok := left.(BoolValue); ok {
 		if rb, ok := right.(BoolValue); ok {
@@ -1339,6 +1398,62 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			}, nil
 		}
 	}
+	if member == "Bytes" {
+		if sv, ok := val.(StringValue); ok {
+			return &BuiltinFunc{
+				Name: "Bytes",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Bytes() takes 0 arguments, got %d", len(args))
+					}
+					return BytesValue(string(sv)), nil
+				},
+			}, nil
+		}
+	}
+	if member == "String" {
+		if bv, ok := val.(BytesValue); ok {
+			return &BuiltinFunc{
+				Name: "String",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("String() takes 0 arguments, got %d", len(args))
+					}
+					b := []byte(bv)
+					if !utf8.Valid(b) {
+						return nil, fmt.Errorf("invalid UTF-8 byte sequence in Bytes.String()")
+					}
+					return StringValue(string(bv)), nil
+				},
+			}, nil
+		}
+	}
+	if member == "IsValidString" {
+		if bv, ok := val.(BytesValue); ok {
+			return &BuiltinFunc{
+				Name: "IsValidString",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("IsValidString() takes 0 arguments, got %d", len(args))
+					}
+					return BoolValue(utf8.Valid([]byte(bv))), nil
+				},
+			}, nil
+		}
+	}
+	if member == "ToHex" {
+		if bv, ok := val.(BytesValue); ok {
+			return &BuiltinFunc{
+				Name: "ToHex",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("ToHex() takes 0 arguments, got %d", len(args))
+					}
+					return StringValue(bv.String()), nil
+				},
+			}, nil
+		}
+	}
 	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)
 }
 
@@ -1378,6 +1493,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		return ok
 	case "String":
 		_, ok := val.(StringValue)
+		return ok
+	case "Bytes":
+		_, ok := val.(BytesValue)
 		return ok
 	case "Bool":
 		_, ok := val.(BoolValue)

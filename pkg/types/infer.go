@@ -59,6 +59,11 @@ var builtinForceFuncType = &FuncType{
 	Ret: TypeAny,
 }
 
+var builtinBytesFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeBytes,
+}
+
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
@@ -117,6 +122,8 @@ func NewInferencer() *Inferencer {
 	})
 	// Built-in force: (Any) -> Any
 	_ = rootScope.Declare("force", builtinForceFuncType)
+	// Built-in Bytes: (String?) -> Bytes
+	_ = rootScope.Declare("Bytes", builtinBytesFuncType)
 	// Built-in gets: () -> String | Nil
 	_ = rootScope.Declare("gets", &FuncType{
 		Arg: &TupleType{Elems: []Type{}},
@@ -804,7 +811,18 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		switch e.Op {
-		case "+", "-", "*", "/", "%":
+		case "+":
+			if leftT == TypeBytes && rightT == TypeBytes {
+				return TypeBytes, nil
+			}
+			if leftT == TypeString || rightT == TypeString {
+				return TypeString, nil
+			}
+			if leftT == TypeFloat || rightT == TypeFloat {
+				return TypeFloat, nil
+			}
+			return TypeInt, nil
+		case "-", "*", "/", "%":
 			if leftT == TypeFloat || rightT == TypeFloat {
 				return TypeFloat, nil
 			}
@@ -841,6 +859,23 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
 			if t, ok := inf.scope.Lookup("force"); ok && t == builtinForceFuncType {
 				return inf.inferExpr(e.Args[0])
+			}
+		}
+		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "Bytes" {
+			if t, ok := inf.scope.Lookup("Bytes"); ok && t == builtinBytesFuncType {
+				if len(e.Args) > 1 {
+					return nil, fmt.Errorf("Bytes expects 0 or 1 arguments, got %d", len(e.Args))
+				}
+				if len(e.Args) == 1 {
+					argT, err := inf.inferExpr(e.Args[0])
+					if err != nil {
+						return nil, err
+					}
+					if !IsAssignableTo(argT, TypeString) {
+						return nil, fmt.Errorf("Bytes expects String, got %s", argT)
+					}
+				}
+				return TypeBytes, nil
 			}
 		}
 		if st, ok := calleeT.(*StructType); ok {
@@ -919,6 +954,10 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			}
 		} else if dt, ok := targetT.(*DictType); ok {
 			return dt.Value, nil
+		} else if targetT == TypeString {
+			return TypeString, nil
+		} else if targetT == TypeBytes {
+			return TypeInt, nil
 		}
 		return TypeAny, nil
 	case *ast.ModuleAccessExpr:
@@ -1151,6 +1190,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		return TypeFloat
 	case "String":
 		return TypeString
+	case "Bytes":
+		return TypeBytes
 	case "Bool":
 		return TypeBool
 	case "Nil", "nil":
