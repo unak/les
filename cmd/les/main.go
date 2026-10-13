@@ -117,6 +117,7 @@ func main() {
 
 	// 3. Evaluator (call-by-need graph reduction runtime)
 	evaluator := eval.NewEvaluator()
+	evaluator.SetInferencer(inferencer)
 	evaluator.SetProgramName(filename)
 	evaluator.SetScriptName(filename)
 	evaluator.SetArgs(scriptArgs)

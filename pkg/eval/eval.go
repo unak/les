@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"les/pkg/ast"
+	"les/pkg/types"
 )
 
 var callIDCounter uint64
@@ -21,6 +22,7 @@ func nextCallID() uint64 {
 type Evaluator struct {
 	builtinsEnv *Environment
 	globalEnv   *Environment
+	inferencer  *types.Inferencer
 }
 
 func NewEvaluator() *Evaluator {
@@ -30,6 +32,39 @@ func NewEvaluator() *Evaluator {
 	ev.initBufioModule()
 	ev.registerBuiltins()
 	return ev
+}
+
+func (ev *Evaluator) SetInferencer(inf *types.Inferencer) {
+	ev.inferencer = inf
+	if ev.builtinsEnv != nil {
+		ev.builtinsEnv.Inferencer = inf
+	}
+	if ev.globalEnv != nil {
+		ev.globalEnv.Inferencer = inf
+	}
+}
+
+func (ev *Evaluator) SetExprTypes(exprTypes map[ast.Expr]types.Type) {
+	if ev.inferencer == nil {
+		ev.inferencer = types.NewInferencer()
+	}
+	ev.inferencer.ExprTypes = exprTypes
+	if ev.builtinsEnv != nil {
+		ev.builtinsEnv.Inferencer = ev.inferencer
+	}
+	if ev.globalEnv != nil {
+		ev.globalEnv.Inferencer = ev.inferencer
+	}
+}
+
+func (ev *Evaluator) newThunk(expr ast.Expr, env *Environment) *Thunk {
+	thunk := NewThunk(expr, env)
+	if expr != nil && ev != nil && ev.inferencer != nil && ev.inferencer.ExprTypes != nil {
+		if t, ok := ev.inferencer.ExprTypes[expr]; ok {
+			thunk.InferredType = t
+		}
+	}
+	return thunk
 }
 
 func (ev *Evaluator) SetOutput(w io.Writer) {
@@ -380,6 +415,11 @@ func typeNameWithDepth(val Value, depth int) string {
 }
 
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
+	if ev.inferencer == nil {
+		inf := types.NewInferencer()
+		_ = inf.InferProgram(prog)
+		ev.SetInferencer(inf)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			if exitErr, ok := r.(*ExitError); ok {
@@ -448,24 +488,71 @@ func (env *Environment) isForceDemand(expr ast.Expr) bool {
 	return false
 }
 
+func evalLiteral(expr ast.Expr) (Value, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	switch lit := expr.(type) {
+	case *ast.IntLit:
+		return IntValue(lit.Value), true
+	case *ast.FloatLit:
+		return FloatValue(lit.Value), true
+	case *ast.StringLit:
+		return StringValue(lit.Value), true
+	case *ast.BoolLit:
+		return BoolValue(lit.Value), true
+	case *ast.NilLit:
+		return NilValue{}, true
+	case *ast.UnaryExpr:
+		if lit.Op == "-" {
+			if intLit, ok := lit.Expr.(*ast.IntLit); ok {
+				return IntValue(-intLit.Value), true
+			}
+			if floatLit, ok := lit.Expr.(*ast.FloatLit); ok {
+				return FloatValue(-floatLit.Value), true
+			}
+		}
+		return nil, false
+	default:
+		return nil, false
+	}
+}
+
+func (env *Environment) newThunk(expr ast.Expr) *Thunk {
+	thunk := NewThunk(expr, env)
+	if expr != nil && env != nil && env.Inferencer != nil {
+		if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
+			if t, ok := inf.ExprTypes[expr]; ok {
+				thunk.InferredType = t
+			}
+		}
+	}
+	return thunk
+}
+
 func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 	switch s := stmt.(type) {
 	case *ast.VarDecl:
 		if _, ok := env.store[s.Name]; ok {
 			// Re-binding existing variable in current environment:
 			// Force RHS immediately to avoid circular reference in lazy thunk
-			newVal := Force(NewThunk(s.Value, env))
+			newVal := Force(env.newThunk(s.Value))
 			env.store[s.Name] = newVal
+			return nil, nil
+		}
+		// If RHS is a constant literal, evaluate immediately without lazy thunk!
+		if val, ok := evalLiteral(s.Value); ok {
+			env.Set(s.Name, val)
 			return nil, nil
 		}
 		// If RHS is a force demand point, force immediately instead of creating lazy thunk!
 		if env.isForceDemand(s.Value) {
-			val := Force(NewThunk(s.Value, env))
+			val := Force(env.newThunk(s.Value))
 			env.Set(s.Name, val)
 			return nil, nil
 		}
 		// Wrap RHS in lazy Thunk!
-		thunk := NewThunk(s.Value, env)
+		thunk := env.newThunk(s.Value)
 		env.Set(s.Name, thunk)
 		return nil, nil
 
@@ -880,13 +967,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return v, nil
 
 	case *ast.TupleLit:
-		// Lazy tuple elements: wrapped in Thunks unless force-demanded
+		// Lazy tuple elements: wrapped in Thunks unless force-demanded or constant literal
 		elems := make([]Value, len(e.Elements))
 		for i, el := range e.Elements {
 			if env.isForceDemand(el) {
-				elems[i] = Force(NewThunk(el, env))
+				elems[i] = Force(env.newThunk(el))
+			} else if val, ok := evalLiteral(el); ok {
+				elems[i] = val
 			} else {
-				elems[i] = NewThunk(el, env)
+				elems[i] = env.newThunk(el)
 			}
 		}
 		return &TupleValue{Elements: elems}, nil
@@ -895,13 +984,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		entries := make(map[DictKey]Value)
 		keyValues := make(map[DictKey]Value)
 		for _, entry := range e.Entries {
-			kVal := Force(NewThunk(entry.Key, env))
+			kVal := Force(env.newThunk(entry.Key))
 			dk := MakeDictKey(kVal)
 			keyValues[dk] = kVal
 			if env.isForceDemand(entry.Value) {
-				entries[dk] = Force(NewThunk(entry.Value, env))
+				entries[dk] = Force(env.newThunk(entry.Value))
+			} else if val, ok := evalLiteral(entry.Value); ok {
+				entries[dk] = val
 			} else {
-				entries[dk] = NewThunk(entry.Value, env)
+				entries[dk] = env.newThunk(entry.Value)
 			}
 		}
 		return NewDictValue(entries, keyValues), nil
@@ -1466,6 +1557,13 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	if typeAnnot == "" || typeAnnot == "Any" {
 		return true
 	}
+	if thunk, ok := val.(*Thunk); ok {
+		if evaluated, isEval := PeekEvaluated(thunk); isEval {
+			val = evaluated
+		} else {
+			return checkThunkInferredType(thunk, typeAnnot, optEnv...)
+		}
+	}
 	// Check top-level union: A | B (respecting parens, brackets, braces)
 	var unionParts []string
 	pDepth := 0
@@ -1592,9 +1690,56 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				if !checkValueMatchesType(kVal, keyAnnot, optEnv...) {
 					return false
 				}
-				// Do not force unevaluated values: only check already-evaluated values
+				// Check value:
 				if evaluatedVal, ok := PeekEvaluated(v); ok {
 					if !checkValueMatchesType(evaluatedVal, valAnnot, optEnv...) {
+						return false
+					}
+				} else if thunk, ok := v.(*Thunk); ok {
+					if !checkThunkInferredType(thunk, valAnnot, optEnv...) {
+						return false
+					}
+				}
+			}
+			return true
+		}
+		// Check tuple type annotation: (T1, T2, ...) or (T, ...)
+		if strings.HasPrefix(typeAnnot, "(") && strings.HasSuffix(typeAnnot, ")") {
+			tVal, ok := val.(*TupleValue)
+			if !ok {
+				return false
+			}
+			inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
+			if inner == "" {
+				return len(tVal.Elements) == 0
+			}
+			elemAnnots := splitTopLevelCommas(inner)
+			isVariadic := false
+			if len(elemAnnots) > 0 && elemAnnots[len(elemAnnots)-1] == "..." {
+				isVariadic = true
+				elemAnnots = elemAnnots[:len(elemAnnots)-1]
+			}
+			if !isVariadic && len(tVal.Elements) != len(elemAnnots) {
+				return false
+			}
+			lastIdx := len(elemAnnots) - 1
+			for i, el := range tVal.Elements {
+				expectedAnnot := "Any"
+				if lastIdx >= 0 {
+					if i < len(elemAnnots) {
+						expectedAnnot = elemAnnots[i]
+					} else if isVariadic {
+						expectedAnnot = elemAnnots[lastIdx]
+					} else {
+						return false
+					}
+				}
+				if evaluatedVal, ok := PeekEvaluated(el); ok {
+					if !checkValueMatchesType(evaluatedVal, expectedAnnot, optEnv...) {
+						return false
+					}
+				} else if thunk, ok := el.(*Thunk); ok {
+					if !checkThunkInferredType(thunk, expectedAnnot, optEnv...) {
 						return false
 					}
 				}
@@ -1672,6 +1817,78 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 
 		return false
 	}
+}
+
+func checkThunkInferredType(thunk *Thunk, targetAnnot string, optEnv ...*Environment) bool {
+	if thunk == nil || thunk.InferredType == nil {
+		return true // unknown inferred type, preserve laziness
+	}
+	infT, ok := thunk.InferredType.(types.Type)
+	if !ok || infT == nil || infT == types.TypeAny {
+		return true // TypeAny could be anything at runtime, preserve laziness
+	}
+
+	targetAnnot = strings.TrimSpace(targetAnnot)
+	if targetAnnot == "" || targetAnnot == "Any" {
+		return true
+	}
+
+	var targetType types.Type
+	var err error
+	if len(optEnv) > 0 && optEnv[0] != nil && optEnv[0].Inferencer != nil {
+		if inf, ok := optEnv[0].Inferencer.(*types.Inferencer); ok {
+			targetType, err = inf.ParseTypeAnnot(targetAnnot)
+		}
+	}
+	if targetType == nil {
+		targetType, err = types.ParseTypeAnnot(targetAnnot)
+	}
+	if err != nil {
+		return true // target annot could not be parsed statically, preserve laziness
+	}
+
+	// If the statically inferred type is not assignable to targetType,
+	// it can never match at runtime: return false without forcing the thunk!
+	if !types.IsAssignableTo(infT, targetType) {
+		return false
+	}
+	return true
+}
+
+func splitTopLevelCommas(s string) []string {
+	var parts []string
+	pDepth := 0
+	bDepth := 0
+	brDepth := 0
+	start := 0
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '[' {
+			bDepth++
+		} else if r == ']' {
+			bDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			parts = append(parts, strings.TrimSpace(string(runes[start:i])))
+			start = i + 1
+		}
+	}
+	parts = append(parts, strings.TrimSpace(string(runes[start:])))
+	var result []string
+	for _, p := range parts {
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
 }
 
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
