@@ -11,7 +11,7 @@ import (
 func (ev *Evaluator) initIOModule() {
 	ioExports := make(map[string]Value)
 
-	// Reader interface definition: Read(n: Int): String | Nil
+	// Reader interface definition: Read(n: Int): Bytes | Nil
 	readerIface := &InterfaceDefValue{
 		Name:       "Reader",
 		ModuleName: "io",
@@ -19,21 +19,26 @@ func (ev *Evaluator) initIOModule() {
 			"Read": {
 				Name:       "Read",
 				Params:     []ast.FuncParam{{Name: "n", TypeAnnot: "Int"}},
-				ReturnType: "String | Nil",
+				ReturnType: "Bytes | Nil",
 			},
 		},
 	}
 	ioExports["Reader"] = readerIface
 
-	// Writer interface definition: Write(s: String): Int
+	// Writer interface definition: Write(b: Bytes): Int, Flush(): ()
 	writerIface := &InterfaceDefValue{
 		Name:       "Writer",
 		ModuleName: "io",
 		Methods: map[string]ast.MethodSig{
 			"Write": {
 				Name:       "Write",
-				Params:     []ast.FuncParam{{Name: "s", TypeAnnot: "String"}},
+				Params:     []ast.FuncParam{{Name: "b", TypeAnnot: "Bytes"}},
 				ReturnType: "Int",
+			},
+			"Flush": {
+				Name:       "Flush",
+				Params:     []ast.FuncParam{},
+				ReturnType: "()",
 			},
 		},
 	}

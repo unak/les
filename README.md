@@ -735,52 +735,80 @@ if len(Args) > 0:
 
 ### 3. Built-in Methods on Primitive Types
 
-- **`String.Ord(): Int`**:
-  Returns the Unicode code point of the first rune (character) in `self`.
+Built-in types provide predefined instance methods and implementations of the `Show` interface.
+
+#### `String`
+- **`s.Ord(): Int`**:
+  Returns the Unicode code point of the first rune (character) in `s`.
   Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
   ```python
   "A".Ord()        # 65
   "あ".Ord()       # 12354
   "Hello".Ord()    # 72 (first character 'H')
   ```
+- **`s.Bytes(): Bytes`**:
+  Returns the UTF-8 byte sequence of `s` as a `Bytes` value.
+  ```python
+  b = "hello".Bytes()  # Bytes with 5 bytes
+  ```
+- **`s.ToString(): String`**:
+  Returns `s` itself. Satisfies `interface Show`.
 
-- **`Int.Chr(): String`**:
-  Returns a 1-rune string corresponding to the Unicode code point `self`.
+#### `Int`
+- **`n.Chr(): String`**:
+  Returns a 1-rune string corresponding to the Unicode code point `n`.
   Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
   ```python
   65.Chr()         # "A"
   12354.Chr()      # "あ"
   (97).Chr()       # "a"
   ```
+- **`n.ToString(): String`**:
+  Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
 
-- **`String.Bytes(): Bytes`**:
-  Returns the UTF-8 byte sequence of `self` as a `Bytes` value.
-  ```python
-  b = "hello".Bytes()  # Bytes with 5 bytes
-  ```
+#### `Float`
+- **`f.ToString(): String`**:
+  Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
 
-- **`Bytes` Primitive Type**:
-  Immutable raw byte sequence (`Bytes`), representing binary data.
-  - **Constructor `Bytes(val: String | Bytes = ""): Bytes`**:
-    `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes(b)` returns `b` itself. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
-  - **Index Access `b[i]: Int`**:
-    Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
-  - **Length `len(b): Int`**:
-    Returns the number of bytes in `b`.
-  - **`b.Bytes(): Bytes`**:
-    Returns the byte sequence itself (identity conversion).
-  - **`b.String(): String`**:
-    Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
-  - **`b.IsValidString(): Bool`**:
-    Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
-  - **`b.ToString(): String`**:
-    Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
-  - **Operators**:
-    - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
-    - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
+#### `Bool`
+- **`b.ToString(): String`**:
+  Returns `"true"` or `"false"`. Satisfies `interface Show`.
 
-- **`ToString(): String`**:
-  Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
+#### `Nil`
+- **`nil.ToString(): String`**:
+  Returns `"nil"`. Satisfies `interface Show`.
+
+#### `Bytes`
+Immutable raw byte sequence (`Bytes`), representing binary data.
+
+- **Constructor `Bytes(val: String | Bytes = ""): Bytes`**:
+  `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes(b)` returns `b` itself. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
+- **Index Access `b[i]: Int`**:
+  Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
+- **Length `len(b): Int`**:
+  Returns the number of bytes in `b`.
+- **`b.Bytes(): Bytes`**:
+  Returns the byte sequence itself (identity conversion).
+- **`b.String(): String`**:
+  Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
+- **`b.IsValidString(): Bool`**:
+  Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
+- **`b.ToString(): String`**:
+  Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+- **Operators**:
+  - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
+  - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
+
+#### `Tuple`
+- **`t.ToString(): String`**:
+  Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
+
+#### `Dict`
+- **`d.ToString(): String`**:
+  Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
+
+#### Common Interface: `Show`
+All primitive and container types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`) as well as user-defined structs implementing `ToString(): String` implicitly satisfy `interface Show`. Built-in `print` formats all arguments via `ToString()`.
 
 ### 4. Built-in Modules
 
@@ -794,18 +822,23 @@ import io
 
 ##### Core Interfaces
 - **`Reader`**: `Read(n: Int): Bytes | Nil`
-- **`Writer`**: `Write(b: Bytes): Int`
+- **`Writer`**: `Write(b: Bytes): Int`, `Flush(): ()`
 - **`Closer`**: `Close(): ()`
-- **`ReadCloser`**: embeds `Reader`, `Closer`
-- **`WriteCloser`**: embeds `Writer`, `Closer`
+- **`ReadCloser`**: embeds `Reader`, `Closer` (`Read`, `Close`)
+- **`WriteCloser`**: embeds `Writer`, `Closer` (`Write`, `Flush`, `Close`)
 
 ##### Standard Streams
-- **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
-  - `@io.Stdin.Read(n)` reads up to `n` bytes as a `Bytes` sequence.
-- **`@io.Stdout`**: Standard output instance satisfying `Writer`.
-  - `@io.Stdout.Write(b)` writes byte sequence `b` to standard output.
-- **`@io.Stderr`**: Standard error instance satisfying `Writer`.
-  - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
+- **`@io.Stdin`**: Standard input instance satisfying `Reader`, `Closer`, and `ReadCloser`.
+  - `Read(n: Int): Bytes | Nil`: reads up to `n` bytes as a `Bytes` sequence (`n == 0` returns empty `Bytes()`, EOF returns `nil`).
+  - `Close(): ()`: closes standard input.
+- **`@io.Stdout`**: Standard output instance satisfying `Writer`, `Closer`, and `WriteCloser`.
+  - `Write(b: Bytes): Int`: writes byte sequence `b` directly to standard output (automatically flushes any buffered `Stdout` first).
+  - `Flush(): ()`: flushes standard output.
+  - `Close(): ()`: closes standard output (automatically flushes buffered `Stdout` first).
+- **`@io.Stderr`**: Standard error instance satisfying `Writer`, `Closer`, and `WriteCloser`.
+  - `Write(b: Bytes): Int`: writes byte sequence `b` directly to standard error without buffering (automatically flushes any buffered `Stdout` first).
+  - `Flush(): ()`: provides a no-op `Flush(): ()` for `Writer` / `bufio.Writer` interface compatibility.
+  - `Close(): ()`: closes standard error.
 
 #### Buffered I/O Module (`@bufio`)
 
