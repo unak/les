@@ -735,66 +735,99 @@ if len(Args) > 0:
 
 ### 3. Built-in Methods on Primitive Types
 
-Primitive types provide predefined instance methods and implementations of the `Show` interface.
+Primitive types provide predefined instance methods, indexing mechanisms, length support, and operators, as well as implementations of the `Show` interface.
 
 #### `String`
-- **`s.Ord(): Int`**:
-  Returns the Unicode code point of the first rune (character) in `s`.
-  Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
-  ```python
-  "A".Ord()        # 65
-  "あ".Ord()       # 12354
-  "Hello".Ord()    # 72 (first character 'H')
-  ```
-- **`s.Bytes(): Bytes`**:
-  Returns the UTF-8 byte sequence of `s` as a `Bytes` value.
-  ```python
-  b = "hello".Bytes()  # Bytes with 5 bytes
-  ```
-- **`s.ToString(): String`**:
-  Returns `s` itself. Satisfies `interface Show`.
+- **Methods**:
+  - `s.Ord(): Int`: Returns the Unicode code point of the first rune (character) in `s`. Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
+    ```python
+    "A".Ord()        # 65
+    "あ".Ord()       # 12354
+    "Hello".Ord()    # 72 (first character 'H')
+    ```
+  - `s.Bytes(): Bytes`: Returns the UTF-8 byte sequence of `s` as an immutable `Bytes` value.
+    ```python
+    b = "hello".Bytes()  # Bytes with 5 bytes
+    ```
+  - `s.ToString(): String`: Returns `s` itself. Satisfies `interface Show`.
+- **Index Access**:
+  - `s[i]: String`: 0-based Unicode rune (code point) indexing, returning a 1-rune `String`. Supports negative indexing (`s[-1]` is the last rune). Out-of-bounds index raises a runtime error.
+- **Length**:
+  - `len(s): Int`: Returns the number of runes (Unicode code points) in `s`.
+- **Operators**:
+  - `s1 + s2 -> String`: Concatenates two strings.
+  - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison based on Unicode code points.
 
 #### `Int`
-- **`n.Chr(): String`**:
-  Returns a 1-rune string corresponding to the Unicode code point `n`.
-  Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
-  ```python
-  65.Chr()         # "A"
-  12354.Chr()      # "あ"
-  (97).Chr()       # "a"
-  ```
-- **`n.ToString(): String`**:
-  Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
+- **Methods**:
+  - `n.Chr(): String`: Returns a 1-rune string corresponding to the Unicode code point `n`. Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
+    ```python
+    65.Chr()         # "A"
+    12354.Chr()      # "あ"
+    (97).Chr()       # "a"
+    ```
+  - `n.ToString(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
+- **Operators**:
+  - Arithmetic: `+`, `-`, `*`, `/` (integer division; division by zero raises a runtime error), `%` (modulo).
+  - Unary: `-n` (negation), `+n`.
+  - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
 
 #### `Float`
-- **`f.ToString(): String`**:
-  Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
+- **Methods**:
+  - `f.ToString(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
+- **Operators**:
+  - Arithmetic: `+`, `-`, `*`, `/` (IEEE 754 floating-point operations).
+  - Unary: `-f`, `+f`.
+  - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
 
 #### `Bool`
-- **`b.ToString(): String`**:
-  Returns `"true"` or `"false"`. Satisfies `interface Show`.
+- **Methods**:
+  - `b.ToString(): String`: Returns `"true"` or `"false"`. Satisfies `interface Show`.
+- **Operators**:
+  - Logical: `&&` (short-circuit logical AND), `||` (short-circuit logical OR), `!` (logical NOT).
+  - Comparison: `==`, `!=`.
+  - Ternary: `cond ? then_val : else_val`.
 
 #### `Nil`
-- **`nil.ToString(): String`**:
-  Returns `"nil"`. Satisfies `interface Show`.
+- **Methods**:
+  - `nil.ToString(): String`: Returns `"nil"`. Satisfies `interface Show`.
+- **Operators**:
+  - Comparison: `==`, `!=` (commonly used for nullable union types, e.g. `val == nil` or `val is Nil`).
 
 #### `Bytes`
-- **`b.Bytes(): Bytes`**:
-  Returns the byte sequence itself (identity conversion).
-- **`b.String(): String`**:
-  Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
-- **`b.IsValidString(): Bool`**:
-  Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
-- **`b.ToString(): String`**:
-  Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+- **Methods**:
+  - `b.Bytes(): Bytes`: Returns the byte sequence itself (identity conversion).
+  - `b.String(): String`: Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
+  - `b.IsValidString(): Bool`: Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
+  - `b.ToString(): String`: Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+- **Index Access**:
+  - `b[i]: Int`: Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
+- **Length**:
+  - `len(b): Int`: Returns the number of bytes in `b`.
+- **Operators**:
+  - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
+  - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
 
 #### `Tuple`
-- **`t.ToString(): String`**:
-  Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
+- **Methods**:
+  - `t.ToString(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
+- **Index Access**:
+  - `t[i]: Any`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
+- **Length**:
+  - `len(t): Int`: Returns the number of elements in `t`.
+- **Operators & Destructuring**:
+  - `==`, `!=`: Structural element-wise equality comparison.
+  - Pattern matching / unpacking: `(a, b) = t`, `(first, *rest) = t`.
 
 #### `Dict`
-- **`d.ToString(): String`**:
-  Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
+- **Methods**:
+  - `d.ToString(): String`: Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
+- **Key Access**:
+  - `d[key]: Value`: Returns the value associated with `key`. Non-existent key lookup raises a runtime error.
+- **Length**:
+  - `len(d): Int`: Returns the number of key-value pairs in `d`.
+- **Operators**:
+  - `==`, `!=`: Structural equality comparison of all key-value entries.
 
 ### 4. Built-in Interfaces
 
