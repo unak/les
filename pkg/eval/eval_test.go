@@ -3139,3 +3139,47 @@ Stdout.Write("hello")!
 		t.Fatalf("expected 'Write expects Bytes' error, got %v", err)
 	}
 }
+
+func TestBufioUtf8Validation(t *testing.T) {
+	// Test ReadLine error on invalid UTF-8
+	ev1 := NewEvaluator()
+	ev1.SetInput(strings.NewReader("\xff\xfe\xfd\n"))
+	codeReadLine := `
+l = Stdin.ReadLine()!
+`
+	prog1 := parser.NewParser(lexer.NewLexer(codeReadLine)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err == nil {
+		t.Fatalf("expected error from ReadLine on invalid UTF-8, got nil")
+	} else if !strings.Contains(err.Error(), "invalid UTF-8") {
+		t.Fatalf("expected 'invalid UTF-8' error, got %v", err)
+	}
+
+	// Test ReadString error on invalid UTF-8
+	ev2 := NewEvaluator()
+	ev2.SetInput(strings.NewReader("\xff\xfe\xfd:"))
+	codeReadString := `
+s = Stdin.ReadString(":")!
+`
+	prog2 := parser.NewParser(lexer.NewLexer(codeReadString)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err == nil {
+		t.Fatalf("expected error from ReadString on invalid UTF-8, got nil")
+	} else if !strings.Contains(err.Error(), "invalid UTF-8") {
+		t.Fatalf("expected 'invalid UTF-8' error, got %v", err)
+	}
+
+	// Test valid UTF-8 multibyte strings work cleanly
+	ev3 := NewEvaluator()
+	ev3.SetInput(strings.NewReader("こんにちは\n世界:"))
+	codeValid := `
+l = Stdin.ReadLine()!
+s = Stdin.ReadString(":")!
+if l != "こんにちは":
+    1 / 0
+if s != "世界:":
+    1 / 0
+`
+	prog3 := parser.NewParser(lexer.NewLexer(codeValid)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected error on valid UTF-8: %v", err)
+	}
+}

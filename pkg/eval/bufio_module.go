@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"les/pkg/ast"
 )
@@ -358,6 +359,9 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 							line = line[:len(line)-1]
 						}
 					}
+					if !utf8.Valid([]byte(line)) {
+						return nil, fmt.Errorf("invalid UTF-8 byte sequence in bufio.Reader.ReadLine()")
+					}
 					return StringValue(line), nil
 				}
 				return NilValue{}, nil
@@ -393,11 +397,17 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 					if len(chunk) > 0 {
 						accumulated = append(accumulated, chunk...)
 						if bytes.HasSuffix(accumulated, delimBytes) {
+							if !utf8.Valid(accumulated) {
+								return nil, fmt.Errorf("invalid UTF-8 byte sequence in bufio.Reader.ReadString()")
+							}
 							return StringValue(string(accumulated)), nil
 						}
 					}
 					if err == io.EOF || err == io.ErrNoProgress {
 						if len(accumulated) > 0 {
+							if !utf8.Valid(accumulated) {
+								return nil, fmt.Errorf("invalid UTF-8 byte sequence in bufio.Reader.ReadString()")
+							}
 							return StringValue(string(accumulated)), nil
 						}
 						return NilValue{}, nil
