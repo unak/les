@@ -726,48 +726,7 @@ rc: ReadCloser = File(path: "/tmp/data")
 #### Dynamic Runtime Checks (`is`)
 - `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
 
-### 16. Standard I/O Module (`@io`)
-
-The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
-
-```python
-import io
-```
-
-#### Core Interfaces
-- **`Reader`**: `Read(n: Int): Bytes | Nil`
-- **`Writer`**: `Write(b: Bytes): Int`
-- **`Closer`**: `Close(): ()`
-- **`ReadCloser`**: embeds `Reader`, `Closer`
-- **`WriteCloser`**: embeds `Writer`, `Closer`
-
-#### Standard Streams
-- **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
-  - `@io.Stdin.Read(n)` reads up to `n` bytes as a `Bytes` sequence.
-- **`@io.Stdout`**: Standard output instance satisfying `Writer`.
-  - `@io.Stdout.Write(b)` writes byte sequence `b` to standard output.
-- **`@io.Stderr`**: Standard error instance satisfying `Writer`.
-  - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
-
-### 17. Buffered I/O Module (`@bufio`)
-
-The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
-
-```python
-import bufio
-```
-
-#### Structs & Constructors
-- **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
-  - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
-  - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
-  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text as UTF-8 string including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
-  - `Peek(n: Int): Bytes | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
-- **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
-  - `Write(b: Bytes): Int`: Appends byte sequence `b` to write buffer.
-  - `Flush(): ()`: Flushes buffered data to the underlying stream.
-
-### 18. Error Handling & `interface Error`
+### 16. Error Handling & `interface Error`
 
 Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
 
@@ -820,6 +779,49 @@ struct ParseError:
 
 # Automatically matches `case Error:` and `is Error`!
 ```
+
+### 17. Built-in Modules
+
+#### Standard I/O Module (`@io`)
+
+The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
+
+```python
+import io
+```
+
+##### Core Interfaces
+- **`Reader`**: `Read(n: Int): Bytes | Nil`
+- **`Writer`**: `Write(b: Bytes): Int`
+- **`Closer`**: `Close(): ()`
+- **`ReadCloser`**: embeds `Reader`, `Closer`
+- **`WriteCloser`**: embeds `Writer`, `Closer`
+
+##### Standard Streams
+- **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
+  - `@io.Stdin.Read(n)` reads up to `n` bytes as a `Bytes` sequence.
+- **`@io.Stdout`**: Standard output instance satisfying `Writer`.
+  - `@io.Stdout.Write(b)` writes byte sequence `b` to standard output.
+- **`@io.Stderr`**: Standard error instance satisfying `Writer`.
+  - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
+
+#### Buffered I/O Module (`@bufio`)
+
+The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
+
+```python
+import bufio
+```
+
+##### Structs & Constructors
+- **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
+  - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
+  - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
+  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text as UTF-8 string including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
+  - `Peek(n: Int): Bytes | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
+- **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
+  - `Write(b: Bytes): Int`: Appends byte sequence `b` to write buffer.
+  - `Flush(): ()`: Flushes buffered data to the underlying stream.
 
 ## Planned Features / Future Work
 
