@@ -201,11 +201,14 @@ func (ev *Evaluator) registerBuiltins() {
 			}
 			if len(args) == 1 {
 				forced := Force(args[0])
-				sv, ok := forced.(StringValue)
-				if !ok {
-					return nil, fmt.Errorf("Bytes constructor expects String, got %s", typeNameOf(forced))
+				switch v := forced.(type) {
+				case StringValue:
+					return BytesValue(string(v)), nil
+				case BytesValue:
+					return v, nil
+				default:
+					return nil, fmt.Errorf("Bytes constructor expects String or Bytes, got %s", typeNameOf(forced))
 				}
-				return BytesValue(string(sv)), nil
 			}
 			return nil, fmt.Errorf("Bytes expects 0 or 1 arguments, got %d", len(args))
 		},
@@ -1410,6 +1413,17 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				},
 			}, nil
 		}
+		if bv, ok := val.(BytesValue); ok {
+			return &BuiltinFunc{
+				Name: "Bytes",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Bytes() takes 0 arguments, got %d", len(args))
+					}
+					return bv, nil
+				},
+			}, nil
+		}
 	}
 	if member == "String" {
 		if bv, ok := val.(BytesValue); ok {
@@ -1437,19 +1451,6 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("IsValidString() takes 0 arguments, got %d", len(args))
 					}
 					return BoolValue(utf8.Valid([]byte(bv))), nil
-				},
-			}, nil
-		}
-	}
-	if member == "ToHex" {
-		if bv, ok := val.(BytesValue); ok {
-			return &BuiltinFunc{
-				Name: "ToHex",
-				Fn: func(args []Value) (Value, error) {
-					if len(args) != 0 {
-						return nil, fmt.Errorf("ToHex() takes 0 arguments, got %d", len(args))
-					}
-					return StringValue(bv.String()), nil
 				},
 			}, nil
 		}

@@ -2970,7 +2970,9 @@ if b1.String() != "hello":
     1 / 0
 if b1.ToString() != "68656c6c6f":
     1 / 0
-if b1.ToHex() != "68656c6c6f":
+if b1.Bytes().ToString() != "68656c6c6f":
+    1 / 0
+if Bytes(b1).ToString() != "68656c6c6f":
     1 / 0
 if !b1.IsValidString():
     1 / 0
@@ -3058,8 +3060,6 @@ if bad[0] != 255:
 if bad[-1] != 253:
     1 / 0
 if bad.ToString() != "fffefd":
-    1 / 0
-if bad.ToHex() != "fffefd":
     1 / 0
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()

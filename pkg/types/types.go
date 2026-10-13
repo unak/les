@@ -361,7 +361,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			Ret: TypeString,
 		}, true
 	}
-	if mName == "Bytes" && t == TypeString {
+	if mName == "Bytes" && (t == TypeString || t == TypeBytes) {
 		return &FuncType{
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeBytes,
@@ -377,12 +377,6 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		return &FuncType{
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeBool,
-		}, true
-	}
-	if mName == "ToHex" && t == TypeBytes {
-		return &FuncType{
-			Arg: &TupleType{Elems: []Type{}},
-			Ret: TypeString,
 		}, true
 	}
 	return nil, false

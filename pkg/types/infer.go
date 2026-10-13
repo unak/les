@@ -815,6 +815,9 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			if leftT == TypeBytes && rightT == TypeBytes {
 				return TypeBytes, nil
 			}
+			if leftT == TypeBytes || rightT == TypeBytes {
+				return nil, fmt.Errorf("cannot add %s and %s", leftT, rightT)
+			}
 			if leftT == TypeString || rightT == TypeString {
 				return TypeString, nil
 			}
@@ -823,6 +826,9 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			}
 			return TypeInt, nil
 		case "-", "*", "/", "%":
+			if leftT == TypeBytes || rightT == TypeBytes {
+				return nil, fmt.Errorf("cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
+			}
 			if leftT == TypeFloat || rightT == TypeFloat {
 				return TypeFloat, nil
 			}
@@ -871,8 +877,8 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 					if err != nil {
 						return nil, err
 					}
-					if !IsAssignableTo(argT, TypeString) {
-						return nil, fmt.Errorf("Bytes expects String, got %s", argT)
+					if !IsAssignableTo(argT, TypeString) && !IsAssignableTo(argT, TypeBytes) {
+						return nil, fmt.Errorf("Bytes expects String or Bytes, got %s", argT)
 					}
 				}
 				return TypeBytes, nil
