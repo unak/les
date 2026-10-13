@@ -313,7 +313,21 @@ Listed from highest to lowest precedence:
 - Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
 - User-defined functions cannot create raw side-effect primitives.
 
-### 7. Types, Function Types & Pattern Matching
+### 7. Type System, Type Inference & Pattern Matching
+- **Static Type Inference & Optional Annotations**:
+  - Les features static type inference based on the Hindley-Milner algorithm. Explicit type annotations on variables, parameters, and return types are entirely optional:
+    ```python
+    x = 10              # inferred as Int
+    s = "hello"         # inferred as String
+    p = (1, "ok")       # inferred as (Int, String)
+    d = {"a": 42}       # inferred as {String: Int}
+    ```
+  - Unannotated function parameters whose types cannot be uniquely constrained fall back to dynamic typing (`Any`), allowing flexible dynamic code alongside strictly typed code:
+    ```python
+    def identity(x): x  # parameter and return type inferred as Any
+    ```
+  - **Inferred Types on Lazy Thunks**:
+    Statically inferred types are propagated to lazy `Thunk` values at runtime (`thunk.InferredType`). This allows runtime type tests (`is`) and inspection (`type()`) to determine element types without forcing deferred computations or triggering premature side effects.
 - **Function Types (`->`)**:
   Function types represent callable types mapping argument types to a return type: `(Arg1, Arg2) -> Ret`.
   - **Syntax**: `(T1, T2) -> Ret`, `(T) -> Ret`, `() -> Ret`, or right-associative higher-order types `(A) -> (B) -> C`.
@@ -335,8 +349,9 @@ Listed from highest to lowest precedence:
     def multiplier(factor: Int) -> (Int) -> Int:
         |x: Int|: x * factor
     ```
-- **Union Type Syntax**: `A | B` (e.g., `Int | String`, `Int | Nil`).
-- **Branch Type Inference**: When branches (such as `? :`) return different types, the expression is inferred as a union type (`Int | String`).
+- **Union Types (`A | B`)**:
+  - Types can be composed as unions (e.g., `Int | String`, `Int | Nil`).
+  - **Branch Type Inference**: When conditional branches (such as `? :` or `if/else`) evaluate to different types, the expression is automatically inferred as their union type (`Int | String`).
 - **Type Test Operator `is`**:
   - Binary operator testing dynamic value type: `expr is Type`.
   - Evaluates to `Bool` (`true` or `false`).
@@ -420,10 +435,13 @@ Returns the string representation of the runtime type of the given value or argu
   - `type("hello")` -> `"String"`
   - `type(nil)` -> `"Nil"`
   - `type()` -> `"()"`
+  - `type({"key": "value"})` -> `"{String: String}"`
+  - `type({})` -> `"{Any: Any}"`
 - **Usage**:
   ```python
   t = type(42)       # "Int"
   t2 = type(1, 2)    # "(Int, Int)"
+  td = type({"a": 1}) # "{String: Int}"
   ```
 
 #### `def exit(code: Int | Bool = 0)`

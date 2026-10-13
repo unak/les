@@ -982,6 +982,12 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						}
 					}
 				}
+			} else {
+				for _, argExpr := range args {
+					if _, err := inf.inferExpr(argExpr); err != nil {
+						return nil, err
+					}
+				}
 			}
 			return fnT.Ret, nil
 		}
