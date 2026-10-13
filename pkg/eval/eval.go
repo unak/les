@@ -892,16 +892,16 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return &TupleValue{Elements: elems}, nil
 
 	case *ast.DictLit:
-		entries := make(map[string]Value)
-		keyValues := make(map[string]Value)
+		entries := make(map[DictKey]Value)
+		keyValues := make(map[DictKey]Value)
 		for _, entry := range e.Entries {
 			kVal := Force(NewThunk(entry.Key, env))
-			kStr := kVal.String()
-			keyValues[kStr] = kVal
+			dk := MakeDictKey(kVal)
+			keyValues[dk] = kVal
 			if env.isForceDemand(entry.Value) {
-				entries[kStr] = Force(NewThunk(entry.Value, env))
+				entries[dk] = Force(NewThunk(entry.Value, env))
 			} else {
-				entries[kStr] = NewThunk(entry.Value, env)
+				entries[dk] = NewThunk(entry.Value, env)
 			}
 		}
 		return NewDictValue(entries, keyValues), nil
@@ -953,11 +953,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			}
 			return IntValue(data[idx]), nil
 		case *DictValue:
-			k := idxVal.String()
-			if v, ok := t.Entries[k]; ok {
+			dk := MakeDictKey(idxVal)
+			if v, ok := t.Entries[dk]; ok {
 				return v, nil
 			}
-			return nil, fmt.Errorf("key not found in dict: %s", k)
+			return nil, fmt.Errorf("key not found in dict: %s", idxVal.String())
 		default:
 			return nil, fmt.Errorf("cannot index non-tuple/non-string/non-bytes/non-dict value: %v", targetVal)
 		}
@@ -1579,12 +1579,15 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				return false
 			}
 
-			for k, v := range dVal.Entries {
-				var kVal Value = StringValue(k)
+			for dk, v := range dVal.Entries {
+				var kVal Value
 				if dVal.KeyValues != nil {
-					if actualKey, exists := dVal.KeyValues[k]; exists {
+					if actualKey, exists := dVal.KeyValues[dk]; exists {
 						kVal = actualKey
 					}
+				}
+				if kVal == nil {
+					kVal = StringValue(dk.Key)
 				}
 				if !checkValueMatchesType(kVal, keyAnnot, optEnv...) {
 					return false

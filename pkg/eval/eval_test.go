@@ -3263,3 +3263,76 @@ print test_match(123)
 		t.Fatalf("expected %q, got %q", expected, strings.TrimSpace(out))
 	}
 }
+
+func TestEvalDictKeyTypeStrictness(t *testing.T) {
+	// 1. Separate keys for 1 and "1", true and "true"
+	code1 := `
+d = {1: "int_one", "1": "str_one", true: "bool_true", "true": "str_true"}
+print len(d)
+print " "
+print d[1]
+print " "
+print d["1"]
+print " "
+print d[true]
+print " "
+print d["true"]
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("unexpected error evaluating code1: %v", err)
+	}
+	expected1 := "4 int_one str_one bool_true str_true"
+	if strings.TrimSpace(out1) != expected1 {
+		t.Fatalf("expected %q, got %q", expected1, strings.TrimSpace(out1))
+	}
+
+	// 2. Cross-type lookup must fail with runtime error
+	code2 := `
+d = {1: "only_int"}
+print d["1"]
+`
+	_, err2 := runLesCode(code2)
+	if err2 == nil {
+		t.Fatalf("expected error accessing d[\"1\"] when key is Int 1, but got nil")
+	}
+	if !strings.Contains(err2.Error(), "key not found in dict: 1") {
+		t.Fatalf("expected 'key not found in dict: 1', got %v", err2)
+	}
+
+	code3 := `
+d = {"true": "str_true"}
+print d[true]
+`
+	_, err3 := runLesCode(code3)
+	if err3 == nil {
+		t.Fatalf("expected error accessing d[true] when key is String \"true\", but got nil")
+	}
+	if !strings.Contains(err3.Error(), "key not found in dict: true") {
+		t.Fatalf("expected 'key not found in dict: true', got %v", err3)
+	}
+
+	// 3. 'is' check distinguishes key types
+	code4 := `
+intDict = {1: "val"}
+print (intDict is {Int: String})
+print " "
+print (intDict is {String: String})
+print " "
+
+mixedDict = {1: "a", "1": "b"}
+print (mixedDict is {Int | String: String})
+print " "
+print (mixedDict is {Int: String})
+print " "
+print (mixedDict is {String: String})
+`
+	out4, err := runLesCode(code4)
+	if err != nil {
+		t.Fatalf("unexpected error evaluating code4: %v", err)
+	}
+	expected4 := "true false true false false"
+	if strings.TrimSpace(out4) != expected4 {
+		t.Fatalf("expected %q, got %q", expected4, strings.TrimSpace(out4))
+	}
+}

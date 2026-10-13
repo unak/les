@@ -78,26 +78,67 @@ func (t *TupleValue) stringWithDepth(depth int) string {
 	return sb.String()
 }
 
-// DictValue holds key-value mapping.
-// KeyValues stores the original Value of each key (keyed by key string representation)
-// for accurate runtime type checking. When created without explicit KeyValues,
-// keys default to StringValue.
+// DictKey uniquely identifies a dictionary key while strictly preserving its type and value.
+type DictKey struct {
+	Type string // Type tag: "Int", "Float", "String", "Bytes", "Bool", "Nil", "Tuple", etc.
+	Key  string // Representation preserving the value within that type
+}
+
+// MakeDictKey converts a runtime Value into a typed DictKey.
+func MakeDictKey(v Value) DictKey {
+	v = Force(v)
+	switch val := v.(type) {
+	case IntValue:
+		return DictKey{Type: "Int", Key: fmt.Sprintf("%d", int64(val))}
+	case FloatValue:
+		return DictKey{Type: "Float", Key: fmt.Sprintf("%g", float64(val))}
+	case StringValue:
+		return DictKey{Type: "String", Key: string(val)}
+	case BytesValue:
+		return DictKey{Type: "Bytes", Key: string(val)}
+	case BoolValue:
+		if val {
+			return DictKey{Type: "Bool", Key: "true"}
+		}
+		return DictKey{Type: "Bool", Key: "false"}
+	case NilValue:
+		return DictKey{Type: "Nil", Key: "nil"}
+	case *TupleValue:
+		var sb strings.Builder
+		sb.WriteString("(")
+		for i, el := range val.Elements {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			elemKey := MakeDictKey(el)
+			sb.WriteString(elemKey.Type)
+			sb.WriteString(":")
+			sb.WriteString(elemKey.Key)
+		}
+		sb.WriteString(")")
+		return DictKey{Type: "Tuple", Key: sb.String()}
+	default:
+		return DictKey{Type: fmt.Sprintf("%T", val), Key: val.String()}
+	}
+}
+
+// DictValue holds key-value mapping with strictly typed keys.
 type DictValue struct {
-	Entries   map[string]Value
-	KeyValues map[string]Value
+	Entries   map[DictKey]Value
+	KeyValues map[DictKey]Value
 }
 
 // NewDictValue creates a DictValue ensuring Entries and KeyValues are non-nil.
-func NewDictValue(entries map[string]Value, keyValues ...map[string]Value) *DictValue {
+func NewDictValue(entries map[DictKey]Value, keyValues ...map[DictKey]Value) *DictValue {
 	if entries == nil {
-		entries = make(map[string]Value)
+		entries = make(map[DictKey]Value)
 	}
-	kv := make(map[string]Value)
+	kv := make(map[DictKey]Value)
 	if len(keyValues) > 0 && keyValues[0] != nil {
 		kv = keyValues[0]
 	} else {
-		for k := range entries {
-			kv[k] = StringValue(k)
+		for dk := range entries {
+			kv[dk] = StringValue(dk.Key)
 		}
 	}
 	return &DictValue{
@@ -110,11 +151,25 @@ func (d *DictValue) String() string {
 	var sb strings.Builder
 	sb.WriteString("{")
 	idx := 0
-	for k, v := range d.Entries {
+	for dk, v := range d.Entries {
 		if idx > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(fmt.Sprintf("%q: %s", k, Force(v).String()))
+		var kStr string
+		if origKey, ok := d.KeyValues[dk]; ok && origKey != nil {
+			if _, isStr := origKey.(StringValue); isStr {
+				kStr = fmt.Sprintf("%q", origKey.String())
+			} else {
+				kStr = origKey.String()
+			}
+		} else {
+			if dk.Type == "String" {
+				kStr = fmt.Sprintf("%q", dk.Key)
+			} else {
+				kStr = dk.Key
+			}
+		}
+		sb.WriteString(fmt.Sprintf("%s: %s", kStr, Force(v).String()))
 		idx++
 	}
 	sb.WriteString("}")
