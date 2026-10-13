@@ -1093,7 +1093,20 @@ z: {String: Int | String} = {"a": 1, "b": "x"}
 		t.Fatalf("unexpected type error with union dict: %v", err)
 	}
 
-	// 13. IsAssignableTo with TypeAny: empty dict is allowed, but {String: Any} is not allowed for {String: Int}
+	// 13. Assigning dict with Any value (from unannotated function) is allowed
+	code13 := `
+def get_val(x):
+    x
+
+d: {String: Int} = {"a": get_val(42)}
+`
+	prog13 := parser.NewParser(lexer.NewLexer(code13)).ParseProgram()
+	inf13 := NewInferencer()
+	if err := inf13.InferProgram(prog13); err != nil {
+		t.Fatalf("unexpected type error assigning Any-valued dict to typed dict: %v", err)
+	}
+
+	// 14. IsAssignableTo with TypeAny:
 	emptyDict := &DictType{Key: TypeAny, Value: TypeAny}
 	intDict := &DictType{Key: TypeString, Value: TypeInt}
 	anyValDict := &DictType{Key: TypeString, Value: TypeAny}
@@ -1101,8 +1114,8 @@ z: {String: Int | String} = {"a": 1, "b": "x"}
 	if !IsAssignableTo(emptyDict, intDict) {
 		t.Fatalf("expected empty dict to be assignable to {String: Int}")
 	}
-	if IsAssignableTo(anyValDict, intDict) {
-		t.Fatalf("expected {String: Any} to NOT be assignable to {String: Int}")
+	if !IsAssignableTo(anyValDict, intDict) {
+		t.Fatalf("expected {String: Any} to be assignable to {String: Int}")
 	}
 	if !IsAssignableTo(intDict, anyValDict) {
 		t.Fatalf("expected {String: Int} to be assignable to {String: Any}")

@@ -904,7 +904,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				entries[kStr] = NewThunk(entry.Value, env)
 			}
 		}
-		return &DictValue{Entries: entries, KeyValues: keyValues}, nil
+		return NewDictValue(entries, keyValues), nil
 
 	case *ast.IndexExpr:
 		targetVal := Force(NewThunk(e.Target, env))
@@ -1581,12 +1581,14 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						kVal = actualKey
 					}
 				}
-				vVal := Force(v)
 				if !checkValueMatchesType(kVal, keyAnnot, optEnv...) {
 					return false
 				}
-				if !checkValueMatchesType(vVal, valAnnot, optEnv...) {
-					return false
+				// Do not force unevaluated values: only check already-evaluated values
+				if evaluatedVal, ok := PeekEvaluated(v); ok {
+					if !checkValueMatchesType(evaluatedVal, valAnnot, optEnv...) {
+						return false
+					}
 				}
 			}
 			return true

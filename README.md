@@ -340,16 +340,27 @@ Listed from highest to lowest precedence:
 - **Type Test Operator `is`**:
   - Binary operator testing dynamic value type: `expr is Type`.
   - Evaluates to `Bool` (`true` or `false`).
+  - Supports primitive types, structs, interfaces, unions (`A | B`), and parameterized dictionary types `expr is {KeyType: ValueType}`.
   ```python
   x = 10
   if x is Int:
       print "an integer"
+
+  d = {"count": 42}
+  if d is {String: Int}:
+      print "dict with String keys and Int values"
   ```
+  > [!NOTE]
+  > When checking dictionary types with `expr is {K: V}`, all keys and already-evaluated values are verified. To preserve lazy evaluation semantics, unevaluated values (lazy thunks) are not forced during the `is` test.
+
 - **Pattern Match Expression `match ... case`**:
+  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, and default `_`:
   ```python
   def classify(v):
       match v:
-          case Int:
+          case {String: Int}:
+              print "dict of string to int"
+          case Int | Float:
               print "number:", v
           case String:
               print "string:", v
@@ -360,6 +371,7 @@ Listed from highest to lowest precedence:
 
   classify 100
   classify "les"
+  classify {"a": 1}
   classify nil
   ```
 
