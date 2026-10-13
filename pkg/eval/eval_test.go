@@ -253,7 +253,7 @@ y = gets()
 	codeMixed := `import io
 l = gets()
 rest = @io.Stdin.Read(5)
-print l, "|", rest
+print l, "|", rest.String()
 `
 	evMixed := NewEvaluator()
 	evMixed.SetInput(strings.NewReader("hello\nworld12345"))
@@ -1932,9 +1932,9 @@ func TestGlobalStdoutAndStderr(t *testing.T) {
 	ev.SetErrorOutput(&stderr)
 
 	code := `
-Stdout.Write("stdout text\n")
+Stdout.Write("stdout text\n".Bytes())
 Stdout.Flush()
-Stderr.Write("stderr text\n")
+Stderr.Write("stderr text\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	if _, err := ev.EvalProgram(prog); err != nil {
@@ -1957,7 +1957,7 @@ func TestPrintRoutesToStdout(t *testing.T) {
 
 	code := `
 print "hello", " ", 42, "\n"
-Stdout.Write("direct write\n")
+Stdout.Write("direct write\n".Bytes())
 Stdout.Flush()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -1989,7 +1989,7 @@ line3 = Stdin.ReadLine()
 line4 = Stdin.ReadLine()
 line5 = Stdin.ReadLine()
 
-print peeked, "|", part1, "|", line2, "|", line3, "|", line4, "|", line5 is Nil
+print peeked.String(), "|", part1, "|", line2, "|", line3, "|", line4, "|", line5 is Nil
 `
 	var stdout strings.Builder
 	ev.SetOutput(&stdout)
@@ -2017,8 +2017,8 @@ import io
 import bufio
 
 # Test @io raw streams
-n1 = @io.Stdout.Write("raw out\n")
-n2 = @io.Stderr.Write("raw err\n")
+n1 = @io.Stdout.Write("raw out\n".Bytes())
+n2 = @io.Stderr.Write("raw err\n".Bytes())
 
 # Test @bufio.Reader constructor on @io.Stdin
 br = @bufio.Reader(@io.Stdin)
@@ -2050,16 +2050,16 @@ import bufio
 
 struct InnerReader:
     def Read(n: Int):
-        "embedded-data\n"
+        "embedded-data\n".Bytes()
 
 struct MyReader:
     InnerReader
 
 struct MyWriter:
     output: String = ""
-    def Write(s: String):
-        print "[W:", s, "]"
-        len(s)
+    def Write(b: Bytes):
+        print "[W:", b.String(), "]"
+        len(b)
 
 mr = MyReader()
 mw = MyWriter()
@@ -2070,8 +2070,8 @@ bw = @bufio.Writer(mw)
 line = br.ReadLine()
 print "Read:", line, "\n"
 
-bw.Write("hello")
-bw.Write(" world")
+bw.Write("hello".Bytes())
+bw.Write(" world".Bytes())
 bw.Flush()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2094,10 +2094,10 @@ func TestBufioWriterAutoFlushAtExit(t *testing.T) {
 import bufio
 
 # Write without explicit Flush
-Stdout.Write("buffered global\n")
+Stdout.Write("buffered global\n".Bytes())
 
 bw = @bufio.Writer(Stdout)
-bw.Write("user writer\n")
+bw.Write("user writer\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	if _, err := ev.EvalProgram(prog); err != nil {
@@ -2121,9 +2121,9 @@ func TestStreamInterleavingOrder(t *testing.T) {
 import io
 
 # Stdout is buffered, @io.Stdout.Write flushes Stdout first (C/Ruby style)
-Stdout.Write("first-")
-@io.Stdout.Write("second-")
-Stdout.Write("third\n")
+Stdout.Write("first-".Bytes())
+@io.Stdout.Write("second-".Bytes())
+Stdout.Write("third\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	if _, err := ev.EvalProgram(prog); err != nil {
@@ -2148,7 +2148,7 @@ p0 = Stdin.Peek(0)
 del1 = Stdin.ReadString(":::")
 del2 = Stdin.ReadString(":::")
 
-print r0 == "", "|", p0 == "", "|", del1, "|", del2
+print r0 == Bytes(""), "|", p0 == Bytes(""), "|", del1, "|", del2
 `
 	var stdout strings.Builder
 	ev.SetOutput(&stdout)
@@ -2175,12 +2175,12 @@ import bufio
 
 struct EmptyReader:
     def Read(n: Int):
-        ""
+        Bytes("")
 
 er = EmptyReader()
 br = @bufio.Reader(er)
 
-# bufio.ReadLine on reader returning only "" should eventually see ErrNoProgress as EOF -> Nil
+# bufio.ReadLine on reader returning only empty Bytes should eventually see ErrNoProgress as EOF -> Nil
 line = br.ReadLine()
 print line is Nil
 `
@@ -2202,12 +2202,12 @@ func TestFlushPanicRecovery(t *testing.T) {
 import bufio
 
 struct FailingWriter:
-    def Write(s: String):
-        len(s) - 1000 # negative write count causes error
+    def Write(b: Bytes):
+        len(b) - 1000 # negative write count causes error
 
 fw = FailingWriter()
 bw = @bufio.Writer(fw)
-bw.Write("trigger")! # force demand point so write buffers
+bw.Write("trigger".Bytes())! # force demand point so write buffers
 # Program exits, auto-flush triggers failure in Write
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2231,16 +2231,16 @@ func TestFlushDrainDependencies(t *testing.T) {
 import bufio
 
 struct LoggingWriter:
-    def Write(s: String):
-        Stdout.Write("logged:" + s + "\n")
-        len(s)
+    def Write(b: Bytes):
+        Stdout.Write("logged:".Bytes() + b + "\n".Bytes())
+        len(b)
 
 lw = LoggingWriter()
 bw = @bufio.Writer(lw)
 
 # Initial write to Stdout (registered before bw)
-Stdout.Write("first\n")
-bw.Write("payload")!
+Stdout.Write("first\n".Bytes())
+bw.Write("payload".Bytes())!
 # Program exits, auto-flush flushes Stdout, then flushes bw which refills Stdout,
 # and iterative drain loop flushes Stdout again.
 `
@@ -2266,7 +2266,7 @@ import io
 import bufio
 
 struct Reader:
-    def Read(n: Int): "custom"
+    def Read(n: Int): "custom".Bytes()
 
 userR = Reader()
 
@@ -2294,12 +2294,12 @@ func TestWriterResultExceedingBuffer(t *testing.T) {
 import bufio
 
 struct LyingWriter:
-    def Write(s: String):
-        999999 # claims to write way more than len(s)
+    def Write(b: Bytes):
+        999999 # claims to write way more than len(b)
 
 lw = LyingWriter()
 bw = @bufio.Writer(lw)
-bw.Write("hello")!
+bw.Write("hello".Bytes())!
 bw.Flush()!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2319,12 +2319,12 @@ func TestWriterResultNonInt(t *testing.T) {
 import bufio
 
 struct BadWriter:
-    def Write(s: String):
+    def Write(b: Bytes):
         "not an integer"
 
 bw_custom = BadWriter()
 bw = @bufio.Writer(bw_custom)
-bw.Write("hello")!
+bw.Write("hello".Bytes())!
 bw.Flush()!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2347,7 +2347,7 @@ import io
 
 def Greet(name: String): String:
     bw = @bufio.Writer(@io.Stdout)
-    bw.Write("greeting: ")!
+    bw.Write("greeting: ".Bytes())!
     bw.Flush()!
     name
 `
@@ -2385,12 +2385,12 @@ func TestCustomWriterExitRePanic(t *testing.T) {
 import bufio
 
 struct ExitingWriter:
-    def Write(s: String):
+    def Write(b: Bytes):
         exit(42)
 
 ew = ExitingWriter()
 bw = @bufio.Writer(ew)
-bw.Write("trigger exit")!
+bw.Write("trigger exit".Bytes())!
 bw.Flush()!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2412,7 +2412,7 @@ func TestModuleIsolationCallerShadowing(t *testing.T) {
 
 	modCode := `
 def UseStdout(): String:
-    Stdout.Write("from module")!
+    Stdout.Write("from module".Bytes())!
     Stdout.Flush()!
     "ok"
 `
@@ -2534,15 +2534,15 @@ func TestEvaluatorReuseAfterRuntimeErrorDoesNotFlushStaleBuffers(t *testing.T) {
 import bufio
 
 struct Buffer:
-    content: String
-    def Write(s: String): Int:
-        content = content + s
-        len(s)
+    content: Bytes
+    def Write(b: Bytes): Int:
+        content = content + b
+        len(b)
 
-buf = Buffer(content: "")
+buf = Buffer(content: Bytes(""))
 bw = @bufio.Writer(buf)
-bw.Write("stale custom output")!
-Stdout.Write("stale stdout output")!
+bw.Write("stale custom output".Bytes())!
+Stdout.Write("stale stdout output".Bytes())!
 (1 / 0)!
 `
 	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
@@ -2556,7 +2556,7 @@ Stdout.Write("stale stdout output")!
 
 	// Second run on the same evaluator: normal execution
 	secondCode := `
-Stdout.Write("clean output")!
+Stdout.Write("clean output".Bytes())!
 `
 	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
 	_, err2 := ev.EvalProgram(prog2)
@@ -2577,13 +2577,13 @@ func TestDrainedCustomBufioWritersCleanedUp(t *testing.T) {
 import bufio
 
 struct LoggingWriter:
-    def Write(s: String): Int:
-        Stdout.Write("logged:" + s)
-        len(s)
+    def Write(b: Bytes): Int:
+        Stdout.Write("logged:".Bytes() + b)
+        len(b)
 
 lw = LoggingWriter()
 bw = @bufio.Writer(lw)
-bw.Write("hello")!
+bw.Write("hello".Bytes())!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	_, err := ev.EvalProgram(prog)
@@ -2604,7 +2604,7 @@ bw.Write("hello")!
 	out.Reset()
 	// Now execute a Write on bw again in a subsequent run, verifying it gets re-registered and writes to lw
 	code2 := `
-bw.Write("world")!
+bw.Write("world".Bytes())!
 `
 	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
 	_, err = ev.EvalProgram(prog2)
@@ -2630,13 +2630,13 @@ func TestCustomWriterExitDuringShutdownPreservesExitCode(t *testing.T) {
 import bufio
 
 struct ExitingBuffer:
-    def Write(s: String): Int:
+    def Write(b: Bytes): Int:
         exit(42)
         0
 
 eb = ExitingBuffer()
 bw = @bufio.Writer(eb)
-bw.Write("trigger exit during flush")!
+bw.Write("trigger exit during flush".Bytes())!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	_, err := ev.EvalProgram(prog)
@@ -2661,13 +2661,13 @@ func TestCustomWriterReusedAfterRuntimeErrorNotDetached(t *testing.T) {
 import bufio
 
 struct LoggingWriter:
-    def Write(s: String): Int:
-        Stdout.Write("logged:" + s)
-        len(s)
+    def Write(b: Bytes): Int:
+        Stdout.Write("logged:".Bytes() + b)
+        len(b)
 
 lw = LoggingWriter()
 bw = @bufio.Writer(lw)
-bw.Write("abandoned")!
+bw.Write("abandoned".Bytes())!
 (1 / 0)!
 `
 	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
@@ -2681,7 +2681,7 @@ bw.Write("abandoned")!
 
 	// Verify that bw can still write to lw in subsequent run and was not detached to io.Discard
 	secondCode := `
-bw.Write("valid")!
+bw.Write("valid".Bytes())!
 `
 	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
 	_, err2 := ev.EvalProgram(prog2)
@@ -2703,13 +2703,13 @@ func TestShutdownFlushErrorResetsWriterState(t *testing.T) {
 import bufio
 
 struct BrokenBuffer:
-    def Write(s: String): Int:
+    def Write(b: Bytes): Int:
         (1 / 0)!
         0
 
 bb = BrokenBuffer()
 bw = @bufio.Writer(bb)
-bw.Write("will fail on flush")!
+bw.Write("will fail on flush".Bytes())!
 `
 	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
 	_, err1 := ev.EvalProgram(prog1)
@@ -2719,7 +2719,7 @@ bw.Write("will fail on flush")!
 
 	// On the next run with the same evaluator, the failed writer must have been reset and removed
 	secondCode := `
-Stdout.Write("recovered")!
+Stdout.Write("recovered".Bytes())!
 `
 	prog2 := parser.NewParser(lexer.NewLexer(secondCode)).ParseProgram()
 	_, err2 := ev.EvalProgram(prog2)
@@ -2740,8 +2740,8 @@ func TestPeekTreatsNoProgressAsEOF(t *testing.T) {
 import bufio
 
 struct EmptyReader:
-    def Read(n: Int): String:
-        ""
+    def Read(n: Int): Bytes:
+        Bytes("")
 
 er = EmptyReader()
 br = @bufio.Reader(er)
@@ -2842,7 +2842,7 @@ Stdout.Write("buffered in bad output")!
 
 	// Subsequent evaluation must succeed cleanly without encountering old failing writer
 	code2 := `
-Stdout.Write("hello clean")!
+Stdout.Write("hello clean".Bytes())!
 `
 	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
 	_, err := ev.EvalProgram(prog2)
@@ -2860,7 +2860,7 @@ func TestStdoutFlushAndCloseFlushesBuffered(t *testing.T) {
 	ev.SetOutput(&out)
 
 	code := `
-Stdout.Write("buffered content")!
+Stdout.Write("buffered content".Bytes())!
 @io.Stdout.Flush()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2874,7 +2874,7 @@ Stdout.Write("buffered content")!
 
 	out.Reset()
 	codeClose := `
-Stdout.Write("close content")!
+Stdout.Write("close content".Bytes())!
 @io.Stdout.Close()
 `
 	progClose := parser.NewParser(lexer.NewLexer(codeClose)).ParseProgram()
@@ -2910,10 +2910,10 @@ func TestCustomWriterShortWrite(t *testing.T) {
 	ev := NewEvaluator()
 	code := `
 struct ShortWriter:
-    def Write(self, s: String):
+    def Write(self, b: Bytes):
         0
 w = @bufio.Writer(ShortWriter())
-w.Write("test")!
+w.Write("test".Bytes())!
 w.Flush()!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2932,11 +2932,11 @@ z = @io.Stdin.Read(0)!
 a = @io.Stdin.Read(2)!
 b = @io.Stdin.Read(2)!
 c = @io.Stdin.Read(2)!
-if z != "":
+if z != Bytes(""):
     1 / 0
-if a != "ab":
+if a != Bytes("ab"):
     1 / 0
-if b != "c":
+if b != Bytes("c"):
     1 / 0
 if c != nil:
     1 / 0
@@ -3078,5 +3078,64 @@ s = bad.String()!
 	}
 }
 
+func TestBinaryStreamIO(t *testing.T) {
+	ev := NewEvaluator()
+	var buf strings.Builder
+	ev.SetOutput(&buf)
+	ev.builtinsEnv.Set("raw_bin", BytesValue("\xff\xfe\x00\x01"))
 
+	code := `
+import io
+import bufio
 
+# Write non-UTF-8 bytes (0xff, 0xfe, 0x00, 0x01)
+Stdout.Write(raw_bin)!
+Stdout.Flush()!
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error in binary output: %v", err)
+	}
+
+	if buf.String() != "\xff\xfe\x00\x01" {
+		t.Fatalf("expected raw binary output \\xff\\xfe\\x00\\x01, got %q", buf.String())
+	}
+
+	// Read non-UTF-8 bytes back from Stdin
+	ev2 := NewEvaluator()
+	ev2.SetInput(strings.NewReader("\xff\xfe\x00\x01"))
+	codeRead := `
+import io
+import bufio
+
+read_bin = Stdin.Read(4)!
+if len(read_bin) != 4:
+    1 / 0
+if read_bin[0] != 255:
+    1 / 0
+if read_bin[1] != 254:
+    1 / 0
+if read_bin[2] != 0:
+    1 / 0
+if read_bin[3] != 1:
+    1 / 0
+if read_bin.ToString() != "fffe0001":
+    1 / 0
+`
+	progRead := parser.NewParser(lexer.NewLexer(codeRead)).ParseProgram()
+	if _, err := ev2.EvalProgram(progRead); err != nil {
+		t.Fatalf("unexpected eval error in binary input: %v", err)
+	}
+
+	// Negative test: Passing String to Write must fail at runtime
+	ev3 := NewEvaluator()
+	codeInvalidWrite := `
+Stdout.Write("hello")!
+`
+	progInvalid := parser.NewParser(lexer.NewLexer(codeInvalidWrite)).ParseProgram()
+	if _, err := ev3.EvalProgram(progInvalid); err == nil {
+		t.Fatalf("expected error passing String to Stdout.Write, got nil")
+	} else if !strings.Contains(err.Error(), "Write expects Bytes") {
+		t.Fatalf("expected 'Write expects Bytes' error, got %v", err)
+	}
+}

@@ -61,10 +61,10 @@ func (a *customReaderAdapter) Read(p []byte) (n int, err error) {
 	}
 	forced := Force(resVal)
 	switch v := forced.(type) {
-	case StringValue:
+	case BytesValue:
 		data := []byte(string(v))
 		if len(data) == 0 {
-			// A12: Empty string means no data yet / progress made, not EOF.
+			// A12: Empty byte sequence means no data yet / progress made, not EOF.
 			return 0, nil
 		}
 		copied := copy(p, data)
@@ -75,7 +75,7 @@ func (a *customReaderAdapter) Read(p []byte) (n int, err error) {
 	case NilValue:
 		return 0, io.EOF
 	default:
-		return 0, fmt.Errorf("Read returned unexpected type %s", typeNameOf(forced))
+		return 0, fmt.Errorf("Read returned unexpected type %s (expected Bytes or Nil)", typeNameOf(forced))
 	}
 }
 
@@ -114,7 +114,7 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("Writer has no Write method: %w", err)
 	}
-	resVal, err := a.ev.callValue(writeVal, []Value{StringValue(string(p))})
+	resVal, err := a.ev.callValue(writeVal, []Value{BytesValue(string(p))})
 	if err != nil {
 		return 0, err
 	}
@@ -307,12 +307,12 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
 			numBytes := int64(iv)
-			// A6: n < 0 is error; n == 0 returns ""
+			// A6: n < 0 is error; n == 0 returns empty Bytes
 			if numBytes < 0 {
 				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
 			}
 			if numBytes == 0 {
-				return StringValue(""), nil
+				return BytesValue(""), nil
 			}
 
 			return NewActionThunk(func() (Value, error) {
@@ -325,7 +325,7 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				buf := make([]byte, allocSize)
 				n, err := br.Read(buf)
 				if n > 0 {
-					return StringValue(string(buf[:n])), nil
+					return BytesValue(string(buf[:n])), nil
 				}
 				if err == io.EOF || err == io.ErrNoProgress {
 					return NilValue{}, nil
@@ -333,8 +333,8 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				if err != nil {
 					return nil, err
 				}
-				// 0 bytes read without error: empty read ("")
-				return StringValue(""), nil
+				// 0 bytes read without error: empty read
+				return BytesValue(""), nil
 			}), nil
 		},
 	}
@@ -422,12 +422,12 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 				return nil, fmt.Errorf("Peek expects Int, got %s", typeNameOf(forced))
 			}
 			numBytes := int(iv)
-			// A6: n < 0 is error; n == 0 returns ""
+			// A6: n < 0 is error; n == 0 returns empty Bytes
 			if numBytes < 0 {
 				return nil, fmt.Errorf("Peek: negative byte count %d", numBytes)
 			}
 			if numBytes == 0 {
-				return StringValue(""), nil
+				return BytesValue(""), nil
 			}
 
 			return NewActionThunk(func() (Value, error) {
@@ -437,7 +437,7 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 					return nil, err
 				}
 				if len(bytes) > 0 {
-					return StringValue(string(bytes)), nil
+					return BytesValue(string(bytes)), nil
 				}
 				return NilValue{}, nil
 			}), nil
@@ -462,12 +462,12 @@ func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, get
 				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
 			}
 			forced := Force(args[0])
-			sv, ok := forced.(StringValue)
+			bv, ok := forced.(BytesValue)
 			if !ok {
-				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+				return nil, fmt.Errorf("Write expects Bytes, got %s", typeNameOf(forced))
 			}
 			bw := getWriter()
-			n, err := bw.WriteString(string(sv))
+			n, err := bw.Write([]byte(string(bv)))
 			if err != nil {
 				return nil, err
 			}

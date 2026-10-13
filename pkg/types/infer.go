@@ -141,7 +141,7 @@ func NewInferencer() *Inferencer {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 			"ReadLine": {
 				Arg: &TupleType{Elems: []Type{}},
@@ -153,7 +153,7 @@ func NewInferencer() *Inferencer {
 			},
 			"Peek": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 	}
@@ -161,7 +161,7 @@ func NewInferencer() *Inferencer {
 		Name: "bufio.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 			"Flush": {
@@ -174,7 +174,7 @@ func NewInferencer() *Inferencer {
 		Name: "io.Stderr",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 			"Close": {
@@ -211,7 +211,7 @@ func makeIOModuleType(alias string) *ModuleType {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 		Embedded: []*InterfaceType{},
@@ -220,7 +220,7 @@ func makeIOModuleType(alias string) *ModuleType {
 		Name: "io.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 		},
@@ -306,7 +306,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 	}
@@ -314,7 +314,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Name: "io.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 		},
@@ -324,7 +324,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 			"ReadLine": {
 				Arg: &TupleType{Elems: []Type{}},
@@ -336,7 +336,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 			},
 			"Peek": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 	}
@@ -344,7 +344,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Name: "bufio.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 			"Flush": {
