@@ -58,6 +58,7 @@ les -e "print Args[0]" foo bar
 | `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
 | `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
 | `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
+| `Bytes` | `Bytes("hello")`, `"hello".Bytes()`, `Bytes()` | Immutable raw byte sequence representing binary data. Indexed by 0-based byte offset `b[0]`, returning an `Int` (`0`–`255`). Supports negative index `b[-1]` (last byte). |
 | `Bool` | `true`, `false` | Boolean value. |
 | `Nil` | `nil` | Represents the absence of a value (singleton literal `nil`). Frequently used in union types (e.g., `String | Nil`). |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
@@ -465,6 +466,32 @@ Reads a single line from standard input, stripping any trailing newline (`\n` or
   (97).Chr()       # "a"
   ```
 
+- **`String.Bytes(): Bytes`**:
+  Returns the UTF-8 byte sequence of `self` as a `Bytes` value.
+  ```python
+  b = "hello".Bytes()  # Bytes with 5 bytes
+  ```
+
+- **`Bytes` Primitive Type**:
+  Immutable raw byte sequence (`Bytes`), representing binary data.
+  - **Constructor `Bytes(val: String | Bytes = ""): Bytes`**:
+    `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes(b)` returns `b` itself. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
+  - **Index Access `b[i]: Int`**:
+    Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
+  - **Length `len(b): Int`**:
+    Returns the number of bytes in `b`.
+  - **`b.Bytes(): Bytes`**:
+    Returns the byte sequence itself (identity conversion).
+  - **`b.String(): String`**:
+    Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
+  - **`b.IsValidString(): Bool`**:
+    Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
+  - **`b.ToString(): String`**:
+    Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+  - **Operators**:
+    - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
+    - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
+
 - **`ToString(): String`**:
   Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
 
@@ -666,19 +693,19 @@ import io
 ```
 
 #### Core Interfaces
-- **`Reader`**: `Read(n: Int): String | Nil`
-- **`Writer`**: `Write(s: String): Int`
+- **`Reader`**: `Read(n: Int): Bytes | Nil`
+- **`Writer`**: `Write(b: Bytes): Int`
 - **`Closer`**: `Close(): ()`
 - **`ReadCloser`**: embeds `Reader`, `Closer`
 - **`WriteCloser`**: embeds `Writer`, `Closer`
 
 #### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
-  - `@io.Stdin.Read(n)` reads up to `n` bytes.
+  - `@io.Stdin.Read(n)` reads up to `n` bytes as a `Bytes` sequence.
 - **`@io.Stdout`**: Standard output instance satisfying `Writer`.
-  - `@io.Stdout.Write(s)` writes `s` to standard output.
+  - `@io.Stdout.Write(b)` writes byte sequence `b` to standard output.
 - **`@io.Stderr`**: Standard error instance satisfying `Writer`.
-  - `@io.Stderr.Write(s)` writes `s` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
+  - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
 
 ### 16. Buffered I/O Module (`@bufio`)
 
@@ -690,12 +717,12 @@ import bufio
 
 #### Structs & Constructors
 - **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
-  - `Read(n: Int): String | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns `""`; `n < 0` produces a runtime error.
-  - `ReadLine(): String | Nil`: Reads a single line, stripping trailing `\n` or `\r\n`.
-  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
-  - `Peek(n: Int): String | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns `""`; `n < 0` produces a runtime error.
+  - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
+  - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
+  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text as UTF-8 string including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
+  - `Peek(n: Int): Bytes | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
 - **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
-  - `Write(s: String): Int`: Appends `s` to write buffer.
+  - `Write(b: Bytes): Int`: Appends byte sequence `b` to write buffer.
   - `Flush(): ()`: Flushes buffered data to the underlying stream.
 
 ### 17. Error Handling & `interface Error`

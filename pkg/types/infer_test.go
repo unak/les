@@ -780,18 +780,18 @@ import io
 import bufio
 
 # Test globals
-w1: Int = Stdout.Write("text")
-w2: Int = Stderr.Write("err")
+w1: Int = Stdout.Write("text".Bytes())
+w2: Int = Stderr.Write("err".Bytes())
 Stdout.Flush()
 Stderr.Flush()
 
 l: String | Nil = Stdin.ReadLine()
 s: String | Nil = Stdin.ReadString(":")
-p: String | Nil = Stdin.Peek(5)
+p: Bytes | Nil = Stdin.Peek(5)
 
 # Test @io module
-rawW: Int = @io.Stdout.Write("raw")
-rawR: String | Nil = @io.Stdin.Read(10)
+rawW: Int = @io.Stdout.Write("raw".Bytes())
+rawR: Bytes | Nil = @io.Stdin.Read(10)
 @io.Stdout.Flush()
 @io.Stderr.Flush()
 
@@ -813,15 +813,15 @@ func TestIOAndBufioTypeAnnotations(t *testing.T) {
 import io
 import bufio
 
-def readAll(r: @io.Reader): String | Nil:
+def readAll(r: @io.Reader): Bytes | Nil:
     r.Read(100)
 
 struct CustomReader:
-    def Read(n: Int): String | Nil:
-        "hello"
+    def Read(n: Int): Bytes | Nil:
+        "hello".Bytes()
 
 cr = CustomReader()
-res: String | Nil = readAll(cr)
+res: Bytes | Nil = readAll(cr)
 
 # Test @bufio.Reader and @bufio.Writer type annotations
 def wrapBuf(br: @bufio.Reader, bw: @bufio.Writer): ():
@@ -906,4 +906,71 @@ bad: String | Nil = readStream(Stdout)
 		t.Fatalf("expected type error passing Stdout to @bufio.Reader parameter, got nil")
 	}
 }
+
+func TestBytesTypeInference(t *testing.T) {
+	inf := NewInferencer()
+	testCode := `
+b1: Bytes = "hello".Bytes()
+b2: Bytes = Bytes("world")
+b3: Bytes = Bytes()
+b4: Bytes = Bytes(b1)
+b5: Bytes = b1.Bytes()
+b_cat: Bytes = b1 + b2
+first_byte: Int = b1[0]
+text: String = b1.String()
+valid: Bool = b1.IsValidString()
+hex_str: String = b1.ToString()
+is_eq: Bool = b1 == b2
+is_lt: Bool = b1 < b2
+length: Int = len(b1)
+`
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error in TestBytesTypeInference: %v", err)
+	}
+
+	// Negative test: indexing Bytes must return Int, not String
+	testMismatchCode := `
+b: Bytes = "hello".Bytes()
+wrong: String = b[0]
+`
+	inf2 := NewInferencer()
+	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
+	if err := inf2.InferProgram(progMismatch); err == nil {
+		t.Fatalf("expected type error assigning Bytes index (Int) to String, got nil")
+	}
+
+	// Negative test: Bytes constructor with non-string/non-bytes argument
+	testInvalidCtorCode := `
+b = Bytes(123)
+`
+	inf3 := NewInferencer()
+	progInvalidCtor := parser.NewParser(lexer.NewLexer(testInvalidCtorCode)).ParseProgram()
+	if err := inf3.InferProgram(progInvalidCtor); err == nil {
+		t.Fatalf("expected type error passing Int to Bytes constructor, got nil")
+	}
+
+	// Negative test: Bytes + String must fail type inference
+	testMixedAddCode1 := `
+b: Bytes = "hello".Bytes()
+res = b + "world"
+`
+	inf4 := NewInferencer()
+	progMixedAdd1 := parser.NewParser(lexer.NewLexer(testMixedAddCode1)).ParseProgram()
+	if err := inf4.InferProgram(progMixedAdd1); err == nil {
+		t.Fatalf("expected type error adding Bytes + String, got nil")
+	}
+
+	// Negative test: String + Bytes must fail type inference
+	testMixedAddCode2 := `
+b: Bytes = "hello".Bytes()
+res = "hello" + b
+`
+	inf5 := NewInferencer()
+	progMixedAdd2 := parser.NewParser(lexer.NewLexer(testMixedAddCode2)).ParseProgram()
+	if err := inf5.InferProgram(progMixedAdd2); err == nil {
+		t.Fatalf("expected type error adding String + Bytes, got nil")
+	}
+}
+
 

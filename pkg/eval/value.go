@@ -2,6 +2,7 @@ package eval
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,10 @@ func (v FloatValue) String() string { return fmt.Sprintf("%g", v) }
 type StringValue string
 
 func (v StringValue) String() string { return string(v) }
+
+type BytesValue string
+
+func (v BytesValue) String() string { return hex.EncodeToString([]byte(v)) }
 
 type BoolValue bool
 

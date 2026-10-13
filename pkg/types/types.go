@@ -18,6 +18,7 @@ const (
 	TypeInt    PrimType = "Int"
 	TypeFloat  PrimType = "Float"
 	TypeString PrimType = "String"
+	TypeBytes  PrimType = "Bytes"
 	TypeBool   PrimType = "Bool"
 	TypeNil    PrimType = "Nil"
 	TypeAny    PrimType = "Any"
@@ -358,6 +359,24 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		return &FuncType{
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeString,
+		}, true
+	}
+	if mName == "Bytes" && (t == TypeString || t == TypeBytes) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeBytes,
+		}, true
+	}
+	if mName == "String" && t == TypeBytes {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		}, true
+	}
+	if mName == "IsValidString" && t == TypeBytes {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeBool,
 		}, true
 	}
 	return nil, false

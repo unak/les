@@ -59,6 +59,11 @@ var builtinForceFuncType = &FuncType{
 	Ret: TypeAny,
 }
 
+var builtinBytesFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeBytes,
+}
+
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
@@ -117,6 +122,8 @@ func NewInferencer() *Inferencer {
 	})
 	// Built-in force: (Any) -> Any
 	_ = rootScope.Declare("force", builtinForceFuncType)
+	// Built-in Bytes: (String?) -> Bytes
+	_ = rootScope.Declare("Bytes", builtinBytesFuncType)
 	// Built-in gets: () -> String | Nil
 	_ = rootScope.Declare("gets", &FuncType{
 		Arg: &TupleType{Elems: []Type{}},
@@ -134,7 +141,7 @@ func NewInferencer() *Inferencer {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 			"ReadLine": {
 				Arg: &TupleType{Elems: []Type{}},
@@ -146,7 +153,7 @@ func NewInferencer() *Inferencer {
 			},
 			"Peek": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 	}
@@ -154,7 +161,7 @@ func NewInferencer() *Inferencer {
 		Name: "bufio.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 			"Flush": {
@@ -167,7 +174,7 @@ func NewInferencer() *Inferencer {
 		Name: "io.Stderr",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 			"Close": {
@@ -204,7 +211,7 @@ func makeIOModuleType(alias string) *ModuleType {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 		Embedded: []*InterfaceType{},
@@ -213,7 +220,7 @@ func makeIOModuleType(alias string) *ModuleType {
 		Name: "io.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 		},
@@ -299,7 +306,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 	}
@@ -307,7 +314,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Name: "io.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 		},
@@ -317,7 +324,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Methods: map[string]*FuncType{
 			"Read": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 			"ReadLine": {
 				Arg: &TupleType{Elems: []Type{}},
@@ -329,7 +336,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 			},
 			"Peek": {
 				Arg: &TupleType{Elems: []Type{TypeInt}},
-				Ret: NewUnionType(TypeString, TypeNil),
+				Ret: NewUnionType(TypeBytes, TypeNil),
 			},
 		},
 	}
@@ -337,7 +344,7 @@ func makeBufioModuleType(alias string) *ModuleType {
 		Name: "bufio.Writer",
 		Methods: map[string]*FuncType{
 			"Write": {
-				Arg: &TupleType{Elems: []Type{TypeString}},
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
 			"Flush": {
@@ -804,7 +811,24 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		switch e.Op {
-		case "+", "-", "*", "/", "%":
+		case "+":
+			if leftT == TypeBytes && rightT == TypeBytes {
+				return TypeBytes, nil
+			}
+			if leftT == TypeBytes || rightT == TypeBytes {
+				return nil, fmt.Errorf("cannot add %s and %s", leftT, rightT)
+			}
+			if leftT == TypeString || rightT == TypeString {
+				return TypeString, nil
+			}
+			if leftT == TypeFloat || rightT == TypeFloat {
+				return TypeFloat, nil
+			}
+			return TypeInt, nil
+		case "-", "*", "/", "%":
+			if leftT == TypeBytes || rightT == TypeBytes {
+				return nil, fmt.Errorf("cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
+			}
 			if leftT == TypeFloat || rightT == TypeFloat {
 				return TypeFloat, nil
 			}
@@ -841,6 +865,23 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
 			if t, ok := inf.scope.Lookup("force"); ok && t == builtinForceFuncType {
 				return inf.inferExpr(e.Args[0])
+			}
+		}
+		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "Bytes" {
+			if t, ok := inf.scope.Lookup("Bytes"); ok && t == builtinBytesFuncType {
+				if len(e.Args) > 1 {
+					return nil, fmt.Errorf("Bytes expects 0 or 1 arguments, got %d", len(e.Args))
+				}
+				if len(e.Args) == 1 {
+					argT, err := inf.inferExpr(e.Args[0])
+					if err != nil {
+						return nil, err
+					}
+					if !IsAssignableTo(argT, TypeString) && !IsAssignableTo(argT, TypeBytes) {
+						return nil, fmt.Errorf("Bytes expects String or Bytes, got %s", argT)
+					}
+				}
+				return TypeBytes, nil
 			}
 		}
 		if st, ok := calleeT.(*StructType); ok {
@@ -919,6 +960,10 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 			}
 		} else if dt, ok := targetT.(*DictType); ok {
 			return dt.Value, nil
+		} else if targetT == TypeString {
+			return TypeString, nil
+		} else if targetT == TypeBytes {
+			return TypeInt, nil
 		}
 		return TypeAny, nil
 	case *ast.ModuleAccessExpr:
@@ -1151,6 +1196,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		return TypeFloat
 	case "String":
 		return TypeString
+	case "Bytes":
+		return TypeBytes
 	case "Bool":
 		return TypeBool
 	case "Nil", "nil":

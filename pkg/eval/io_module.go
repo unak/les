@@ -117,7 +117,7 @@ func (ev *Evaluator) initIOModule() {
 				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
 			}
 			if numBytes == 0 {
-				return StringValue(""), nil
+				return BytesValue(""), nil
 			}
 			return NewActionThunk(func() (Value, error) {
 				r := ev.globalEnv.GetStdinReader()
@@ -128,7 +128,7 @@ func (ev *Evaluator) initIOModule() {
 				buf := make([]byte, allocSize)
 				n, err := r.Read(buf)
 				if n > 0 {
-					return StringValue(string(buf[:n])), nil
+					return BytesValue(string(buf[:n])), nil
 				}
 				if err == io.EOF || err == io.ErrNoProgress {
 					return NilValue{}, nil
@@ -136,7 +136,7 @@ func (ev *Evaluator) initIOModule() {
 				if err != nil {
 					return nil, err
 				}
-				return StringValue(""), nil
+				return BytesValue(""), nil
 			}), nil
 		},
 	}
@@ -162,7 +162,7 @@ func (ev *Evaluator) initIOModule() {
 				Name: "Write",
 				Params: []ast.FuncParam{
 					{Name: "self"},
-					{Name: "s", TypeAnnot: "String"},
+					{Name: "b", TypeAnnot: "Bytes"},
 				},
 				ReturnType: "Int",
 			},
@@ -192,9 +192,9 @@ func (ev *Evaluator) initIOModule() {
 				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
 			}
 			forced := Force(args[0])
-			sv, ok := forced.(StringValue)
+			bv, ok := forced.(BytesValue)
 			if !ok {
-				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+				return nil, fmt.Errorf("Write expects Bytes, got %s", typeNameOf(forced))
 			}
 			// C/Ruby behavior: flush buffered stdout before writing directly
 			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
@@ -203,7 +203,7 @@ func (ev *Evaluator) initIOModule() {
 				}
 			}
 			w := ev.globalEnv.GetRawStdout()
-			n, err := w.Write([]byte(string(sv)))
+			n, err := w.Write([]byte(string(bv)))
 			if err != nil {
 				return nil, err
 			}
@@ -251,7 +251,7 @@ func (ev *Evaluator) initIOModule() {
 				Name: "Write",
 				Params: []ast.FuncParam{
 					{Name: "self"},
-					{Name: "s", TypeAnnot: "String"},
+					{Name: "b", TypeAnnot: "Bytes"},
 				},
 				ReturnType: "Int",
 			},
@@ -281,9 +281,9 @@ func (ev *Evaluator) initIOModule() {
 				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
 			}
 			forced := Force(args[0])
-			sv, ok := forced.(StringValue)
+			bv, ok := forced.(BytesValue)
 			if !ok {
-				return nil, fmt.Errorf("Write expects String, got %s", typeNameOf(forced))
+				return nil, fmt.Errorf("Write expects Bytes, got %s", typeNameOf(forced))
 			}
 			// C/Ruby behavior: flush buffered stdout before writing to stderr
 			if stdoutWriter := ev.globalEnv.GetStdoutWriter(); stdoutWriter != nil {
@@ -292,7 +292,7 @@ func (ev *Evaluator) initIOModule() {
 				}
 			}
 			w := ev.globalEnv.GetRawStderr()
-			n, err := w.Write([]byte(string(sv)))
+			n, err := w.Write([]byte(string(bv)))
 			if err != nil {
 				return nil, err
 			}
