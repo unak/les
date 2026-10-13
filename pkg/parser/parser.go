@@ -1433,15 +1433,33 @@ func normalizeTypeAnnot(parts []string) string {
 	for i, part := range parts {
 		if i > 0 {
 			prev := parts[i-1]
-			if prev != "@" && prev != "." && part != "." && part != "|" && prev != "|" && part != "->" && prev != "->" {
-				sb.WriteString(" ")
-			} else if part == "|" || prev == "|" || part == "->" || prev == "->" {
+			if !noSpaceAfter(prev) && !noSpaceBefore(part, prev) {
 				sb.WriteString(" ")
 			}
 		}
 		sb.WriteString(part)
 	}
 	return sb.String()
+}
+
+func noSpaceBefore(part, prev string) bool {
+	switch part {
+	case ")", "]", "}", ",", ":", ".":
+		return true
+	case "[":
+		return prev != "|" && prev != "->" && prev != "," && prev != ":"
+	default:
+		return false
+	}
+}
+
+func noSpaceAfter(prev string) bool {
+	switch prev {
+	case "(", "[", "{", "@", ".":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
