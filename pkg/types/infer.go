@@ -225,6 +225,10 @@ func makeIOModuleType(alias string) *ModuleType {
 				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
 			},
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
+			},
 		},
 		Embedded: []*InterfaceType{},
 	}
@@ -318,6 +322,10 @@ func makeBufioModuleType(alias string) *ModuleType {
 			"Write": {
 				Arg: &TupleType{Elems: []Type{TypeBytes}},
 				Ret: TypeInt,
+			},
+			"Flush": {
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: &TupleType{Elems: []Type{}},
 			},
 		},
 	}
