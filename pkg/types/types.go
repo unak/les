@@ -271,6 +271,39 @@ func IsAssignableTo(src, target Type) bool {
 		return false
 	}
 
+	// If both are TupleType
+	if tTarget, ok := target.(*TupleType); ok {
+		if tSrc, ok := src.(*TupleType); ok {
+			if tTarget.IsVariadic {
+				lastIdx := len(tTarget.Elems) - 1
+				for i, el := range tSrc.Elems {
+					var expected Type = TypeAny
+					if lastIdx >= 0 {
+						if i < len(tTarget.Elems) {
+							expected = tTarget.Elems[i]
+						} else {
+							expected = tTarget.Elems[lastIdx]
+						}
+					}
+					if !IsAssignableTo(el, expected) {
+						return false
+					}
+				}
+				return true
+			}
+			if len(tSrc.Elems) != len(tTarget.Elems) {
+				return false
+			}
+			for i := range tSrc.Elems {
+				if !IsAssignableTo(tSrc.Elems[i], tTarget.Elems[i]) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+
 	return false
 }
 

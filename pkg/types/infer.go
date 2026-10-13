@@ -410,7 +410,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		targetType := valType
 		if s.TypeAnnot != "" {
-			expected := inf.parseTypeAnnot(s.TypeAnnot)
+			expected, err := inf.parseTypeAnnot(s.TypeAnnot)
+			if err != nil {
+				return err
+			}
 			if !IsAssignableTo(valType, expected) {
 				return fmt.Errorf("type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
 			}
@@ -467,7 +470,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		for i, p := range s.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
-				elemType = inf.parseTypeAnnot(p.TypeAnnot)
+				t, err := inf.parseTypeAnnot(p.TypeAnnot)
+				if err != nil {
+					return err
+				}
+				elemType = t
 			}
 			if p.IsVariadic {
 				isVariadic = true
@@ -482,7 +489,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		var declaredRetType Type = TypeAny
 		if s.ReturnType != "" {
-			declaredRetType = inf.parseTypeAnnot(s.ReturnType)
+			t, err := inf.parseTypeAnnot(s.ReturnType)
+			if err != nil {
+				return err
+			}
+			declaredRetType = t
 		}
 
 		fnType := &FuncType{
@@ -600,7 +611,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				st.Fields[f.Name] = embStruct
 				st.FieldOrder = append(st.FieldOrder, f.Name)
 			} else {
-				fieldType := inf.parseTypeAnnot(f.TypeAnnot)
+				fieldType, err := inf.parseTypeAnnot(f.TypeAnnot)
+				if err != nil {
+					return err
+				}
 				st.Fields[f.Name] = fieldType
 				st.FieldOrder = append(st.FieldOrder, f.Name)
 			}
@@ -619,7 +633,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				if p.Name == "self" {
 					continue
 				}
-				pType := inf.parseTypeAnnot(p.TypeAnnot)
+				var pType Type = TypeAny
+				if p.TypeAnnot != "" {
+					t, err := inf.parseTypeAnnot(p.TypeAnnot)
+					if err != nil {
+						return err
+					}
+					pType = t
+				}
 				paramTypes = append(paramTypes, pType)
 				_ = methodScope.Declare(p.Name, pType)
 			}
@@ -645,7 +666,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 			var retType Type = TypeAny
 			if m.ReturnType != "" {
-				retType = inf.parseTypeAnnot(m.ReturnType)
+				t, err := inf.parseTypeAnnot(m.ReturnType)
+				if err != nil {
+					return err
+				}
+				retType = t
 			} else if lastExprType != nil {
 				retType = lastExprType
 			}
@@ -689,13 +714,32 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
+		if err := inf.scope.Declare(s.Name, iface); err != nil {
+			return err
+		}
+
 		// Next, process direct methods on interface
 		for _, m := range s.Methods {
 			paramTypes := make([]Type, len(m.Params))
 			for i, p := range m.Params {
-				paramTypes[i] = inf.parseTypeAnnot(p.TypeAnnot)
+				var pType Type = TypeAny
+				if p.TypeAnnot != "" {
+					t, err := inf.parseTypeAnnot(p.TypeAnnot)
+					if err != nil {
+						return err
+					}
+					pType = t
+				}
+				paramTypes[i] = pType
 			}
-			retType := inf.parseTypeAnnot(m.ReturnType)
+			var retType Type = TypeAny
+			if m.ReturnType != "" {
+				t, err := inf.parseTypeAnnot(m.ReturnType)
+				if err != nil {
+					return err
+				}
+				retType = t
+			}
 			mSig := &FuncType{
 				Arg: &TupleType{Elems: paramTypes},
 				Ret: retType,
@@ -709,9 +753,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			iface.Methods[m.Name] = mSig
 		}
 
-		if err := inf.scope.Declare(s.Name, iface); err != nil {
-			return err
-		}
 		return nil
 
 	case *ast.ImportStmt:
@@ -988,6 +1029,11 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		if e.TypeAnnot != "" {
+			if _, err := inf.parseTypeAnnot(e.TypeAnnot); err != nil {
+				return nil, err
+			}
+		}
 		return TypeBool, nil
 	case *ast.MatchExpr:
 		_, err := inf.inferExpr(e.Target)
@@ -1045,7 +1091,11 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		for i, p := range e.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
-				elemType = inf.parseTypeAnnot(p.TypeAnnot)
+				t, err := inf.parseTypeAnnot(p.TypeAnnot)
+				if err != nil {
+					return nil, err
+				}
+				elemType = t
 			}
 			if p.IsVariadic {
 				emptyTuple := &TupleType{Elems: []Type{}}
@@ -1109,17 +1159,17 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 	}
 }
 
-func parseTypeAnnot(annot string) Type {
+func parseTypeAnnot(annot string) (Type, error) {
 	return (*Inferencer)(nil).parseTypeAnnot(annot)
 }
 
-func (inf *Inferencer) parseTypeAnnot(annot string) Type {
+func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	annot = strings.TrimSpace(annot)
 	if annot == "" {
-		return TypeAny
+		return TypeAny, nil
 	}
 
-	// Check top-level Union: A | B
+	// 1. Check top-level Union: A | B
 	// Careful not to split inside parentheses, brackets, or braces
 	var parts []string
 	parenDepth := 0
@@ -1150,9 +1200,17 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		parts = append(parts, string(runes[start:]))
 		var memberTypes []Type
 		for _, p := range parts {
-			memberTypes = append(memberTypes, inf.parseTypeAnnot(p))
+			pt := strings.TrimSpace(p)
+			if pt == "" {
+				return nil, fmt.Errorf("invalid union type: empty member in '%s'", annot)
+			}
+			mt, err := inf.parseTypeAnnot(pt)
+			if err != nil {
+				return nil, err
+			}
+			memberTypes = append(memberTypes, mt)
 		}
-		return NewUnionType(memberTypes...)
+		return NewUnionType(memberTypes...), nil
 	}
 
 	// 2. Check top-level Function Type: Arg -> Ret
@@ -1191,45 +1249,58 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 			if inner == "" {
 				argType = &TupleType{Elems: []Type{}}
 			} else {
-				elems := inf.parseTupleElements(inner)
+				elems, err := inf.parseTupleElements(inner)
+				if err != nil {
+					return nil, err
+				}
 				argType = &TupleType{Elems: elems}
 			}
 		} else if argStr == "" {
 			argType = &TupleType{Elems: []Type{}}
 		} else {
-			elemType := inf.parseTypeAnnot(argStr)
+			elemType, err := inf.parseTypeAnnot(argStr)
+			if err != nil {
+				return nil, err
+			}
 			argType = &TupleType{Elems: []Type{elemType}}
 		}
 
-		retType := inf.parseTypeAnnot(retStr)
+		retType, err := inf.parseTypeAnnot(retStr)
+		if err != nil {
+			return nil, err
+		}
 		return &FuncType{
 			Arg: argType,
 			Ret: retType,
-		}
+		}, nil
 	}
 
 	switch annot {
 	case "Int":
-		return TypeInt
+		return TypeInt, nil
 	case "Float":
-		return TypeFloat
+		return TypeFloat, nil
 	case "String":
-		return TypeString
+		return TypeString, nil
 	case "Bytes":
-		return TypeBytes
+		return TypeBytes, nil
 	case "Bool":
-		return TypeBool
+		return TypeBool, nil
 	case "Nil", "nil":
-		return TypeNil
+		return TypeNil, nil
 	case "Any":
-		return TypeAny
+		return TypeAny, nil
+	case "Tuple":
+		return &TupleType{Elems: []Type{TypeAny}, IsVariadic: true}, nil
+	case "Dict":
+		return &DictType{Key: TypeAny, Value: TypeAny}, nil
 	}
 
 	// Tuple annotation or grouping: (Int, ...) or (Int, String) or ((Int) -> String)
 	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "" {
-			return &TupleType{Elems: []Type{}}
+			return &TupleType{Elems: []Type{}}, nil
 		}
 		// Check if there is a top-level comma
 		hasTopLevelComma := false
@@ -1260,7 +1331,10 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 			return inf.parseTypeAnnot(inner)
 		}
 
-		elems := inf.parseTupleElements(inner)
+		elems, err := inf.parseTupleElements(inner)
+		if err != nil {
+			return nil, err
+		}
 		isVariadic := false
 		for _, r := range strings.Split(inner, ",") {
 			if strings.TrimSpace(r) == "..." {
@@ -1271,7 +1345,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		return &TupleType{
 			Elems:      elems,
 			IsVariadic: isVariadic,
-		}
+		}, nil
 	}
 
 	// Dict annotation: {Key: Value}
@@ -1305,12 +1379,18 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 			keyStr := strings.TrimSpace(string(innerRunes[:colonIdx]))
 			valStr := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
 			if keyStr != "" && valStr != "" {
-				keyType := inf.parseTypeAnnot(keyStr)
-				valType := inf.parseTypeAnnot(valStr)
-				return &DictType{Key: keyType, Value: valType}
+				keyType, err := inf.parseTypeAnnot(keyStr)
+				if err != nil {
+					return nil, err
+				}
+				valType, err := inf.parseTypeAnnot(valStr)
+				if err != nil {
+					return nil, err
+				}
+				return &DictType{Key: keyType, Value: valType}, nil
 			}
 		}
-		return TypeAny
+		return nil, fmt.Errorf("unknown type '%s'", annot)
 	}
 
 	if inf != nil {
@@ -1322,26 +1402,26 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 				if mod, ok := inf.modules[modName]; ok {
 					if mod.Types != nil {
 						if t, ok := mod.Types[typeName]; ok {
-							return t
+							return t, nil
 						}
 					}
 					if t, ok := mod.Exports[typeName]; ok {
-						return t
+						return t, nil
 					}
 				}
 			}
 		}
 		if inf.scope != nil {
 			if t, ok := inf.scope.Lookup(annot); ok {
-				return t
+				return t, nil
 			}
 		}
 	}
 
-	return TypeAny
+	return nil, fmt.Errorf("unknown type '%s'", annot)
 }
 
-func (inf *Inferencer) parseTupleElements(inner string) []Type {
+func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
@@ -1373,8 +1453,12 @@ func (inf *Inferencer) parseTupleElements(inner string) []Type {
 	for _, p := range parts {
 		trimmed := strings.TrimSpace(p)
 		if trimmed != "" && trimmed != "..." {
-			elems = append(elems, inf.parseTypeAnnot(trimmed))
+			elem, err := inf.parseTypeAnnot(trimmed)
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, elem)
 		}
 	}
-	return elems
+	return elems, nil
 }
