@@ -351,7 +351,16 @@ Listed from highest to lowest precedence:
       print "dict with String keys and Int values"
   ```
   > [!NOTE]
-  > When checking dictionary types with `expr is {K: V}`, all keys and already-evaluated values are verified. To preserve lazy evaluation semantics, unevaluated values (lazy thunks) are not forced during the `is` test.
+  > When checking dictionary types with `expr is {K: V}`, all keys and **already-evaluated values** are verified. To preserve lazy evaluation semantics and prevent unintended side effects or evaluating unneeded infinite/error computations, unevaluated values (lazy thunks) are not forced during the `is` test.
+  >
+  > Consequently, the outcome of `is` depends on the current evaluation state of the dictionary's values:
+  > ```python
+  > d = {"a": "hello"}
+  > print (d is {String: Int})  # true (value is unevaluated thunk and skipped)
+  > _ = d["a"]!                 # forces evaluation of the value ("hello")
+  > print (d is {String: Int})  # false (now evaluated as String, mismatching Int)
+  > ```
+  > **Notice**: This runtime behavior is provisional and may change in future versions of Les (for instance, with static dictionary typing constraints or alternative deep validation semantics).
 
 - **Pattern Match Expression `match ... case`**:
   Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, and default `_`:

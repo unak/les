@@ -3211,6 +3211,9 @@ print " "
 unevalDict = {"a": "not_int"}
 print (unevalDict is {String: Int})
 print " "
+_ = unevalDict["a"]!
+print (unevalDict is {String: Int})
+print " "
 
 def id(x):
     x
@@ -3228,7 +3231,7 @@ print lookup({"foo": 100}, "foo")
 	if err != nil {
 		t.Fatalf("unexpected error evaluating code with dict type annot: %v", err)
 	}
-	expected := "42 true false true false 0 true true 99 100"
+	expected := "42 true false true false 0 true true false 99 100"
 	if strings.TrimSpace(out) != expected {
 		t.Fatalf("expected output %q, got %q", expected, strings.TrimSpace(out))
 	}

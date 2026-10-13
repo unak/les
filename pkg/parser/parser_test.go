@@ -1022,3 +1022,55 @@ res4 = 5 |> (|n|: n * 2)
 		t.Fatalf("expected inner callee f, got %+v", innerF.Callee)
 	}
 }
+
+func TestParseInvalidTypeAnnotations(t *testing.T) {
+	invalidInputs := []string{
+		`b: Dict[String, Int] = 5`,
+		`b: {String} = 5`,
+		`b: {} = 5`,
+		`b: {: Int} = 5`,
+		`b: {String:} = 5`,
+		`b: {String: Int: Bool} = 5`,
+		`x is Dict[String, Int]`,
+		`x is {String}`,
+		`x is {}`,
+		"def f(x: Dict[String, Int]):\n    1",
+		"def f(x: {String}):\n    1",
+		`match v:
+    case Dict[String, Int]:
+        1`,
+		`match v:
+    case {String}:
+        1`,
+	}
+
+	for _, input := range invalidInputs {
+		l := lexer.NewLexer(input)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Errorf("expected syntax error for %q, but got none", input)
+		}
+	}
+
+	validInputs := []string{
+		`b: {String: Int} = {"a": 1}`,
+		`b: {String: {Int: Bool}} = {}`,
+		`x is {String: Int}`,
+		`x is {String: {Int: Bool}}`,
+		"def f(x: {String: Int}) -> {String: Int}:\n    x",
+		`match v:
+    case {String: Int}:
+        1`,
+	}
+
+	for _, input := range validInputs {
+		l := lexer.NewLexer(input)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Errorf("unexpected syntax error for %q: %v", input, p.Errors())
+		}
+	}
+}
+

@@ -1304,11 +1304,13 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		if colonIdx != -1 {
 			keyStr := strings.TrimSpace(string(innerRunes[:colonIdx]))
 			valStr := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
-			keyType := inf.parseTypeAnnot(keyStr)
-			valType := inf.parseTypeAnnot(valStr)
-			return &DictType{Key: keyType, Value: valType}
+			if keyStr != "" && valStr != "" {
+				keyType := inf.parseTypeAnnot(keyStr)
+				valType := inf.parseTypeAnnot(valStr)
+				return &DictType{Key: keyType, Value: valType}
+			}
 		}
-		return &DictType{Key: TypeAny, Value: TypeAny}
+		return TypeAny
 	}
 
 	if inf != nil {

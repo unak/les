@@ -1543,7 +1543,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
 			if inner == "" {
-				return true
+				return false
 			}
 			colonIdx := -1
 			pD := 0
@@ -1564,15 +1564,20 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				} else if r == '}' {
 					brD--
 				} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+					if colonIdx != -1 {
+						return false
+					}
 					colonIdx = i
-					break
 				}
 			}
 			if colonIdx == -1 {
-				return true
+				return false
 			}
 			keyAnnot := strings.TrimSpace(string(innerRunes[:colonIdx]))
 			valAnnot := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
+			if keyAnnot == "" || valAnnot == "" {
+				return false
+			}
 
 			for k, v := range dVal.Entries {
 				var kVal Value = StringValue(k)
