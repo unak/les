@@ -295,7 +295,7 @@ Listed from highest to lowest precedence:
 - `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
 - `Dict`: `d[key]` accesses value by key (`d["a"]`). Keys are strictly typed (e.g. `1` and `"1"` do not conflict). Non-existent key raises a runtime error.
 
-### 6. Side Effects & I/O Semantics
+### 7. Side Effects & I/O Semantics
 - **Output is a Demand Boundary (Strict Evaluation)**:
   - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`). Arguments are forced immediately when the statement executes.
   - Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
@@ -313,7 +313,7 @@ Listed from highest to lowest precedence:
 - Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
 - User-defined functions cannot create raw side-effect primitives.
 
-### 7. Type System, Type Inference & Pattern Matching
+### 8. Type System, Type Inference & Pattern Matching
 - **Static Type Inference & Optional Annotations**:
   - Les features static type inference based on the Hindley-Milner algorithm. Explicit type annotations on variables, parameters, and return types are entirely optional:
     ```python
@@ -402,7 +402,7 @@ Listed from highest to lowest precedence:
   classify nil
   ```
 
-### 8. Built-in Functions
+### 9. Built-in Functions
 
 #### `def print(*args: Show): ()`
 Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
@@ -488,7 +488,7 @@ Reads a single line from standard input, stripping any trailing newline (`\n` or
       print "Read line: ", line, "\n"
   ```
 
-### 9. Built-in Methods on Primitive Types
+### 10. Built-in Methods on Primitive Types
 
 - **`String.Ord(): Int`**:
   Returns the Unicode code point of the first rune (character) in `self`.
@@ -537,7 +537,7 @@ Reads a single line from standard input, stripping any trailing newline (`\n` or
 - **`ToString(): String`**:
   Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
 
-### 10. Built-in Variables & CLI Arguments
+### 11. Built-in Variables & CLI Arguments
 
 Les provides predefined variables for command-line arguments and file path inspection:
 
@@ -561,7 +561,7 @@ if len(Args) > 0:
     print "First arg: ", Args[0], "\n"
 ```
 
-### 11. Special Types: `Nil` and `Any`
+### 12. Special Types: `Nil` and `Any`
 - **`Nil`**:
   - Represents the absence of a value (literal `nil`, type `Nil`).
   - Useful in union types such as `Int | Nil` (nullable/optional semantics).
@@ -569,7 +569,7 @@ if len(Args) > 0:
   - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
   - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
 
-### 12. Variadic Arguments & Tuple Unpacking
+### 13. Variadic Arguments & Tuple Unpacking
 
 #### Variadic Parameters (`*args`)
 - Function parameters can accept 0 or more arguments by prefixing with `*`:
@@ -622,7 +622,7 @@ if len(Args) > 0:
   - Without arguments or bare `exit`: exits with code `0`.
   - With `true`: code `0`; with `false`: code `1`.
 
-### 13. Structs (`struct`)
+### 14. Structs (`struct`)
 
 Les provides immutable records with methods, Go-style struct embedding, and static ambiguous selector detection.
 
@@ -679,7 +679,7 @@ print rc is Reader      # true
 #### Static Ambiguous Selector Detection
 When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
 
-### 14. Interfaces (`interface`) & Structural Typing
+### 15. Interfaces (`interface`) & Structural Typing
 
 Les provides Go-style implicit structural typing (duck typing) via interface declarations.
 
@@ -726,7 +726,7 @@ rc: ReadCloser = File(path: "/tmp/data")
 #### Dynamic Runtime Checks (`is`)
 - `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
 
-### 15. Standard I/O Module (`@io`)
+### 16. Standard I/O Module (`@io`)
 
 The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
 
@@ -749,7 +749,7 @@ import io
 - **`@io.Stderr`**: Standard error instance satisfying `Writer`.
   - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
 
-### 16. Buffered I/O Module (`@bufio`)
+### 17. Buffered I/O Module (`@bufio`)
 
 The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
 
@@ -767,7 +767,7 @@ import bufio
   - `Write(b: Bytes): Int`: Appends byte sequence `b` to write buffer.
   - `Flush(): ()`: Flushes buffered data to the underlying stream.
 
-### 17. Error Handling & `interface Error`
+### 18. Error Handling & `interface Error`
 
 Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
 
