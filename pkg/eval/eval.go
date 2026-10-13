@@ -1147,13 +1147,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.CallExpr:
 		calleeVal := Force(NewThunk(e.Callee, env))
 
-		// Prepare argument thunks (pass-by-need) unless force-demanded
+		// Prepare argument thunks (pass-by-need) unless force-demanded or constant literal
 		argValues := make([]Value, len(e.Args))
 		for i, a := range e.Args {
 			if env.isForceDemand(a) {
-				argValues[i] = Force(NewThunk(a, env))
+				argValues[i] = Force(env.newThunk(a))
+			} else if val, ok := evalLiteral(a); ok {
+				argValues[i] = val
 			} else {
-				argValues[i] = NewThunk(a, env)
+				argValues[i] = env.newThunk(a)
 			}
 		}
 
