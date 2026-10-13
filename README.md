@@ -402,166 +402,7 @@ Listed from highest to lowest precedence:
   classify nil
   ```
 
-### 9. Built-in Functions
-
-#### `def print(*args: Show): ()`
-Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
-
-- **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
-- **Arguments**: `*args: Show` — variable number of values satisfying the `Show` interface (`ToString(): String`).
-- **Returns**: `()` (empty tuple).
-- **Usage**:
-  ```python
-  print "Hello, world!\n"
-  print "a", "b", 42  # outputs "ab42" without space or newline
-  ```
-
-#### `def len(collection: Any): Int`
-Returns the length of a `String` (rune count), `Tuple`, or `Dict`.
-
-- **Arguments**: `collection: Any`
-- **Returns**: `Int`
-- **Indexing Support**: `String` and `Tuple` support 0-based indexing as well as negative indices (`[-1]` for last element).
-
-#### `def type(*args: Any): String`
-Returns the string representation of the runtime type of the given value or argument tuple.
-
-- **Arguments**: `*args: Any` — single value or multiple arguments.
-- **Returns**: `String` — type name (e.g. `"Int"`, `"(Int, Int)"`, `"(Int)"`).
-- **Behavior**:
-  - `type(42)` -> `"Int"`
-  - `type((1,))` -> `"(Int)"`
-  - `type(1, 2)` -> `"(Int, Int)"`
-  - `type("hello")` -> `"String"`
-  - `type(nil)` -> `"Nil"`
-  - `type()` -> `"()"`
-  - `type({"key": "value"})` -> `"{String: String}"`
-  - `type({})` -> `"{Any: Any}"`
-- **Usage**:
-  ```python
-  t = type(42)       # "Int"
-  t2 = type(1, 2)    # "(Int, Int)"
-  td = type({"a": 1}) # "{String: Int}"
-  ```
-
-#### `def exit(code: Int | Bool = 0)`
-Terminates the program execution immediately with the given exit status code.
-
-- **Arguments**: Optional 0 or 1 argument (`Int` or `Bool`).
-  - No arguments (`exit` or `exit()`): exits with code `0`.
-  - `Int`: exits with the given integer code (e.g. `exit 0`, `exit 42`).
-  - `Bool`: `true` exits with code `0`, `false` exits with code `1`.
-- **Usage**:
-  ```python
-  exit           # Bare statement auto-call: exits with 0
-  exit 0
-  exit true      # exits with 0
-  exit false     # exits with 1
-  exit 1
-  ```
-
-#### `def force(x: Any): Any`
-Explicit demand point that strictly evaluates (forces) its argument and returns the evaluated concrete value.
-
-- **Arguments**: `x: Any` — expression or value to force.
-- **Returns**: `Any` — concrete evaluated value.
-- **Syntactic Sugar**: The postfix exclamation mark `expr!` is syntactic sugar for the built-in `force(expr)`. Unlike function calls which can be shadowed by local bindings or parameters, `expr!` is a dedicated syntax form that always guarantees immediate evaluation.
-- **Usage**:
-  ```python
-  x = force(10 + 20)
-  # Forces argument evaluation before function application or container construction:
-  pick(42, force(expensive_call()))
-  ```
-
-#### `def gets(): String | Nil`
-Reads a single line from standard input, stripping any trailing newline (`\n` or `\r\n`). Returns `nil` upon reaching EOF.
-
-- **Effect**: Returns a deferred lazy `Thunk`. Invoking `gets()` does not block immediately; the actual read occurs only when the value is demanded (e.g. forced via `print`, `!`, or string concatenation).
-- **Arguments**: None (`()`).
-- **Returns**: `String | Nil` — the line content as a `String`, or `nil` on EOF.
-- **Usage**:
-  ```python
-  line = gets()
-  if line is Nil:
-      print "EOF reached\n"
-  else:
-      print "Read line: ", line, "\n"
-  ```
-
-### 10. Built-in Methods on Primitive Types
-
-- **`String.Ord(): Int`**:
-  Returns the Unicode code point of the first rune (character) in `self`.
-  Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
-  ```python
-  "A".Ord()        # 65
-  "あ".Ord()       # 12354
-  "Hello".Ord()    # 72 (first character 'H')
-  ```
-
-- **`Int.Chr(): String`**:
-  Returns a 1-rune string corresponding to the Unicode code point `self`.
-  Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
-  ```python
-  65.Chr()         # "A"
-  12354.Chr()      # "あ"
-  (97).Chr()       # "a"
-  ```
-
-- **`String.Bytes(): Bytes`**:
-  Returns the UTF-8 byte sequence of `self` as a `Bytes` value.
-  ```python
-  b = "hello".Bytes()  # Bytes with 5 bytes
-  ```
-
-- **`Bytes` Primitive Type**:
-  Immutable raw byte sequence (`Bytes`), representing binary data.
-  - **Constructor `Bytes(val: String | Bytes = ""): Bytes`**:
-    `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes(b)` returns `b` itself. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
-  - **Index Access `b[i]: Int`**:
-    Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
-  - **Length `len(b): Int`**:
-    Returns the number of bytes in `b`.
-  - **`b.Bytes(): Bytes`**:
-    Returns the byte sequence itself (identity conversion).
-  - **`b.String(): String`**:
-    Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
-  - **`b.IsValidString(): Bool`**:
-    Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
-  - **`b.ToString(): String`**:
-    Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
-  - **Operators**:
-    - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
-    - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
-
-- **`ToString(): String`**:
-  Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
-
-### 11. Built-in Variables & CLI Arguments
-
-Les provides predefined variables for command-line arguments and file path inspection:
-
-| Variable | Type | Scope | Description |
-|---|---|---|---|
-| `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
-| `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
-| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`@bufio.Reader` wrapping `@io.Stdin`). |
-| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`@bufio.Writer` wrapping `@io.Stdout`). |
-| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`@io.Stderr` with no-op `Flush()`). |
-| `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
-| `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
-
-**Example**:
-```python
-print "Running program: ", ProgramName, "\n"
-print "This file: ", scriptName, " line: ", scriptLine, "\n"
-print "Argument count: ", len(Args), "\n"
-
-if len(Args) > 0:
-    print "First arg: ", Args[0], "\n"
-```
-
-### 12. Special Types: `Nil` and `Any`
+### 9. Special Types: `Nil` and `Any`
 - **`Nil`**:
   - Represents the absence of a value (literal `nil`, type `Nil`).
   - Useful in union types such as `Int | Nil` (nullable/optional semantics).
@@ -569,7 +410,7 @@ if len(Args) > 0:
   - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
   - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
 
-### 13. Variadic Arguments & Tuple Unpacking
+### 10. Variadic Arguments & Tuple Unpacking
 
 #### Variadic Parameters (`*args`)
 - Function parameters can accept 0 or more arguments by prefixing with `*`:
@@ -622,7 +463,7 @@ if len(Args) > 0:
   - Without arguments or bare `exit`: exits with code `0`.
   - With `true`: code `0`; with `false`: code `1`.
 
-### 14. Structs (`struct`)
+### 11. Structs (`struct`)
 
 Les provides immutable records with methods, Go-style struct embedding, and static ambiguous selector detection.
 
@@ -679,7 +520,7 @@ print rc is Reader      # true
 #### Static Ambiguous Selector Detection
 When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
 
-### 15. Interfaces (`interface`) & Structural Typing
+### 12. Interfaces (`interface`) & Structural Typing
 
 Les provides Go-style implicit structural typing (duck typing) via interface declarations.
 
@@ -726,7 +567,7 @@ rc: ReadCloser = File(path: "/tmp/data")
 #### Dynamic Runtime Checks (`is`)
 - `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
 
-### 16. Error Handling & `interface Error`
+### 13. Error Handling & `interface Error`
 
 Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
 
@@ -780,9 +621,170 @@ struct ParseError:
 # Automatically matches `case Error:` and `is Error`!
 ```
 
-### 17. Built-in Modules
+### 14. Built-in Functions, Variables, Methods and Modules
 
-#### Standard I/O Module (`@io`)
+#### Built-in Functions
+
+##### `def print(*args: Show): ()`
+Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
+
+- **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
+- **Arguments**: `*args: Show` — variable number of values satisfying the `Show` interface (`ToString(): String`).
+- **Returns**: `()` (empty tuple).
+- **Usage**:
+  ```python
+  print "Hello, world!\n"
+  print "a", "b", 42  # outputs "ab42" without space or newline
+  ```
+
+##### `def len(collection: Any): Int`
+Returns the length of a `String` (rune count), `Tuple`, or `Dict`.
+
+- **Arguments**: `collection: Any`
+- **Returns**: `Int`
+- **Indexing Support**: `String` and `Tuple` support 0-based indexing as well as negative indices (`[-1]` for last element).
+
+##### `def type(*args: Any): String`
+Returns the string representation of the runtime type of the given value or argument tuple.
+
+- **Arguments**: `*args: Any` — single value or multiple arguments.
+- **Returns**: `String` — type name (e.g. `"Int"`, `"(Int, Int)"`, `"(Int)"`).
+- **Behavior**:
+  - `type(42)` -> `"Int"`
+  - `type((1,))` -> `"(Int)"`
+  - `type(1, 2)` -> `"(Int, Int)"`
+  - `type("hello")` -> `"String"`
+  - `type(nil)` -> `"Nil"`
+  - `type()` -> `"()"`
+  - `type({"key": "value"})` -> `"{String: String}"`
+  - `type({})` -> `"{Any: Any}"`
+- **Usage**:
+  ```python
+  t = type(42)       # "Int"
+  t2 = type(1, 2)    # "(Int, Int)"
+  td = type({"a": 1}) # "{String: Int}"
+  ```
+
+##### `def exit(code: Int | Bool = 0)`
+Terminates the program execution immediately with the given exit status code.
+
+- **Arguments**: Optional 0 or 1 argument (`Int` or `Bool`).
+  - No arguments (`exit` or `exit()`): exits with code `0`.
+  - `Int`: exits with the given integer code (e.g. `exit 0`, `exit 42`).
+  - `Bool`: `true` exits with code `0`, `false` exits with code `1`.
+- **Usage**:
+  ```python
+  exit           # Bare statement auto-call: exits with 0
+  exit 0
+  exit true      # exits with 0
+  exit false     # exits with 1
+  exit 1
+  ```
+
+##### `def force(x: Any): Any`
+Explicit demand point that strictly evaluates (forces) its argument and returns the evaluated concrete value.
+
+- **Arguments**: `x: Any` — expression or value to force.
+- **Returns**: `Any` — concrete evaluated value.
+- **Syntactic Sugar**: The postfix exclamation mark `expr!` is syntactic sugar for the built-in `force(expr)`. Unlike function calls which can be shadowed by local bindings or parameters, `expr!` is a dedicated syntax form that always guarantees immediate evaluation.
+- **Usage**:
+  ```python
+  x = force(10 + 20)
+  # Forces argument evaluation before function application or container construction:
+  pick(42, force(expensive_call()))
+  ```
+
+##### `def gets(): String | Nil`
+Reads a single line from standard input, stripping any trailing newline (`\n` or `\r\n`). Returns `nil` upon reaching EOF.
+
+- **Effect**: Returns a deferred lazy `Thunk`. Invoking `gets()` does not block immediately; the actual read occurs only when the value is demanded (e.g. forced via `print`, `!`, or string concatenation).
+- **Arguments**: None (`()`).
+- **Returns**: `String | Nil` — the line content as a `String`, or `nil` on EOF.
+- **Usage**:
+  ```python
+  line = gets()
+  if line is Nil:
+      print "EOF reached\n"
+  else:
+      print "Read line: ", line, "\n"
+  ```
+
+#### Built-in Variables & CLI Arguments
+
+Les provides predefined variables for command-line arguments and file path inspection:
+
+| Variable | Type | Scope | Description |
+|---|---|---|---|
+| `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
+| `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
+| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`@bufio.Reader` wrapping `@io.Stdin`). |
+| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`@bufio.Writer` wrapping `@io.Stdout`). |
+| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`@io.Stderr` with no-op `Flush()`). |
+| `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
+| `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
+
+**Example**:
+```python
+print "Running program: ", ProgramName, "\n"
+print "This file: ", scriptName, " line: ", scriptLine, "\n"
+print "Argument count: ", len(Args), "\n"
+
+if len(Args) > 0:
+    print "First arg: ", Args[0], "\n"
+```
+
+#### Built-in Methods on Primitive Types
+
+- **`String.Ord(): Int`**:
+  Returns the Unicode code point of the first rune (character) in `self`.
+  Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
+  ```python
+  "A".Ord()        # 65
+  "あ".Ord()       # 12354
+  "Hello".Ord()    # 72 (first character 'H')
+  ```
+
+- **`Int.Chr(): String`**:
+  Returns a 1-rune string corresponding to the Unicode code point `self`.
+  Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
+  ```python
+  65.Chr()         # "A"
+  12354.Chr()      # "あ"
+  (97).Chr()       # "a"
+  ```
+
+- **`String.Bytes(): Bytes`**:
+  Returns the UTF-8 byte sequence of `self` as a `Bytes` value.
+  ```python
+  b = "hello".Bytes()  # Bytes with 5 bytes
+  ```
+
+- **`Bytes` Primitive Type**:
+  Immutable raw byte sequence (`Bytes`), representing binary data.
+  - **Constructor `Bytes(val: String | Bytes = ""): Bytes`**:
+    `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes(b)` returns `b` itself. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
+  - **Index Access `b[i]: Int`**:
+    Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
+  - **Length `len(b): Int`**:
+    Returns the number of bytes in `b`.
+  - **`b.Bytes(): Bytes`**:
+    Returns the byte sequence itself (identity conversion).
+  - **`b.String(): String`**:
+    Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
+  - **`b.IsValidString(): Bool`**:
+    Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
+  - **`b.ToString(): String`**:
+    Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+  - **Operators**:
+    - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
+    - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
+
+- **`ToString(): String`**:
+  Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
+
+#### Built-in Modules
+
+##### Standard I/O Module (`@io`)
 
 The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
 
@@ -790,14 +792,14 @@ The built-in `@io` module provides stream I/O abstractions, interfaces, and stan
 import io
 ```
 
-##### Core Interfaces
+###### Core Interfaces
 - **`Reader`**: `Read(n: Int): Bytes | Nil`
 - **`Writer`**: `Write(b: Bytes): Int`
 - **`Closer`**: `Close(): ()`
 - **`ReadCloser`**: embeds `Reader`, `Closer`
 - **`WriteCloser`**: embeds `Writer`, `Closer`
 
-##### Standard Streams
+###### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
   - `@io.Stdin.Read(n)` reads up to `n` bytes as a `Bytes` sequence.
 - **`@io.Stdout`**: Standard output instance satisfying `Writer`.
@@ -805,7 +807,7 @@ import io
 - **`@io.Stderr`**: Standard error instance satisfying `Writer`.
   - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
 
-#### Buffered I/O Module (`@bufio`)
+##### Buffered I/O Module (`@bufio`)
 
 The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
 
@@ -813,7 +815,7 @@ The built-in `@bufio` module wraps stream I/O objects with buffering, line readi
 import bufio
 ```
 
-##### Structs & Constructors
+###### Structs & Constructors
 - **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
   - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
   - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
