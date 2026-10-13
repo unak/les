@@ -621,11 +621,11 @@ struct ParseError:
 # Automatically matches `case Error:` and `is Error`!
 ```
 
-### 14. Built-in Functions, Variables, Methods and Modules
+## Built-in Functions, Variables, Methods and Modules
 
-#### Built-in Functions
+### 1. Built-in Functions
 
-##### `def print(*args: Show): ()`
+#### `def print(*args: Show): ()`
 Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
 
 - **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
@@ -637,14 +637,14 @@ Outputs string representations of all arguments directly without inserting space
   print "a", "b", 42  # outputs "ab42" without space or newline
   ```
 
-##### `def len(collection: Any): Int`
+#### `def len(collection: Any): Int`
 Returns the length of a `String` (rune count), `Tuple`, or `Dict`.
 
 - **Arguments**: `collection: Any`
 - **Returns**: `Int`
 - **Indexing Support**: `String` and `Tuple` support 0-based indexing as well as negative indices (`[-1]` for last element).
 
-##### `def type(*args: Any): String`
+#### `def type(*args: Any): String`
 Returns the string representation of the runtime type of the given value or argument tuple.
 
 - **Arguments**: `*args: Any` — single value or multiple arguments.
@@ -665,7 +665,7 @@ Returns the string representation of the runtime type of the given value or argu
   td = type({"a": 1}) # "{String: Int}"
   ```
 
-##### `def exit(code: Int | Bool = 0)`
+#### `def exit(code: Int | Bool = 0)`
 Terminates the program execution immediately with the given exit status code.
 
 - **Arguments**: Optional 0 or 1 argument (`Int` or `Bool`).
@@ -681,7 +681,7 @@ Terminates the program execution immediately with the given exit status code.
   exit 1
   ```
 
-##### `def force(x: Any): Any`
+#### `def force(x: Any): Any`
 Explicit demand point that strictly evaluates (forces) its argument and returns the evaluated concrete value.
 
 - **Arguments**: `x: Any` — expression or value to force.
@@ -694,7 +694,7 @@ Explicit demand point that strictly evaluates (forces) its argument and returns 
   pick(42, force(expensive_call()))
   ```
 
-##### `def gets(): String | Nil`
+#### `def gets(): String | Nil`
 Reads a single line from standard input, stripping any trailing newline (`\n` or `\r\n`). Returns `nil` upon reaching EOF.
 
 - **Effect**: Returns a deferred lazy `Thunk`. Invoking `gets()` does not block immediately; the actual read occurs only when the value is demanded (e.g. forced via `print`, `!`, or string concatenation).
@@ -709,7 +709,7 @@ Reads a single line from standard input, stripping any trailing newline (`\n` or
       print "Read line: ", line, "\n"
   ```
 
-#### Built-in Variables & CLI Arguments
+### 2. Built-in Variables & CLI Arguments
 
 Les provides predefined variables for command-line arguments and file path inspection:
 
@@ -733,7 +733,7 @@ if len(Args) > 0:
     print "First arg: ", Args[0], "\n"
 ```
 
-#### Built-in Methods on Primitive Types
+### 3. Built-in Methods on Primitive Types
 
 - **`String.Ord(): Int`**:
   Returns the Unicode code point of the first rune (character) in `self`.
@@ -782,9 +782,9 @@ if len(Args) > 0:
 - **`ToString(): String`**:
   Available on all primitive types, tuples, dicts, and structs satisfying `Show`.
 
-#### Built-in Modules
+### 4. Built-in Modules
 
-##### Standard I/O Module (`@io`)
+#### Standard I/O Module (`@io`)
 
 The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
 
@@ -792,14 +792,14 @@ The built-in `@io` module provides stream I/O abstractions, interfaces, and stan
 import io
 ```
 
-###### Core Interfaces
+##### Core Interfaces
 - **`Reader`**: `Read(n: Int): Bytes | Nil`
 - **`Writer`**: `Write(b: Bytes): Int`
 - **`Closer`**: `Close(): ()`
 - **`ReadCloser`**: embeds `Reader`, `Closer`
 - **`WriteCloser`**: embeds `Writer`, `Closer`
 
-###### Standard Streams
+##### Standard Streams
 - **`@io.Stdin`**: Standard input instance satisfying `Reader` and `Closer` (and `ReadCloser`).
   - `@io.Stdin.Read(n)` reads up to `n` bytes as a `Bytes` sequence.
 - **`@io.Stdout`**: Standard output instance satisfying `Writer`.
@@ -807,7 +807,7 @@ import io
 - **`@io.Stderr`**: Standard error instance satisfying `Writer`.
   - `@io.Stderr.Write(b)` writes byte sequence `b` directly to standard error without buffering. Also provides a no-op `Flush(): ()` for `bufio.Writer` interface compatibility.
 
-##### Buffered I/O Module (`@bufio`)
+#### Buffered I/O Module (`@bufio`)
 
 The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
 
@@ -815,7 +815,7 @@ The built-in `@bufio` module wraps stream I/O objects with buffering, line readi
 import bufio
 ```
 
-###### Structs & Constructors
+##### Structs & Constructors
 - **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
   - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
   - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
