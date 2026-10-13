@@ -68,7 +68,7 @@ Type annotations are optional (full HM-style type inference):
 ```python
 x: Int = 10
 p: (Int, String) = (1, "ok")
-d: Dict[String, Int] = {"count": 42}
+d: {String: Int} = {"count": 42}
 opt: String | Nil = nil
 
 # Infinite / stream Tuple: ellipsis '...' repeats the last specified element type indefinitely
@@ -874,7 +874,7 @@ Bitwise operations for integers:
 Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
 
 - Syntax: `struct Box[T]: value: T`, `def map[T, U](items: (T, ...), fn: (T) -> U): (U, ...)`
-- Complements the existing built-in type parameters like `Dict[K, V]` and tuple stream types `(T, ...)`.
+- Complements the existing built-in type parameters like `{K: V}` and tuple stream types `(T, ...)`.
 
 ### 8. Binary / Byte Stream I/O vs Rune Strings
 Currently, stream I/O methods like `Read(n)` and `Peek(n)` operate on raw bytes (`n` bytes) while string indexing (`s[i]`) and `len(s)` operate on Unicode runes. Future work will introduce dedicated binary/buffer data types (e.g. `Bytes` / `ByteBuffer`) and clarify the distinction between byte-level stream processing and rune-level text processing.

@@ -1508,6 +1508,10 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		_, ok := val.(*DictValue)
 		return ok
 	default:
+		if strings.HasPrefix(typeAnnot, "{") && strings.HasSuffix(typeAnnot, "}") {
+			_, ok := val.(*DictValue)
+			return ok
+		}
 		// Check struct type or embedded struct type
 		if si, ok := val.(*StructInstance); ok {
 			if si.Def.Name == typeAnnot {

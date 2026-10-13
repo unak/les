@@ -973,4 +973,105 @@ res = "hello" + b
 	}
 }
 
+func TestDictTypeAnnotation(t *testing.T) {
+	// 1. Basic typed variable declaration
+	code1 := `
+d: {String: Int} = {"count": 42}
+`
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(prog1); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	// 2. Empty dict assignment
+	code2 := `
+d: {String: Int} = {}
+`
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(prog2); err != nil {
+		t.Fatalf("unexpected type error assigning empty dict: %v", err)
+	}
+
+	// 3. Function parameter and return type
+	code3 := `
+def lookup(table: {String: Int}, key: String): Int:
+    table[key]
+
+val = lookup({"a": 1}, "a")
+`
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(prog3); err != nil {
+		t.Fatalf("unexpected type error in function with dict: %v", err)
+	}
+
+	// 4. Nested dict type
+	code4 := `
+d: {String: {Int: Bool}} = {"nested": {1: true}}
+`
+	prog4 := parser.NewParser(lexer.NewLexer(code4)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(prog4); err != nil {
+		t.Fatalf("unexpected type error in nested dict: %v", err)
+	}
+
+	// 5. Dict in union
+	code5 := `
+d: {String: Int} | Nil = nil
+`
+	prog5 := parser.NewParser(lexer.NewLexer(code5)).ParseProgram()
+	inf5 := NewInferencer()
+	if err := inf5.InferProgram(prog5); err != nil {
+		t.Fatalf("unexpected type error in union with dict: %v", err)
+	}
+
+	// 6. Dict with func value
+	code6 := `
+d: {String: () -> Int} = {"get": ||: 42}
+`
+	prog6 := parser.NewParser(lexer.NewLexer(code6)).ParseProgram()
+	inf6 := NewInferencer()
+	if err := inf6.InferProgram(prog6); err != nil {
+		t.Fatalf("unexpected type error in dict with func value: %v", err)
+	}
+
+	// 7. Tuple containing dict
+	code7 := `
+t: ({String: Int}, Bool) = ({"a": 1}, true)
+`
+	prog7 := parser.NewParser(lexer.NewLexer(code7)).ParseProgram()
+	inf7 := NewInferencer()
+	if err := inf7.InferProgram(prog7); err != nil {
+		t.Fatalf("unexpected type error in tuple containing dict: %v", err)
+	}
+
+	// 8. Negative: value type mismatch
+	codeErr1 := `
+d: {String: Int} = {"count": "forty-two"}
+`
+	progErr1 := parser.NewParser(lexer.NewLexer(codeErr1)).ParseProgram()
+	infErr1 := NewInferencer()
+	if err := infErr1.InferProgram(progErr1); err == nil {
+		t.Fatalf("expected type error for dict value mismatch, got nil")
+	}
+
+	// 9. Negative: key type mismatch
+	codeErr2 := `
+d: {String: Int} = {123: 42}
+`
+	progErr2 := parser.NewParser(lexer.NewLexer(codeErr2)).ParseProgram()
+	infErr2 := NewInferencer()
+	if err := infErr2.InferProgram(progErr2); err == nil {
+		t.Fatalf("expected type error for dict key mismatch, got nil")
+	}
+
+	// 10. Type string formatting
+	dt := &DictType{Key: TypeString, Value: TypeInt}
+	if dt.String() != "{String: Int}" {
+		t.Fatalf("expected {String: Int}, got %s", dt.String())
+	}
+}
+
 

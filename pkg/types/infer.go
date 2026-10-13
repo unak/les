@@ -1111,10 +1111,11 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 	}
 
 	// Check top-level Union: A | B
-	// Careful not to split inside parentheses or brackets
+	// Careful not to split inside parentheses, brackets, or braces
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
+	braceDepth := 0
 	start := 0
 	runes := []rune(annot)
 	for i := 0; i < len(runes); i++ {
@@ -1127,7 +1128,11 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 			bracketDepth++
 		} else if r == ']' {
 			bracketDepth--
-		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 {
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			parts = append(parts, string(runes[start:i]))
 			start = i + 1
 		}
@@ -1146,6 +1151,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 	arrowIdx := -1
 	parenDepth = 0
 	bracketDepth = 0
+	braceDepth = 0
 	for i := 0; i < len(runes)-1; i++ {
 		r := runes[i]
 		if r == '(' {
@@ -1156,7 +1162,11 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 			bracketDepth++
 		} else if r == ']' {
 			bracketDepth--
-		} else if parenDepth == 0 && bracketDepth == 0 && r == '-' && runes[i+1] == '>' {
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && r == '-' && runes[i+1] == '>' {
 			arrowIdx = i
 			break
 		}
@@ -1216,6 +1226,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 		hasTopLevelComma := false
 		pDepth := 0
 		bDepth := 0
+		brDepth := 0
 		for _, r := range inner {
 			if r == '(' {
 				pDepth++
@@ -1225,7 +1236,11 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 				bDepth++
 			} else if r == ']' {
 				bDepth--
-			} else if r == ',' && pDepth == 0 && bDepth == 0 {
+			} else if r == '{' {
+				brDepth++
+			} else if r == '}' {
+				brDepth--
+			} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
 				hasTopLevelComma = true
 				break
 			}
@@ -1248,6 +1263,43 @@ func (inf *Inferencer) parseTypeAnnot(annot string) Type {
 			Elems:      elems,
 			IsVariadic: isVariadic,
 		}
+	}
+
+	// Dict annotation: {Key: Value}
+	if strings.HasPrefix(annot, "{") && strings.HasSuffix(annot, "}") {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		colonIdx := -1
+		pDepth := 0
+		bDepth := 0
+		brDepth := 0
+		innerRunes := []rune(inner)
+		for i, r := range innerRunes {
+			if r == '(' {
+				pDepth++
+			} else if r == ')' {
+				pDepth--
+			} else if r == '[' {
+				bDepth++
+			} else if r == ']' {
+				bDepth--
+			} else if r == '{' {
+				brDepth++
+			} else if r == '}' {
+				brDepth--
+			} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+				colonIdx = i
+				break
+			}
+		}
+
+		if colonIdx != -1 {
+			keyStr := strings.TrimSpace(string(innerRunes[:colonIdx]))
+			valStr := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
+			keyType := inf.parseTypeAnnot(keyStr)
+			valType := inf.parseTypeAnnot(valStr)
+			return &DictType{Key: keyType, Value: valType}
+		}
+		return &DictType{Key: TypeAny, Value: TypeAny}
 	}
 
 	if inf != nil {
@@ -1282,6 +1334,7 @@ func (inf *Inferencer) parseTupleElements(inner string) []Type {
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
+	braceDepth := 0
 	start := 0
 	runes := []rune(inner)
 	for i := 0; i < len(runes); i++ {
@@ -1294,7 +1347,11 @@ func (inf *Inferencer) parseTupleElements(inner string) []Type {
 			bracketDepth++
 		} else if r == ']' {
 			bracketDepth--
-		} else if r == ',' && parenDepth == 0 && bracketDepth == 0 {
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if r == ',' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			parts = append(parts, string(runes[start:i]))
 			start = i + 1
 		}

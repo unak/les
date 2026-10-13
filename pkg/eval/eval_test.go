@@ -3183,3 +3183,33 @@ if s != "世界:":
 		t.Fatalf("unexpected error on valid UTF-8: %v", err)
 	}
 }
+
+func TestEvalDictTypeAnnotationAndIsExpr(t *testing.T) {
+	code := `
+d: {String: Int} = {"count": 42}
+print d["count"]
+print " "
+
+print ({"a": 1} is {String: Int})
+print " "
+print (42 is {String: Int})
+print " "
+
+empty: {String: Int} = {}
+print len(empty)
+print " "
+
+def lookup(table: {String: Int}, key: String): Int:
+    table[key]
+
+print lookup({"foo": 100}, "foo")
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error evaluating code with dict type annot: %v", err)
+	}
+	expected := "42 true false 0 100"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected output %q, got %q", expected, strings.TrimSpace(out))
+	}
+}

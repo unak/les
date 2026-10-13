@@ -447,8 +447,9 @@ func (p *Parser) parseTypeAnnotString() string {
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
+	braceDepth := 0
 	for {
-		if parenDepth == 0 && bracketDepth == 0 {
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
 				break
 			}
@@ -461,9 +462,13 @@ func (p *Parser) parseTypeAnnotString() string {
 			bracketDepth++
 		} else if p.curTokenIs(lexer.TokenRBracket) {
 			bracketDepth--
+		} else if p.curTokenIs(lexer.TokenLBrace) {
+			braceDepth++
+		} else if p.curTokenIs(lexer.TokenRBrace) {
+			braceDepth--
 		}
 		parts = append(parts, p.curToken.Literal)
-		if parenDepth == 0 && bracketDepth == 0 {
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) {
 				break
 			}
@@ -898,8 +903,14 @@ func (p *Parser) canStartArgument() bool {
 	// Exclude '(' because 'f(...)' is standard call handled by parseInfix
 	t := p.peekToken.Type
 	switch t {
+	case lexer.TokenLBracket:
+		// If there is no whitespace between identifier and '[', it's an indexing expression target[idx], not a call argument
+		if p.peekToken.Line == p.curToken.Line && p.peekToken.Col == p.curToken.Col+len(p.curToken.Literal) {
+			return false
+		}
+		return true
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil,
-		lexer.TokenLBracket, lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
+		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
 		return true
 	default:
 		return false
@@ -1244,9 +1255,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		var typeParts []string
 		parenDepth := 0
 		bracketDepth := 0
+		braceDepth := 0
 		for {
-			if parenDepth == 0 && bracketDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) {
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) {
 					break
 				}
 			}
@@ -1258,9 +1270,13 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 				bracketDepth++
 			} else if p.curTokenIs(lexer.TokenRBracket) {
 				bracketDepth--
+			} else if p.curTokenIs(lexer.TokenLBrace) {
+				braceDepth++
+			} else if p.curTokenIs(lexer.TokenRBrace) {
+				braceDepth--
 			}
 			typeParts = append(typeParts, p.curToken.Literal)
-			if parenDepth == 0 && bracketDepth == 0 {
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenArrow) {
 					// Must continue to next component
 				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenArrow) {
