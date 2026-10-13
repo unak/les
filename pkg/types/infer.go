@@ -776,15 +776,24 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 		}
 		return &TupleType{Elems: elems}, nil
 	case *ast.DictLit:
-		var keyT Type = TypeAny
-		var valT Type = TypeAny
-		if len(e.Entries) > 0 {
-			k, _ := inf.inferExpr(e.Entries[0].Key)
-			v, _ := inf.inferExpr(e.Entries[0].Value)
-			keyT = k
-			valT = v
+		if len(e.Entries) == 0 {
+			return &DictType{Key: TypeAny, Value: TypeAny}, nil
 		}
-		return &DictType{Key: keyT, Value: valT}, nil
+		var keyTypes []Type
+		var valTypes []Type
+		for _, entry := range e.Entries {
+			k, err := inf.inferExpr(entry.Key)
+			if err != nil {
+				return nil, err
+			}
+			v, err := inf.inferExpr(entry.Value)
+			if err != nil {
+				return nil, err
+			}
+			keyTypes = append(keyTypes, k)
+			valTypes = append(valTypes, v)
+		}
+		return &DictType{Key: NewUnionType(keyTypes...), Value: NewUnionType(valTypes...)}, nil
 	case *ast.UnaryExpr:
 		t, err := inf.inferExpr(e.Expr)
 		if err != nil {

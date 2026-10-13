@@ -80,7 +80,8 @@ func (t *TupleValue) stringWithDepth(depth int) string {
 
 // DictValue holds key-value mapping.
 type DictValue struct {
-	Entries map[string]Value
+	Entries   map[string]Value
+	KeyValues map[string]Value
 }
 
 func (d *DictValue) String() string {

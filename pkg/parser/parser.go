@@ -595,8 +595,7 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			if p.curTokenIs(lexer.TokenLParen) {
 				tuplePat, pattern = p.parseTuplePattern()
 			} else {
-				pattern = p.curToken.Literal
-				p.nextToken() // consume pattern
+				pattern = p.parseTypeAnnotString()
 			}
 
 			if p.curTokenIs(lexer.TokenColon) {

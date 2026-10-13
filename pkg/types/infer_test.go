@@ -1072,6 +1072,41 @@ d: {String: Int} = {123: 42}
 	if dt.String() != "{String: Int}" {
 		t.Fatalf("expected {String: Int}, got %s", dt.String())
 	}
+
+	// 11. Negative: mixed entry value types fail assignment to {String: Int}
+	codeErr3 := `
+z: {String: Int} = {"a": 1, "b": "x"}
+`
+	progErr3 := parser.NewParser(lexer.NewLexer(codeErr3)).ParseProgram()
+	infErr3 := NewInferencer()
+	if err := infErr3.InferProgram(progErr3); err == nil {
+		t.Fatalf("expected type error for mixed entry value types, got nil")
+	}
+
+	// 12. Mixed entry succeeds when annotated with union
+	code12 := `
+z: {String: Int | String} = {"a": 1, "b": "x"}
+`
+	prog12 := parser.NewParser(lexer.NewLexer(code12)).ParseProgram()
+	inf12 := NewInferencer()
+	if err := inf12.InferProgram(prog12); err != nil {
+		t.Fatalf("unexpected type error with union dict: %v", err)
+	}
+
+	// 13. IsAssignableTo with TypeAny: empty dict is allowed, but {String: Any} is not allowed for {String: Int}
+	emptyDict := &DictType{Key: TypeAny, Value: TypeAny}
+	intDict := &DictType{Key: TypeString, Value: TypeInt}
+	anyValDict := &DictType{Key: TypeString, Value: TypeAny}
+
+	if !IsAssignableTo(emptyDict, intDict) {
+		t.Fatalf("expected empty dict to be assignable to {String: Int}")
+	}
+	if IsAssignableTo(anyValDict, intDict) {
+		t.Fatalf("expected {String: Any} to NOT be assignable to {String: Int}")
+	}
+	if !IsAssignableTo(intDict, anyValDict) {
+		t.Fatalf("expected {String: Int} to be assignable to {String: Any}")
+	}
 }
 
 

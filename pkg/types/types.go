@@ -264,9 +264,11 @@ func IsAssignableTo(src, target Type) bool {
 	// If both are DictType
 	if dTarget, ok := target.(*DictType); ok {
 		if dSrc, ok := src.(*DictType); ok {
-			keyOK := dSrc.Key == TypeAny || IsAssignableTo(dSrc.Key, dTarget.Key)
-			valOK := dSrc.Value == TypeAny || IsAssignableTo(dSrc.Value, dTarget.Value)
-			return keyOK && valOK
+			// Empty dict literal {}: Key and Value are both TypeAny, allowed for any Dict target
+			if dSrc.Key == TypeAny && dSrc.Value == TypeAny {
+				return true
+			}
+			return IsAssignableTo(dSrc.Key, dTarget.Key) && IsAssignableTo(dSrc.Value, dTarget.Value)
 		}
 		return false
 	}

@@ -3192,6 +3192,10 @@ print " "
 
 print ({"a": 1} is {String: Int})
 print " "
+print ({"a": "s"} is {String: Int})
+print " "
+print ({"a": 1} is {String: Int | Nil})
+print " "
 print (42 is {String: Int})
 print " "
 
@@ -3208,8 +3212,35 @@ print lookup({"foo": 100}, "foo")
 	if err != nil {
 		t.Fatalf("unexpected error evaluating code with dict type annot: %v", err)
 	}
-	expected := "42 true false 0 100"
+	expected := "42 true false true false 0 100"
 	if strings.TrimSpace(out) != expected {
 		t.Fatalf("expected output %q, got %q", expected, strings.TrimSpace(out))
+	}
+}
+
+func TestEvalMatchWithDictPattern(t *testing.T) {
+	code := `
+def test_match(v):
+    match v:
+        case {String: Int}:
+            "int-dict"
+        case {String: String}:
+            "str-dict"
+        case _:
+            "other"
+
+print test_match({"a": 10})
+print " "
+print test_match({"b": "hello"})
+print " "
+print test_match(123)
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error in match with dict pattern: %v", err)
+	}
+	expected := "int-dict str-dict other"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected %q, got %q", expected, strings.TrimSpace(out))
 	}
 }
