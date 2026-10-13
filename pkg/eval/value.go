@@ -369,15 +369,24 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 
 // Thunk implements aggressive lazy evaluation (memoized call-by-need).
 type Thunk struct {
-	Evaluated  bool
-	Value      Value
-	Expr       ast.Expr
-	Env        *Environment
-	Producer   func() (Value, error) // for dynamic/I/O thunks not bound to AST Expr
-	Evaluating bool                  // for detecting recursive blackholes/cycles
+	Evaluated    bool
+	Value        Value
+	Expr         ast.Expr
+	Env          *Environment
+	Producer     func() (Value, error) // for dynamic/I/O thunks not bound to AST Expr
+	Evaluating   bool                  // for detecting recursive blackholes/cycles
+	InferredType any                   // types.Type if known, for non-forcing type checks
 }
 
 func NewThunk(expr ast.Expr, env *Environment) *Thunk {
+	if val, ok := evalLiteral(expr); ok {
+		return &Thunk{
+			Evaluated: true,
+			Value:     val,
+			Expr:      expr,
+			Env:       env,
+		}
+	}
 	return &Thunk{
 		Evaluated: false,
 		Expr:      expr,
@@ -454,6 +463,7 @@ type Environment struct {
 	store              map[string]Value
 	modules            map[string]*ModuleValue
 	parent             *Environment
+	Inferencer         any                                     // *types.Inferencer if available
 	RawStdin           io.Reader                               // raw standard input
 	RawStdout          io.Writer                               // raw standard output
 	RawStderr          io.Writer                               // raw standard error
@@ -476,6 +486,7 @@ func NewEnvironment(parent *Environment) *Environment {
 	}
 	if parent != nil {
 		env.Loader = parent.Loader
+		env.Inferencer = parent.Inferencer
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID
 		env.ActiveLoopID = parent.ActiveLoopID

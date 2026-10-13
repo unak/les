@@ -52,6 +52,7 @@ type Inferencer struct {
 	scope        *Scope
 	modules      map[string]*ModuleType
 	moduleLoader func(path string) (*ModuleType, error)
+	ExprTypes    map[ast.Expr]Type
 }
 
 var builtinForceFuncType = &FuncType{
@@ -199,6 +200,7 @@ func NewInferencer() *Inferencer {
 		nextVarID: 0,
 		scope:     fileScope,
 		modules:   make(map[string]*ModuleType),
+		ExprTypes: make(map[ast.Expr]Type),
 	}
 	inf.modules["io"] = makeIOModuleType("io")
 	inf.modules["bufio"] = makeBufioModuleType("bufio")
@@ -785,6 +787,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 }
 
 func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
+	t, err := inf.inferExprInternal(expr)
+	if err == nil && t != nil && inf != nil && inf.ExprTypes != nil && expr != nil {
+		inf.ExprTypes[expr] = t
+	}
+	return t, err
+}
+
+func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 	if expr == nil {
 		return TypeAny, nil
 	}
@@ -1157,6 +1167,14 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 	default:
 		return TypeAny, nil
 	}
+}
+
+func ParseTypeAnnot(annot string) (Type, error) {
+	return (*Inferencer)(nil).parseTypeAnnot(annot)
+}
+
+func (inf *Inferencer) ParseTypeAnnot(annot string) (Type, error) {
+	return inf.parseTypeAnnot(annot)
 }
 
 func parseTypeAnnot(annot string) (Type, error) {

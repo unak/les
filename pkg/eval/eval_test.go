@@ -3231,7 +3231,7 @@ print lookup({"foo": 100}, "foo")
 	if err != nil {
 		t.Fatalf("unexpected error evaluating code with dict type annot: %v", err)
 	}
-	expected := "42 true false true false 0 true true false 99 100"
+	expected := "42 true false true false 0 true false false 99 100"
 	if strings.TrimSpace(out) != expected {
 		t.Fatalf("expected output %q, got %q", expected, strings.TrimSpace(out))
 	}
@@ -3334,5 +3334,98 @@ print (mixedDict is {String: String})
 	expected4 := "true false true false false"
 	if strings.TrimSpace(out4) != expected4 {
 		t.Fatalf("expected %q, got %q", expected4, strings.TrimSpace(out4))
+	}
+}
+
+func TestThunkTypeDetermination(t *testing.T) {
+	// 1. Literal dict (1B: constant literal immediate evaluation)
+	code1 := `
+d = {"a": "hello"}
+print (d is {String: Int})
+print " "
+print (d is {String: String})
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("unexpected error in code1: %v", err)
+	}
+	if out1 != "false true" {
+		t.Fatalf("expected 'false true', got %q", out1)
+	}
+
+	// 2. Expression dict (1A: inferred type propagated, non-forcing resolution)
+	code2 := `
+d = {"a": "he" + "llo"}
+print (d is {String: Int})
+print " "
+print (d is {String: String})
+`
+	out2, err := runLesCode(code2)
+	if err != nil {
+		t.Fatalf("unexpected error in code2: %v", err)
+	}
+	if out2 != "false true" {
+		t.Fatalf("expected 'false true', got %q", out2)
+	}
+
+	// 3. Delayed exception expression (1A: compatible inferred type skips force; incompatible rejects without force)
+	code3 := `
+d = {"a": 1 / 0}
+print (d is {String: Int})
+print " "
+print (d is {String: String})
+`
+	out3, err := runLesCode(code3)
+	if err != nil {
+		t.Fatalf("unexpected error in code3 (should not force 1/0): %v", err)
+	}
+	if out3 != "true false" {
+		t.Fatalf("expected 'true false', got %q", out3)
+	}
+
+	// 4. Dynamic unannotated function return (TypeAny preserves laziness until forced)
+	code4 := `
+def get_val(x):
+    x
+
+d = {"a": get_val("hello")}
+print (d is {String: Int})
+print " "
+_ = d["a"]!
+print (d is {String: Int})
+`
+	out4, err := runLesCode(code4)
+	if err != nil {
+		t.Fatalf("unexpected error in code4: %v", err)
+	}
+	if out4 != "true false" {
+		t.Fatalf("expected 'true false', got %q", out4)
+	}
+
+	// 5. Tuple with constant literals, inferred expressions, and delayed exceptions
+	code5 := `
+t1 = (1, "hello")
+print (t1 is (Int, Int))
+print " "
+print (t1 is (Int, String))
+print " "
+
+t2 = (1, "he" + "llo")
+print (t2 is (Int, Int))
+print " "
+print (t2 is (Int, String))
+print " "
+
+t3 = (1, 1 / 0)
+print (t3 is (Int, Int))
+print " "
+print (t3 is (Int, String))
+`
+	out5, err := runLesCode(code5)
+	if err != nil {
+		t.Fatalf("unexpected error in code5: %v", err)
+	}
+	if out5 != "false true false true true false" {
+		t.Fatalf("expected 'false true false true true false', got %q", out5)
 	}
 }
