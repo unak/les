@@ -893,15 +893,18 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.DictLit:
 		entries := make(map[string]Value)
+		keyValues := make(map[string]Value)
 		for _, entry := range e.Entries {
 			kVal := Force(NewThunk(entry.Key, env))
+			kStr := kVal.String()
+			keyValues[kStr] = kVal
 			if env.isForceDemand(entry.Value) {
-				entries[kVal.String()] = Force(NewThunk(entry.Value, env))
+				entries[kStr] = Force(NewThunk(entry.Value, env))
 			} else {
-				entries[kVal.String()] = NewThunk(entry.Value, env)
+				entries[kStr] = NewThunk(entry.Value, env)
 			}
 		}
-		return &DictValue{Entries: entries}, nil
+		return NewDictValue(entries, keyValues), nil
 
 	case *ast.IndexExpr:
 		targetVal := Force(NewThunk(e.Target, env))
@@ -1463,10 +1466,35 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	if typeAnnot == "" || typeAnnot == "Any" {
 		return true
 	}
-	// Check if union: A | B
-	if strings.Contains(typeAnnot, "|") {
-		parts := strings.Split(typeAnnot, "|")
-		for _, p := range parts {
+	// Check top-level union: A | B (respecting parens, brackets, braces)
+	var unionParts []string
+	pDepth := 0
+	bDepth := 0
+	brDepth := 0
+	start := 0
+	runes := []rune(typeAnnot)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '[' {
+			bDepth++
+		} else if r == ']' {
+			bDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if r == '|' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			unionParts = append(unionParts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	if len(unionParts) > 0 {
+		unionParts = append(unionParts, string(runes[start:]))
+		for _, p := range unionParts {
 			if checkValueMatchesType(val, strings.TrimSpace(p), optEnv...) {
 				return true
 			}
@@ -1508,6 +1536,68 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		_, ok := val.(*DictValue)
 		return ok
 	default:
+		if strings.HasPrefix(typeAnnot, "{") && strings.HasSuffix(typeAnnot, "}") {
+			dVal, ok := val.(*DictValue)
+			if !ok {
+				return false
+			}
+			inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
+			if inner == "" {
+				return false
+			}
+			colonIdx := -1
+			pD := 0
+			bD := 0
+			brD := 0
+			innerRunes := []rune(inner)
+			for i, r := range innerRunes {
+				if r == '(' {
+					pD++
+				} else if r == ')' {
+					pD--
+				} else if r == '[' {
+					bD++
+				} else if r == ']' {
+					bD--
+				} else if r == '{' {
+					brD++
+				} else if r == '}' {
+					brD--
+				} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+					if colonIdx != -1 {
+						return false
+					}
+					colonIdx = i
+				}
+			}
+			if colonIdx == -1 {
+				return false
+			}
+			keyAnnot := strings.TrimSpace(string(innerRunes[:colonIdx]))
+			valAnnot := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
+			if keyAnnot == "" || valAnnot == "" {
+				return false
+			}
+
+			for k, v := range dVal.Entries {
+				var kVal Value = StringValue(k)
+				if dVal.KeyValues != nil {
+					if actualKey, exists := dVal.KeyValues[k]; exists {
+						kVal = actualKey
+					}
+				}
+				if !checkValueMatchesType(kVal, keyAnnot, optEnv...) {
+					return false
+				}
+				// Do not force unevaluated values: only check already-evaluated values
+				if evaluatedVal, ok := PeekEvaluated(v); ok {
+					if !checkValueMatchesType(evaluatedVal, valAnnot, optEnv...) {
+						return false
+					}
+				}
+			}
+			return true
+		}
 		// Check struct type or embedded struct type
 		if si, ok := val.(*StructInstance); ok {
 			if si.Def.Name == typeAnnot {

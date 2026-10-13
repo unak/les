@@ -68,7 +68,7 @@ Type annotations are optional (full HM-style type inference):
 ```python
 x: Int = 10
 p: (Int, String) = (1, "ok")
-d: Dict[String, Int] = {"count": 42}
+d: {String: Int} = {"count": 42}
 opt: String | Nil = nil
 
 # Infinite / stream Tuple: ellipsis '...' repeats the last specified element type indefinitely
@@ -340,16 +340,36 @@ Listed from highest to lowest precedence:
 - **Type Test Operator `is`**:
   - Binary operator testing dynamic value type: `expr is Type`.
   - Evaluates to `Bool` (`true` or `false`).
+  - Supports primitive types, structs, interfaces, unions (`A | B`), and parameterized dictionary types `expr is {KeyType: ValueType}`.
   ```python
   x = 10
   if x is Int:
       print "an integer"
+
+  d = {"count": 42}
+  if d is {String: Int}:
+      print "dict with String keys and Int values"
   ```
+  > [!NOTE]
+  > When checking dictionary types with `expr is {K: V}`, all keys and **already-evaluated values** are verified. To preserve lazy evaluation semantics and prevent unintended side effects or evaluating unneeded infinite/error computations, unevaluated values (lazy thunks) are not forced during the `is` test.
+  >
+  > Consequently, the outcome of `is` depends on the current evaluation state of the dictionary's values:
+  > ```python
+  > d = {"a": "hello"}
+  > print (d is {String: Int})  # true (value is unevaluated thunk and skipped)
+  > _ = d["a"]!                 # forces evaluation of the value ("hello")
+  > print (d is {String: Int})  # false (now evaluated as String, mismatching Int)
+  > ```
+  > **Notice**: This runtime behavior is provisional and may change in future versions of Les (for instance, with static dictionary typing constraints or alternative deep validation semantics).
+
 - **Pattern Match Expression `match ... case`**:
+  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, and default `_`:
   ```python
   def classify(v):
       match v:
-          case Int:
+          case {String: Int}:
+              print "dict of string to int"
+          case Int | Float:
               print "number:", v
           case String:
               print "string:", v
@@ -360,6 +380,7 @@ Listed from highest to lowest precedence:
 
   classify 100
   classify "les"
+  classify {"a": 1}
   classify nil
   ```
 
@@ -874,7 +895,7 @@ Bitwise operations for integers:
 Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
 
 - Syntax: `struct Box[T]: value: T`, `def map[T, U](items: (T, ...), fn: (T) -> U): (U, ...)`
-- Complements the existing built-in type parameters like `Dict[K, V]` and tuple stream types `(T, ...)`.
+- Complements the existing built-in type parameters like `{K: V}` and tuple stream types `(T, ...)`.
 
 ### 8. Binary / Byte Stream I/O vs Rune Strings
 Currently, stream I/O methods like `Read(n)` and `Peek(n)` operate on raw bytes (`n` bytes) while string indexing (`s[i]`) and `len(s)` operate on Unicode runes. Future work will introduce dedicated binary/buffer data types (e.g. `Bytes` / `ByteBuffer`) and clarify the distinction between byte-level stream processing and rune-level text processing.

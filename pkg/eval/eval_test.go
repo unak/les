@@ -3183,3 +3183,83 @@ if s != "世界:":
 		t.Fatalf("unexpected error on valid UTF-8: %v", err)
 	}
 }
+
+func TestEvalDictTypeAnnotationAndIsExpr(t *testing.T) {
+	code := `
+d: {String: Int} = {"count": 42}
+print d["count"]
+print " "
+
+print ({"a": 1!} is {String: Int})
+print " "
+print ({"a": "s"!} is {String: Int})
+print " "
+print ({"a": 1!} is {String: Int | Nil})
+print " "
+print (42 is {String: Int})
+print " "
+
+empty: {String: Int} = {}
+print len(empty)
+print " "
+
+lazyDict = {"a": 1, "b": 1 / 0}
+print (lazyDict is {String: Int})
+print " "
+
+# Unevaluated value is not checked:
+unevalDict = {"a": "not_int"}
+print (unevalDict is {String: Int})
+print " "
+_ = unevalDict["a"]!
+print (unevalDict is {String: Int})
+print " "
+
+def id(x):
+    x
+
+anyDict: {String: Int} = {"a": id(99)}
+print anyDict["a"]
+print " "
+
+def lookup(table: {String: Int}, key: String): Int:
+    table[key]
+
+print lookup({"foo": 100}, "foo")
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error evaluating code with dict type annot: %v", err)
+	}
+	expected := "42 true false true false 0 true true false 99 100"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected output %q, got %q", expected, strings.TrimSpace(out))
+	}
+}
+
+func TestEvalMatchWithDictPattern(t *testing.T) {
+	code := `
+def test_match(v):
+    match v:
+        case {String: Int}:
+            "int-dict"
+        case {String: String}:
+            "str-dict"
+        case _:
+            "other"
+
+print test_match({"a": 10!})
+print " "
+print test_match({"b": "hello"!})
+print " "
+print test_match(123)
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error in match with dict pattern: %v", err)
+	}
+	expected := "int-dict str-dict other"
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected %q, got %q", expected, strings.TrimSpace(out))
+	}
+}

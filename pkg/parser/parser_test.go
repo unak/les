@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 
 	"les/pkg/ast"
@@ -1022,3 +1023,118 @@ res4 = 5 |> (|n|: n * 2)
 		t.Fatalf("expected inner callee f, got %+v", innerF.Callee)
 	}
 }
+
+func TestParseInvalidTypeAnnotations(t *testing.T) {
+	invalidInputs := []string{
+		`b: Dict[String, Int] = 5`,
+		`b: {String} = 5`,
+		`b: {} = 5`,
+		`b: {: Int} = 5`,
+		`b: {String:} = 5`,
+		`b: {String: Int: Bool} = 5`,
+		`x is Dict[String, Int]`,
+		`x is {String}`,
+		`x is {}`,
+		"def f(x: Dict[String, Int]):\n    1",
+		"def f(x: {String}):\n    1",
+		`match v:
+    case Dict[String, Int]:
+        1`,
+		`match v:
+    case {String}:
+        1`,
+	}
+
+	for _, input := range invalidInputs {
+		l := lexer.NewLexer(input)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Errorf("expected syntax error for %q, but got none", input)
+		}
+	}
+
+	validInputs := []string{
+		`b: {String: Int} = {"a": 1}`,
+		`b: {String: {Int: Bool}} = {}`,
+		`x is {String: Int}`,
+		`x is {String: {Int: Bool}}`,
+		"def f(x: {String: Int}) -> {String: Int}:\n    x",
+		`match v:
+    case {String: Int}:
+        1`,
+	}
+
+	for _, input := range validInputs {
+		l := lexer.NewLexer(input)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Errorf("unexpected syntax error for %q: %v", input, p.Errors())
+		}
+	}
+}
+
+func TestNormalizedTypeAnnotationFormatting(t *testing.T) {
+	tests := []struct {
+		code     string
+		expected string
+	}{
+		{`b: {String: Int} = {}`, `{String: Int}`},
+		{`b: {String: {Int: Bool}} = {}`, `{String: {Int: Bool}}`},
+		{`b: (Int, String) = (1, "a")`, `(Int, String)`},
+		{`b: Int | String = 1`, `Int | String`},
+		{`b: (Int) -> String = f`, `(Int) -> String`},
+		{`b: @mod.Type = v`, `@mod.Type`},
+	}
+
+	for _, tt := range tests {
+		l := lexer.NewLexer(tt.code)
+		p := NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("unexpected parser errors for %q: %v", tt.code, p.Errors())
+		}
+		if len(prog.Body) != 1 {
+			t.Fatalf("expected 1 statement, got %d", len(prog.Body))
+		}
+		vd, ok := prog.Body[0].(*ast.VarDecl)
+		if !ok {
+			t.Fatalf("expected VarDecl, got %T", prog.Body[0])
+		}
+		if vd.TypeAnnot != tt.expected {
+			t.Errorf("for %q, expected TypeAnnot %q, got %q", tt.code, tt.expected, vd.TypeAnnot)
+		}
+	}
+
+	// Verify exact formatting in error messages
+	errTests := []struct {
+		code          string
+		expectedError string
+	}{
+		{`b: Dict[String, Int] = 5`, `invalid type annotation 'Dict[String, Int]'`},
+		{`b: {String} = 5`, `invalid dictionary type annotation in '{String}'`},
+	}
+
+	for _, tt := range errTests {
+		l := lexer.NewLexer(tt.code)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Errorf("expected error for %q, got none", tt.code)
+			continue
+		}
+		found := false
+		for _, err := range p.Errors() {
+			if strings.Contains(err, tt.expectedError) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("for %q, expected error containing %q, got %v", tt.code, tt.expectedError, p.Errors())
+		}
+	}
+}
+
+

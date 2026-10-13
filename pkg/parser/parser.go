@@ -444,11 +444,13 @@ func (p *Parser) parseFuncParams() []ast.FuncParam {
 }
 
 func (p *Parser) parseTypeAnnotString() string {
+	tok := p.curToken
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
+	braceDepth := 0
 	for {
-		if parenDepth == 0 && bracketDepth == 0 {
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
 				break
 			}
@@ -461,9 +463,13 @@ func (p *Parser) parseTypeAnnotString() string {
 			bracketDepth++
 		} else if p.curTokenIs(lexer.TokenRBracket) {
 			bracketDepth--
+		} else if p.curTokenIs(lexer.TokenLBrace) {
+			braceDepth++
+		} else if p.curTokenIs(lexer.TokenRBrace) {
+			braceDepth--
 		}
 		parts = append(parts, p.curToken.Literal)
-		if parenDepth == 0 && bracketDepth == 0 {
+		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) {
 				break
 			}
@@ -476,7 +482,9 @@ func (p *Parser) parseTypeAnnotString() string {
 		}
 		p.nextToken()
 	}
-	return normalizeTypeAnnot(parts)
+	annot := normalizeTypeAnnot(parts)
+	p.validateTypeAnnotation(annot, tok.Line, tok.Col)
+	return annot
 }
 
 func (p *Parser) parseBlockBody() []ast.Stmt {
@@ -590,8 +598,7 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			if p.curTokenIs(lexer.TokenLParen) {
 				tuplePat, pattern = p.parseTuplePattern()
 			} else {
-				pattern = p.curToken.Literal
-				p.nextToken() // consume pattern
+				pattern = p.parseTypeAnnotString()
 			}
 
 			if p.curTokenIs(lexer.TokenColon) {
@@ -783,16 +790,9 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 	p.nextToken() // consume ident
 	p.nextToken() // consume ':'
 
-	// Collect type annotation tokens until '='
-	var typeAnnotParts []string
-	for !p.curTokenIs(lexer.TokenAssign) && !p.curTokenIs(lexer.TokenEOF) && !p.curTokenIs(lexer.TokenNewline) && !p.curTokenIs(lexer.TokenSemicolon) {
-		typeAnnotParts = append(typeAnnotParts, p.curToken.Literal)
-		p.nextToken()
-	}
-	typeAnnot := strings.Join(typeAnnotParts, "")
+	typeAnnot := p.parseTypeAnnotString()
 
-	if !p.curTokenIs(lexer.TokenAssign) {
-		p.errors = append(p.errors, "expected '=' in variable declaration")
+	if !p.expectPeek(lexer.TokenAssign) {
 		return nil
 	}
 	p.nextToken() // consume '='
@@ -898,8 +898,14 @@ func (p *Parser) canStartArgument() bool {
 	// Exclude '(' because 'f(...)' is standard call handled by parseInfix
 	t := p.peekToken.Type
 	switch t {
+	case lexer.TokenLBracket:
+		// If there is no whitespace between identifier and '[', it's an indexing expression target[idx], not a call argument
+		if p.peekToken.Line == p.curToken.Line && p.peekToken.Col == p.curToken.Col+len(p.curToken.Literal) {
+			return false
+		}
+		return true
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil,
-		lexer.TokenLBracket, lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
+		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
 		return true
 	default:
 		return false
@@ -1240,13 +1246,15 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			Else: elseExpr,
 		}
 	case lexer.TokenIs:
+		tok := p.curToken
 		p.nextToken() // consume 'is'
 		var typeParts []string
 		parenDepth := 0
 		bracketDepth := 0
+		braceDepth := 0
 		for {
-			if parenDepth == 0 && bracketDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) {
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) {
 					break
 				}
 			}
@@ -1258,22 +1266,28 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 				bracketDepth++
 			} else if p.curTokenIs(lexer.TokenRBracket) {
 				bracketDepth--
+			} else if p.curTokenIs(lexer.TokenLBrace) {
+				braceDepth++
+			} else if p.curTokenIs(lexer.TokenRBrace) {
+				braceDepth--
 			}
 			typeParts = append(typeParts, p.curToken.Literal)
-			if parenDepth == 0 && bracketDepth == 0 {
+			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenArrow) {
 					// Must continue to next component
-				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenArrow) {
-					// Continue if followed by '|', '.', or '->'
+				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenArrow) || p.peekTokenIs(lexer.TokenLBracket) {
+					// Continue if followed by '|', '.', '->', or '[' (to capture invalid brackets for error reporting)
 				} else {
 					break
 				}
 			}
 			p.nextToken()
 		}
+		annot := normalizeTypeAnnot(typeParts)
+		p.validateTypeAnnotation(annot, tok.Line, tok.Col)
 		return &ast.IsExpr{
 			Expr:      left,
-			TypeAnnot: normalizeTypeAnnot(typeParts),
+			TypeAnnot: annot,
 		}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
@@ -1419,9 +1433,7 @@ func normalizeTypeAnnot(parts []string) string {
 	for i, part := range parts {
 		if i > 0 {
 			prev := parts[i-1]
-			if prev != "@" && prev != "." && part != "." && part != "|" && prev != "|" && part != "->" && prev != "->" {
-				sb.WriteString(" ")
-			} else if part == "|" || prev == "|" || part == "->" || prev == "->" {
+			if !noSpaceAfter(prev) && !noSpaceBefore(part, prev) {
 				sb.WriteString(" ")
 			}
 		}
@@ -1429,3 +1441,97 @@ func normalizeTypeAnnot(parts []string) string {
 	}
 	return sb.String()
 }
+
+func noSpaceBefore(part, prev string) bool {
+	switch part {
+	case ")", "]", "}", ",", ":", ".":
+		return true
+	case "[":
+		return prev != "|" && prev != "->" && prev != "," && prev != ":"
+	default:
+		return false
+	}
+}
+
+func noSpaceAfter(prev string) bool {
+	switch prev {
+	case "(", "[", "{", "@", ".":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
+	annot = strings.TrimSpace(annot)
+	if annot == "" {
+		return
+	}
+	if strings.Contains(annot, "[") || strings.Contains(annot, "]") {
+		p.errors = append(p.errors, fmt.Sprintf("invalid type annotation '%s': brackets '[' are not supported (use '{Key: Value}' for dictionaries) at line %d col %d", annot, line, col))
+		return
+	}
+	runes := []rune(annot)
+	var braceStack []int
+	for i, r := range runes {
+		if r == '{' {
+			braceStack = append(braceStack, i)
+		} else if r == '}' {
+			if len(braceStack) == 0 {
+				p.errors = append(p.errors, fmt.Sprintf("unmatched '}' in type annotation '%s' at line %d col %d", annot, line, col))
+				return
+			}
+			startIdx := braceStack[len(braceStack)-1]
+			braceStack = braceStack[:len(braceStack)-1]
+			inner := string(runes[startIdx+1 : i])
+			if !isValidDictAnnotationContent(inner) {
+				p.errors = append(p.errors, fmt.Sprintf("invalid dictionary type annotation in '%s': expected '{Key: Value}' at line %d col %d", annot, line, col))
+				return
+			}
+		}
+	}
+	if len(braceStack) > 0 {
+		p.errors = append(p.errors, fmt.Sprintf("unclosed '{' in type annotation '%s' at line %d col %d", annot, line, col))
+		return
+	}
+}
+
+func isValidDictAnnotationContent(inner string) bool {
+	inner = strings.TrimSpace(inner)
+	if inner == "" {
+		return false
+	}
+	colonIdx := -1
+	pDepth := 0
+	bDepth := 0
+	brDepth := 0
+	runes := []rune(inner)
+	for i, r := range runes {
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '[' {
+			bDepth++
+		} else if r == ']' {
+			bDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			if colonIdx != -1 {
+				// More than one top-level colon
+				return false
+			}
+			colonIdx = i
+		}
+	}
+	if colonIdx == -1 {
+		return false
+	}
+	keyStr := strings.TrimSpace(string(runes[:colonIdx]))
+	valStr := strings.TrimSpace(string(runes[colonIdx+1:]))
+	return keyStr != "" && valStr != ""
+}
+

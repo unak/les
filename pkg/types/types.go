@@ -91,7 +91,7 @@ type DictType struct {
 }
 
 func (d *DictType) String() string {
-	return fmt.Sprintf("Dict[%s, %s]", d.Key.String(), d.Value.String())
+	return fmt.Sprintf("{%s: %s}", d.Key.String(), d.Value.String())
 }
 
 func (d *DictType) Equals(other Type) bool {
@@ -261,6 +261,16 @@ func IsAssignableTo(src, target Type) bool {
 			return IsAssignableTo(fSrc.Ret, fTarget.Ret)
 		}
 	}
+	// If both are DictType
+	if dTarget, ok := target.(*DictType); ok {
+		if dSrc, ok := src.(*DictType); ok {
+			keyOK := dSrc.Key == TypeAny || IsAssignableTo(dSrc.Key, dTarget.Key)
+			valOK := dSrc.Value == TypeAny || IsAssignableTo(dSrc.Value, dTarget.Value)
+			return keyOK && valOK
+		}
+		return false
+	}
+
 	return false
 }
 

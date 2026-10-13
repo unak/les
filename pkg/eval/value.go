@@ -79,8 +79,31 @@ func (t *TupleValue) stringWithDepth(depth int) string {
 }
 
 // DictValue holds key-value mapping.
+// KeyValues stores the original Value of each key (keyed by key string representation)
+// for accurate runtime type checking. When created without explicit KeyValues,
+// keys default to StringValue.
 type DictValue struct {
-	Entries map[string]Value
+	Entries   map[string]Value
+	KeyValues map[string]Value
+}
+
+// NewDictValue creates a DictValue ensuring Entries and KeyValues are non-nil.
+func NewDictValue(entries map[string]Value, keyValues ...map[string]Value) *DictValue {
+	if entries == nil {
+		entries = make(map[string]Value)
+	}
+	kv := make(map[string]Value)
+	if len(keyValues) > 0 && keyValues[0] != nil {
+		kv = keyValues[0]
+	} else {
+		for k := range entries {
+			kv[k] = StringValue(k)
+		}
+	}
+	return &DictValue{
+		Entries:   entries,
+		KeyValues: kv,
+	}
 }
 
 func (d *DictValue) String() string {
@@ -320,6 +343,21 @@ func (t *Thunk) String() string {
 		return t.Value.String()
 	}
 	return "<thunk>"
+}
+
+// PeekEvaluated returns the evaluated value if v is a non-Thunk or an already-evaluated Thunk.
+// If v is an unevaluated Thunk, it returns (nil, false).
+func PeekEvaluated(v Value) (Value, bool) {
+	for {
+		thunk, ok := v.(*Thunk)
+		if !ok {
+			return v, true
+		}
+		if !thunk.Evaluated {
+			return nil, false
+		}
+		v = thunk.Value
+	}
 }
 
 // Force drives evaluation of Thunk until a concrete non-Thunk value is reached.
