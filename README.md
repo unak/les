@@ -51,7 +51,7 @@ les -e "print Args[0]" foo bar
 - `-t`: Check syntax and static types (including resolving and verifying imported modules) without execution.
 - `-e <code>`: Evaluate the inline script string directly.
 
-## Built-in Types
+## Primitive Types
 
 | Type | Syntax / Examples | Description |
 |---|---|---|
@@ -621,7 +621,7 @@ struct ParseError:
 # Automatically matches `case Error:` and `is Error`!
 ```
 
-## Built-in Functions, Variables, Methods and Modules
+## Built-in Functions, Variables, Methods, Interfaces and Modules
 
 ### 1. Built-in Functions
 
@@ -735,7 +735,7 @@ if len(Args) > 0:
 
 ### 3. Built-in Methods on Primitive Types
 
-Built-in types provide predefined instance methods and implementations of the `Show` interface.
+Primitive types provide predefined instance methods and implementations of the `Show` interface.
 
 #### `String`
 - **`s.Ord(): Int`**:
@@ -779,14 +779,6 @@ Built-in types provide predefined instance methods and implementations of the `S
   Returns `"nil"`. Satisfies `interface Show`.
 
 #### `Bytes`
-Immutable raw byte sequence (`Bytes`), representing binary data.
-
-- **Constructor `Bytes(val: String | Bytes = ""): Bytes`**:
-  `Bytes("hello")` returns a `Bytes` value containing the string's UTF-8 bytes. Calling `Bytes(b)` returns `b` itself. Calling `Bytes()` with 0 arguments creates an empty byte sequence (`len(b) == 0`).
-- **Index Access `b[i]: Int`**:
-  Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
-- **Length `len(b): Int`**:
-  Returns the number of bytes in `b`.
 - **`b.Bytes(): Bytes`**:
   Returns the byte sequence itself (identity conversion).
 - **`b.String(): String`**:
@@ -795,9 +787,6 @@ Immutable raw byte sequence (`Bytes`), representing binary data.
   Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
 - **`b.ToString(): String`**:
   Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
-- **Operators**:
-  - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
-  - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
 
 #### `Tuple`
 - **`t.ToString(): String`**:
@@ -807,10 +796,30 @@ Immutable raw byte sequence (`Bytes`), representing binary data.
 - **`d.ToString(): String`**:
   Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
 
-#### Common Interface: `Show`
-All primitive and container types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`) as well as user-defined structs implementing `ToString(): String` implicitly satisfy `interface Show`. Built-in `print` formats all arguments via `ToString()`.
+### 4. Built-in Interfaces
 
-### 4. Built-in Modules
+Les provides predefined standard interfaces in the global scope for polymorphism, string conversion, and error handling:
+
+#### `interface Show`
+Declares the contract for converting values to human-readable string representations:
+```python
+interface Show:
+    def ToString(): String
+```
+- **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`) implicitly satisfy `interface Show`.
+- **Usage**: Built-in functions like `print` accept any value satisfying `Show` (`*args: Show`). Any user-defined `struct` implementing `ToString(): String` automatically satisfies `Show`.
+
+#### `interface Error`
+Declares the contract for error values:
+```python
+interface Error:
+    def Message(): String
+    def ToString(): String
+```
+- **Implicit Satisfaction**: Standard error instances created via the built-in `Error(msg)` function satisfy `Error`. In addition, any user-defined `struct` implementing `Message(): String` (or `Error(): String`) automatically satisfies `Error` structurally without explicit declarations.
+- **Usage**: Extensively used in union return types (`Type | Error`) and type-narrowing expressions (`val is Error` or `match val: case Error:`).
+
+### 5. Built-in Modules
 
 #### Standard I/O Module (`@io`)
 
