@@ -743,6 +743,45 @@ print type(t2)
 	if strings.TrimSpace(out2.String()) != expected2 {
 		t.Fatalf("expected %q, got %q", expected2, out2.String())
 	}
+
+	// Dict type tests:
+	codeDictType := `
+print type({})
+print "\n"
+print type({"key": "value"})
+print "\n"
+print type({1: 10, 2: 20})
+print "\n"
+print type({"a": 1, 2: "b"})
+print "\n"
+d_lazy = {"k": 1 / 0}
+print type(d_lazy)
+print "\n"
+def get_val(x):
+    x
+d_any = {"a": get_val(10)}
+print type(d_any)
+print "\n"
+_ = d_any["a"]!
+print type(d_any)
+`
+	var out3 strings.Builder
+	ev3 := NewEvaluator()
+	ev3.SetOutput(&out3)
+	l3 := lexer.NewLexer(codeDictType)
+	p3 := parser.NewParser(l3)
+	prog3 := p3.ParseProgram()
+	if len(p3.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p3.Errors())
+	}
+	_, err = ev3.EvalProgram(prog3)
+	if err != nil {
+		t.Fatalf("eval dict type failed: %v", err)
+	}
+	expected3 := "{Any: Any}\n{String: String}\n{Int: Int}\n{Int | String: Int | String}\n{String: Int}\n{String: Any}\n{String: Int}"
+	if strings.TrimSpace(out3.String()) != expected3 {
+		t.Fatalf("expected %q, got %q", expected3, out3.String())
+	}
 }
 
 func TestPutsFunction(t *testing.T) {

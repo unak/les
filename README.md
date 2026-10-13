@@ -420,10 +420,13 @@ Returns the string representation of the runtime type of the given value or argu
   - `type("hello")` -> `"String"`
   - `type(nil)` -> `"Nil"`
   - `type()` -> `"()"`
+  - `type({"key": "value"})` -> `"{String: String}"`
+  - `type({})` -> `"{Any: Any}"`
 - **Usage**:
   ```python
   t = type(42)       # "Int"
   t2 = type(1, 2)    # "(Int, Int)"
+  td = type({"a": 1}) # "{String: Int}"
   ```
 
 #### `def exit(code: Int | Bool = 0)`

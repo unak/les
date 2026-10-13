@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -393,6 +394,15 @@ func valueOrThunkTypeNameWithDepth(val Value, depth int) string {
 	return typeNameWithDepth(Force(val), depth)
 }
 
+func joinSortedTypeSet(typeSet map[string]bool) string {
+	typesList := make([]string, 0, len(typeSet))
+	for t := range typeSet {
+		typesList = append(typesList, t)
+	}
+	sort.Strings(typesList)
+	return strings.Join(typesList, " | ")
+}
+
 func typeNameWithDepth(val Value, depth int) string {
 	if depth > 10 {
 		return "..."
@@ -417,7 +427,31 @@ func typeNameWithDepth(val Value, depth int) string {
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *DictValue:
-		return "Dict"
+		if len(v.Entries) == 0 {
+			return "{Any: Any}"
+		}
+		keyTypesSet := make(map[string]bool)
+		valTypesSet := make(map[string]bool)
+
+		for dk, entryVal := range v.Entries {
+			var kType string
+			if v.KeyValues != nil {
+				if actualKey, ok := v.KeyValues[dk]; ok && actualKey != nil {
+					kType = valueOrThunkTypeNameWithDepth(actualKey, depth+1)
+				}
+			}
+			if kType == "" {
+				kType = dk.Type
+			}
+			keyTypesSet[kType] = true
+
+			vType := valueOrThunkTypeNameWithDepth(entryVal, depth+1)
+			valTypesSet[vType] = true
+		}
+
+		keyTypeStr := joinSortedTypeSet(keyTypesSet)
+		valTypeStr := joinSortedTypeSet(valTypesSet)
+		return fmt.Sprintf("{%s: %s}", keyTypeStr, valTypeStr)
 	case *StructInstance:
 		return v.Def.Name
 	case *StructDefValue:
