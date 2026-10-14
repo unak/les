@@ -55,14 +55,28 @@ les -e "print Args[0]" foo bar
 
 | Type | Syntax / Examples | Description |
 |---|---|---|
-| `Int` | `42`, `-10`, `0` | 64-bit signed integer. |
-| `Float` | `3.14`, `-0.5`, `2.0` | 64-bit IEEE 754 floating-point number. |
+| `Int` | `42`, `-10`, `0`, `0b1010`, `0o755`, `0d100`, `0xdead_beef`, `1_000_000` | 64-bit signed integer. Supports binary (`0b`/`0B`), octal (`0o`/`0O`), explicit decimal (`0d`/`0D`), hexadecimal (`0x`/`0X`), and visual digit separators (`_`). |
+| `Float` | `3.14`, `-0.5`, `2.0`, `1_000.5`, `3.14159_26535` | 64-bit IEEE 754 floating-point number. Supports visual digit separators (`_`) in both integer and fractional parts. |
 | `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
 | `Bytes` | `Bytes("hello")`, `"hello".Bytes()`, `Bytes()` | Immutable raw byte sequence representing binary data. Indexed by 0-based byte offset `b[0]`, returning an `Int` (`0`–`255`). Supports negative index `b[-1]` (last byte). |
 | `Bool` | `true`, `false` | Boolean value. |
 | `Nil` | `nil` | Represents the absence of a value (singleton literal `nil`). Frequently used in union types (e.g., `String | Nil`). |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. Keys are strictly typed (e.g. `1` and `"1"` are distinct keys without coercion). |
+
+> [!NOTE]
+> **Numeric Literal Syntax Rules & Disambiguation**:
+> - **Radix Prefixes**: Binary (`0b`/`0B`), Octal (`0o`/`0O`), Explicit Decimal (`0d`/`0D`), and Hexadecimal (`0x`/`0X`). The prefix must be followed immediately by at least one valid digit for that radix (e.g. `0b`, `0x`, or `0x_12` are syntax errors).
+> - **Digit Separators (`_`)**:
+>   - Underscores can only be placed strictly between two valid digits (e.g. `1_000`, `0xCAFE_BABE`, `1_000.5`, `3.14159_26535`).
+>   - **Consecutive underscores (`__`) are forbidden**: e.g. `123__456` is a syntax error.
+>   - **Trailing underscores are forbidden**: e.g. `1_` and `3.14_` are syntax errors.
+>   - **Underscores directly adjacent to decimal points are forbidden**: e.g. `3._14` is invalid.
+> - **Floating-Point Notation**:
+>   - **Leading zero required**: `.1` is forbidden as a float literal; write `0.1`.
+>   - **Trailing zero required**: `1.` is not a float literal; it is interpreted as integer `1` followed by member access dot `.` (to unambiguously support method calls like `1.String()`). Write `1.0` for a float.
+>   - Multiple decimal points (e.g. `1.2.3`) are syntax errors.
+> - **Invalid Suffixes**: Numbers cannot be immediately followed by letters without whitespace or operators (e.g. `0a0` or `123abc` are syntax errors).
 
 Type annotations are optional (full HM-style type inference):
 ```python
@@ -935,21 +949,11 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
 - **Unified `Int` Type**: Users continue writing `Int` without needing a distinct `BigInt` type. Fast-path optimizations (e.g. 64-bit int fast-path for small values) will be handled transparently under the hood.
 - **Seamless Interop**: Arithmetic operators (`+`, `-`, `*`, `/`, `%`), string formatting, bitwise operations, and Hindley-Milner type inference will continue to work seamlessly without code changes.
 
-### 3. Radix Numeric Literals, Hex Floats, and Digit Separators
+### 3. Hexadecimal Floating-Point Literals
 
-Rich numeric literal representations with full radix symmetry and visual separators are planned:
-
-- **Symmetric Radix Prefixes**:
-  - **Binary (`0b` / `0B`)**: e.g., `0b1010_1100`
-  - **Octal (`0o` / `0O`)**: e.g., `0o755`, `0o644`
-  - **Decimal (`0d` / `0D`)**: e.g., `0d100`, `0d1_000_000` (provided for explicit radix symmetry and code generation/alignment alongside standard undecorated decimals `42`)
-  - **Hexadecimal (`0x` / `0X`)**: e.g., `0xDEAD_BEEF`, `0xff`
-- **Digit Separator (`_`)**:
-  - Readable grouping using underscores inside numeric literals (e.g., `1_000_000`, `0b1111_0000`, `0xCAFE_BABE`, `3.14159_26535`).
-- **Hexadecimal Floating-Point Literals**:
-  - Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
-    - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
-    - Disambiguation strategy: Since built-in types have a closed set of methods (no user monkey-patching), the lexer attempts to interpret `0x...` followed by `.` as a floating-point literal first. If it satisfies float syntax, it is treated as a float; otherwise, it falls back to integer dot/method access.
+- Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
+  - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
+  - Disambiguation strategy: Since built-in types have a closed set of methods (no user monkey-patching), the lexer attempts to interpret `0x...` followed by `.` as a floating-point literal first. If it satisfies float syntax, it is treated as a float; otherwise, it falls back to integer dot/method access.
 - **Built-in Methods on Numeric Literals & Disambiguation**:
   - Direct method invocation on literals (e.g., `42.ToString()`, `3.14.ToString()`).
   - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.ToString()`) is disambiguated as a method call on integer `42`.
