@@ -1137,4 +1137,59 @@ func TestNormalizedTypeAnnotationFormatting(t *testing.T) {
 	}
 }
 
+func TestParseBlockLiteralFollowedByStatement(t *testing.T) {
+	input := `
+map(Args) do |s|:
+  print s, "\n"
+
+print "done1\n"
+print "done2\n"
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	// stmt 0: CallExpr with Block
+	es0, ok := prog.Body[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected ExprStmt for stmt 0, got %T", prog.Body[0])
+	}
+	call, ok := es0.Value.(*ast.CallExpr)
+	if !ok || call.Block == nil {
+		t.Fatalf("expected CallExpr with Block, got %+v", es0.Value)
+	}
+
+	// stmt 1: CallExpr print "done1\n"
+	es1, ok := prog.Body[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected ExprStmt for stmt 1, got %T", prog.Body[1])
+	}
+	call1, ok := es1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for stmt 1, got %T (%+v)", es1.Value, es1.Value)
+	}
+	if id, ok := call1.Callee.(*ast.Identifier); !ok || id.Name != "print" {
+		t.Fatalf("expected callee print, got %+v", call1.Callee)
+	}
+
+	// stmt 2: CallExpr print "done2\n"
+	es2, ok := prog.Body[2].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected ExprStmt for stmt 2, got %T", prog.Body[2])
+	}
+	call2, ok := es2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for stmt 2, got %T (%+v)", es2.Value, es2.Value)
+	}
+	if id, ok := call2.Callee.(*ast.Identifier); !ok || id.Name != "print" {
+		t.Fatalf("expected callee print, got %+v", call2.Callee)
+	}
+}
+
 
