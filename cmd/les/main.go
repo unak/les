@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,11 +37,86 @@ func getPlatform() string {
 	return fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
 }
 
+func isTerminal(f *os.File) bool {
+	stat, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+func runREPL(syntaxOnly, typeOnly bool) error {
+	// Reserved for future interactive shell (REPL) implementation
+	return errors.New("REPL is not yet implemented")
+}
+
+func runPipeline(codeBytes []byte, filename string, baseDir string, scriptArgs []string, syntaxOnly, typeOnly bool) error {
+	// 1. Lexer & Parser
+	l := lexer.NewLexer(string(codeBytes))
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		for _, parseErr := range p.Errors() {
+			fmt.Fprintf(os.Stderr, "Syntax Error: %s\n", parseErr)
+		}
+		return errors.New("syntax error")
+	}
+
+	if syntaxOnly {
+		return nil
+	}
+
+	// 2. Type inference & checking
+	inferencer := types.NewInferencer()
+	typeLoader := types.NewFileModuleLoader(baseDir)
+	inferencer.SetModuleLoader(typeLoader.Load)
+
+	if err := inferencer.InferProgram(prog); err != nil {
+		fmt.Fprintf(os.Stderr, "Type Error: %v\n", err)
+		return err
+	}
+
+	if typeOnly {
+		return nil
+	}
+
+	// 3. Evaluator (call-by-need graph reduction runtime)
+	evaluator := eval.NewEvaluator()
+	evaluator.SetInferencer(inferencer)
+	evaluator.SetProgramName(filename)
+	evaluator.SetScriptName(filename)
+	evaluator.SetArgs(scriptArgs)
+
+	evalLoader := eval.NewFileModuleLoader(baseDir)
+	evaluator.SetFileModuleLoader(evalLoader)
+
+	if _, err := evaluator.EvalProgram(prog); err != nil {
+		var exitErr *eval.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr
+		}
+		fmt.Fprintf(os.Stderr, "Runtime Error: %v\n", err)
+		return err
+	}
+	return nil
+}
+
 func main() {
 	showVersion := flag.Bool("v", false, "display version and exit")
 	syntaxOnly := flag.Bool("c", false, "check syntax only")
 	typeOnly := flag.Bool("t", false, "check syntax and types only")
 	inlineCode := flag.String("e", "", "evaluate inline script")
+
+	flag.Usage = func() {
+		fmt.Println("Les - Lazy Evaluation Script interpreter")
+		fmt.Println("Usage: les [options] [file.les | -] [args...]")
+		fmt.Println("       les [options] -e <code> [args...]")
+		fmt.Println("Options:")
+		fmt.Println("  -v         display version and exit")
+		fmt.Println("  -c         check syntax only")
+		fmt.Println("  -t         check syntax and types only")
+		fmt.Println("  -e <code>  evaluate inline script")
+	}
 
 	flag.Parse()
 
@@ -61,19 +137,27 @@ func main() {
 		filename = "-e"
 		baseDir = "."
 		scriptArgs = args
-	} else {
-		if len(args) == 0 {
-			fmt.Println("Les - Lazy Evaluation Script interpreter")
-			fmt.Println("Usage: les [options] <file.les> [args...]")
-			fmt.Println("       les [options] -e <code> [args...]")
-			fmt.Println("Options:")
-			fmt.Println("  -v         display version and exit")
-			fmt.Println("  -c         check syntax only")
-			fmt.Println("  -t         check syntax and types only")
-			fmt.Println("  -e <code>  evaluate inline script")
-			os.Exit(1)
+	} else if len(args) == 0 || args[0] == "-" {
+		filename = "-"
+		baseDir = "."
+		if len(args) > 0 {
+			scriptArgs = args[1:]
+		} else {
+			scriptArgs = []string{}
 		}
 
+		if isTerminal(os.Stdin) {
+			// Future work: invoke runREPL(*syntaxOnly, *typeOnly)
+			// Currently follows Plan A: read from stdin until EOF
+		}
+
+		var err error
+		codeBytes, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading from standard input: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
 		filename = args[0]
 		scriptArgs = args[1:]
 		baseDir = filepath.Dir(filename)
@@ -86,51 +170,11 @@ func main() {
 		}
 	}
 
-	// 1. Lexer & Parser
-	l := lexer.NewLexer(string(codeBytes))
-	p := parser.NewParser(l)
-	prog := p.ParseProgram()
-	if len(p.Errors()) > 0 {
-		for _, parseErr := range p.Errors() {
-			fmt.Fprintf(os.Stderr, "Syntax Error: %s\n", parseErr)
-		}
-		os.Exit(1)
-	}
-
-	if *syntaxOnly {
-		os.Exit(0)
-	}
-
-	// 2. Type inference & checking
-	inferencer := types.NewInferencer()
-	typeLoader := types.NewFileModuleLoader(baseDir)
-	inferencer.SetModuleLoader(typeLoader.Load)
-
-	if err := inferencer.InferProgram(prog); err != nil {
-		fmt.Fprintf(os.Stderr, "Type Error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if *typeOnly {
-		os.Exit(0)
-	}
-
-	// 3. Evaluator (call-by-need graph reduction runtime)
-	evaluator := eval.NewEvaluator()
-	evaluator.SetInferencer(inferencer)
-	evaluator.SetProgramName(filename)
-	evaluator.SetScriptName(filename)
-	evaluator.SetArgs(scriptArgs)
-
-	evalLoader := eval.NewFileModuleLoader(baseDir)
-	evaluator.SetFileModuleLoader(evalLoader)
-
-	if _, err := evaluator.EvalProgram(prog); err != nil {
+	if err := runPipeline(codeBytes, filename, baseDir, scriptArgs, *syntaxOnly, *typeOnly); err != nil {
 		var exitErr *eval.ExitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.Code)
 		}
-		fmt.Fprintf(os.Stderr, "Runtime Error: %v\n", err)
 		os.Exit(1)
 	}
 }

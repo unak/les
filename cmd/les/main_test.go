@@ -125,3 +125,58 @@ func TestVersionAndPlatform(t *testing.T) {
 		t.Fatalf("expected platform %q, got %q", expectedPlat, p)
 	}
 }
+
+func TestIsTerminal(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "terminal_test_*.txt")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	if isTerminal(tmpFile) {
+		t.Fatalf("expected regular file to not be a terminal")
+	}
+}
+
+func TestRunPipelineStdin(t *testing.T) {
+	// 1. Success execution
+	code := []byte("x: Int = 10; y: Int = 20; print x + y\n")
+	err := runPipeline(code, "-", ".", []string{}, false, false)
+	if err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	// 2. Syntax only (-c)
+	err = runPipeline(code, "-", ".", []string{}, true, false)
+	if err != nil {
+		t.Fatalf("expected success with syntaxOnly, got %v", err)
+	}
+
+	// 3. Type only (-t)
+	err = runPipeline(code, "-", ".", []string{}, false, true)
+	if err != nil {
+		t.Fatalf("expected success with typeOnly, got %v", err)
+	}
+
+	// 4. Syntax error
+	badSyntax := []byte("def (x)\n")
+	err = runPipeline(badSyntax, "-", ".", []string{}, false, false)
+	if err == nil {
+		t.Fatalf("expected syntax error, got nil")
+	}
+
+	// 5. Type error
+	badType := []byte("x: Int = 'abc'\n")
+	err = runPipeline(badType, "-", ".", []string{}, false, false)
+	if err == nil {
+		t.Fatalf("expected type error, got nil")
+	}
+}
+
+func TestRunREPLPlaceholder(t *testing.T) {
+	err := runREPL(false, false)
+	if err == nil || !strings.Contains(err.Error(), "REPL is not yet implemented") {
+		t.Fatalf("expected REPL not yet implemented error, got %v", err)
+	}
+}

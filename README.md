@@ -26,16 +26,23 @@ go test ./...
 # Run a script file
 les script.les
 
+# Run a script from standard input (pipe, redirection, or explicit '-')
+cat script.les | les
+echo "print 42" | les
+les - arg1 arg2 < script.les
+
 # Run an inline script (one-liner)
 les -e "x = 10; y = 20; print x + y"
 
 # Check syntax only (-c)
 les -c script.les
 les -c -e "x = 10; y = 20"
+les -c < script.les
 
 # Check syntax and types only (-t), resolving imported modules
 les -t script.les
 les -t -e "x: Int = 10"
+les -t < script.les
 
 # Display version and exit (-v)
 les -v
@@ -43,6 +50,7 @@ les -v
 # Pass arguments to the script
 les script.les arg1 arg2
 les -e "print Args[0]" foo bar
+les - arg1 arg2 < script.les
 ```
 
 ### Options:
