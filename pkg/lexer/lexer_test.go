@@ -162,3 +162,53 @@ func TestLexerBoolAndNilKeywords(t *testing.T) {
 		}
 	}
 }
+
+func TestLexerRadixAndDigitSeparators(t *testing.T) {
+	input := "0b1010 0B1100_0011 0o755 0O644 0d100 0D1_000_000 0xdead_beef 0XFF 1_000_000 3.14159_26535"
+	l := NewLexer(input)
+	expected := []struct {
+		tokType TokenType
+		literal string
+	}{
+		{TokenInt, "0b1010"},
+		{TokenInt, "0B1100_0011"},
+		{TokenInt, "0o755"},
+		{TokenInt, "0O644"},
+		{TokenInt, "0d100"},
+		{TokenInt, "0D1_000_000"},
+		{TokenInt, "0xdead_beef"},
+		{TokenInt, "0XFF"},
+		{TokenInt, "1_000_000"},
+		{TokenFloat, "3.14159_26535"},
+		{TokenEOF, ""},
+	}
+
+	for i, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp.tokType || tok.Literal != exp.literal {
+			t.Fatalf("[%d] expected %v (%q), got %v (%q)", i, exp.tokType, exp.literal, tok.Type, tok.Literal)
+		}
+	}
+}
+
+func TestLexerInvalidNumericLiterals(t *testing.T) {
+	invalidTokens := []string{
+		"1_",
+		"0a0",
+		"123__456",
+		"0x",
+		"0b",
+		"0x_12",
+		"3.14_",
+	}
+
+	for _, input := range invalidTokens {
+		t.Run(input, func(t *testing.T) {
+			l := NewLexer(input)
+			tok := l.NextToken()
+			if tok.Type != TokenError {
+				t.Fatalf("expected TokenError for %q, got %v (%q)", input, tok.Type, tok.Literal)
+			}
+		})
+	}
+}

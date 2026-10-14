@@ -935,10 +935,28 @@ func (p *Parser) parsePrefix() ast.Expr {
 		}
 		return &ast.Identifier{Name: p.curToken.Literal}
 	case lexer.TokenInt:
-		v, _ := strconv.ParseInt(p.curToken.Literal, 10, 64)
+		lit := strings.ReplaceAll(p.curToken.Literal, "_", "")
+		var v int64
+		if len(lit) >= 2 && lit[0] == '0' {
+			switch lit[1] {
+			case 'b', 'B':
+				v, _ = strconv.ParseInt(lit[2:], 2, 64)
+			case 'o', 'O':
+				v, _ = strconv.ParseInt(lit[2:], 8, 64)
+			case 'd', 'D':
+				v, _ = strconv.ParseInt(lit[2:], 10, 64)
+			case 'x', 'X':
+				v, _ = strconv.ParseInt(lit[2:], 16, 64)
+			default:
+				v, _ = strconv.ParseInt(lit, 10, 64)
+			}
+		} else {
+			v, _ = strconv.ParseInt(lit, 10, 64)
+		}
 		return &ast.IntLit{Value: v}
 	case lexer.TokenFloat:
-		v, _ := strconv.ParseFloat(p.curToken.Literal, 64)
+		lit := strings.ReplaceAll(p.curToken.Literal, "_", "")
+		v, _ := strconv.ParseFloat(lit, 64)
 		return &ast.FloatLit{Value: v}
 	case lexer.TokenString:
 		return &ast.StringLit{Value: p.curToken.Literal}
@@ -984,6 +1002,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenPipe, lexer.TokenOr:
 		return p.parseLambdaExpr()
 	default:
+		p.errors = append(p.errors, fmt.Sprintf("unexpected token %v (%s)", p.curToken.Type, p.curToken.Literal))
 		return nil
 	}
 }

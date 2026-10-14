@@ -408,23 +408,137 @@ func (l *Lexer) readString(quote rune) Token {
 	}
 }
 
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+func isOctalDigit(r rune) bool {
+	return r >= '0' && r <= '7'
+}
+
+func isBinaryDigit(r rune) bool {
+	return r == '0' || r == '1'
+}
+
 func (l *Lexer) readNumber() Token {
 	startLine := l.line
 	startCol := l.col
 	var sb strings.Builder
-	isFloat := false
 
+	// Check for radix prefix: 0b, 0o, 0d, 0x
+	if l.pos+1 < len(l.source) && l.source[l.pos] == '0' {
+		nextR := l.source[l.pos+1]
+		var isRadixDigit func(rune) bool
+		switch nextR {
+		case 'b', 'B':
+			isRadixDigit = isBinaryDigit
+		case 'o', 'O':
+			isRadixDigit = isOctalDigit
+		case 'd', 'D':
+			isRadixDigit = unicode.IsDigit
+		case 'x', 'X':
+			isRadixDigit = isHexDigit
+		}
+
+		if isRadixDigit != nil {
+			// Require at least one valid digit immediately after prefix (not '_')
+			if l.pos+2 >= len(l.source) || !isRadixDigit(l.source[l.pos+2]) {
+				sb.WriteRune(l.source[l.pos])
+				l.advance()
+				sb.WriteRune(l.source[l.pos])
+				l.advance()
+				for l.pos < len(l.source) && (unicode.IsLetter(l.source[l.pos]) || unicode.IsDigit(l.source[l.pos]) || l.source[l.pos] == '_') {
+					sb.WriteRune(l.source[l.pos])
+					l.advance()
+				}
+				return Token{
+					Type:    TokenError,
+					Literal: sb.String(),
+					Line:    startLine,
+					Col:     startCol,
+				}
+			}
+
+			sb.WriteRune(l.source[l.pos])
+			l.advance()
+			sb.WriteRune(l.source[l.pos])
+			l.advance()
+
+			for l.pos < len(l.source) {
+				r := l.source[l.pos]
+				if isRadixDigit(r) {
+					sb.WriteRune(r)
+					l.advance()
+				} else if r == '_' {
+					// Only allow '_' if followed by a valid radix digit
+					if l.pos+1 < len(l.source) && isRadixDigit(l.source[l.pos+1]) {
+						sb.WriteRune(r)
+						l.advance()
+					} else {
+						break
+					}
+				} else {
+					break
+				}
+			}
+
+			// If immediately followed by letters or underscore, it's an invalid suffix
+			if l.pos < len(l.source) && (unicode.IsLetter(l.source[l.pos]) || l.source[l.pos] == '_') {
+				for l.pos < len(l.source) && (unicode.IsLetter(l.source[l.pos]) || unicode.IsDigit(l.source[l.pos]) || l.source[l.pos] == '_') {
+					sb.WriteRune(l.source[l.pos])
+					l.advance()
+				}
+				return Token{
+					Type:    TokenError,
+					Literal: sb.String(),
+					Line:    startLine,
+					Col:     startCol,
+				}
+			}
+
+			return Token{
+				Type:    TokenInt,
+				Literal: sb.String(),
+				Line:    startLine,
+				Col:     startCol,
+			}
+		}
+	}
+
+	isFloat := false
 	for l.pos < len(l.source) {
 		r := l.source[l.pos]
 		if unicode.IsDigit(r) {
 			sb.WriteRune(r)
 			l.advance()
+		} else if r == '_' {
+			// '_' must be followed by a digit
+			if l.pos+1 < len(l.source) && unicode.IsDigit(l.source[l.pos+1]) {
+				sb.WriteRune(r)
+				l.advance()
+			} else {
+				break
+			}
 		} else if r == '.' && !isFloat && l.pos+1 < len(l.source) && unicode.IsDigit(l.source[l.pos+1]) {
 			isFloat = true
 			sb.WriteRune(r)
 			l.advance()
 		} else {
 			break
+		}
+	}
+
+	// If immediately followed by letters or underscore, it's an invalid suffix (e.g. 1_, 0a0, 123__456)
+	if l.pos < len(l.source) && (unicode.IsLetter(l.source[l.pos]) || l.source[l.pos] == '_') {
+		for l.pos < len(l.source) && (unicode.IsLetter(l.source[l.pos]) || unicode.IsDigit(l.source[l.pos]) || l.source[l.pos] == '_') {
+			sb.WriteRune(l.source[l.pos])
+			l.advance()
+		}
+		return Token{
+			Type:    TokenError,
+			Literal: sb.String(),
+			Line:    startLine,
+			Col:     startCol,
 		}
 	}
 

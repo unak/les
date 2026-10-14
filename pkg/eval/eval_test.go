@@ -3524,3 +3524,67 @@ print (t3 is (Int, String))
 		t.Fatalf("expected 'false true false true true false', got %q", out5)
 	}
 }
+
+func TestRadixIntegerLiteralsAndDigitSeparators(t *testing.T) {
+	code := `
+b1 = 0b1010
+b2 = 0B1100_0011
+o1 = 0o755
+o2 = 0O644
+d1 = 0d100
+d2 = 0D1_000_000
+x1 = 0xdead_beef
+x2 = 0XFF
+sep_int = 1_000_000
+sep_float = 3.14159_26535
+sep_float2 = 1_000.5_0
+
+print b1, " "
+print b2, " "
+print o1, " "
+print o2, " "
+print d1, " "
+print d2, " "
+print x1, " "
+print x2, " "
+print sep_int, " "
+print sep_float, " "
+print sep_float2
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "10 195 493 420 100 1000000 3735928559 255 1000000 3.1415926535 1000.5"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestInvalidNumericLiterals(t *testing.T) {
+	invalidCases := []struct {
+		name string
+		code string
+	}{
+		{"consecutive dots", "x = 1.2.3\nprint x"},
+		{"trailing underscore", "x = 1_\nprint x"},
+		{"invalid prefix suffix", "x = 0a0\nprint x"},
+		{"leading dot float without zero", "x = .1\nprint x"},
+		{"trailing dot float without zero", "x = 1.\nprint x"},
+		{"consecutive underscores", "x = 123__456\nprint x"},
+		{"incomplete hex prefix", "x = 0x\nprint x"},
+		{"incomplete binary prefix", "x = 0b\nprint x"},
+		{"underscore immediately after prefix", "x = 0x_12\nprint x"},
+		{"float with trailing underscore", "x = 3.14_\nprint x"},
+		{"float with underscore after dot", "x = 3._14\nprint x"},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runLesCode(tc.code)
+			if err == nil {
+				t.Fatalf("expected syntax/eval error for %q, but succeeded with output %q", tc.code, out)
+			}
+		})
+	}
+}
