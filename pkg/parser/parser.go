@@ -831,24 +831,34 @@ func (p *Parser) parseBreakStmt() *ast.BreakStmt {
 	return &ast.BreakStmt{Value: val}
 }
 
+func exprEndsWithBlock(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *ast.MatchExpr:
+		return true
+	case *ast.CallExpr:
+		return e.Block != nil
+	case *ast.LambdaExpr:
+		return len(e.Body) > 0 && e.Expr == nil
+	default:
+		return false
+	}
+}
+
 func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	p.atStatementStart = true
 	expr := p.parseExpr(PREC_LOWEST)
 	p.atStatementStart = false
-	if _, isMatch := expr.(*ast.MatchExpr); isMatch {
+	if exprEndsWithBlock(expr) {
 		p.skipNewlines()
 		return &ast.ExprStmt{Value: expr}
 	}
-	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) {
-		p.nextToken()
-	} else if p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenSemicolon) {
-		p.nextToken()
-		p.nextToken()
-	} else if !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
-		p.nextToken()
-	}
+	p.consumeStmtEnd()
 	return &ast.ExprStmt{Value: expr}
 }
+
 
 func (p *Parser) parseExpr(precedence int) ast.Expr {
 	isStmtStart := p.atStatementStart

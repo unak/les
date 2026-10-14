@@ -3588,3 +3588,28 @@ func TestInvalidNumericLiterals(t *testing.T) {
 		})
 	}
 }
+
+func TestBlockLiteralFollowedByStatement(t *testing.T) {
+	code := `
+def mymap(t, fn):
+  i = 0
+  for i < len(t):
+    fn(t[i])
+    i = i + 1
+
+mymap(["a", "b"]) do |s|:
+  print s, " "
+
+print "done1 "
+print "done2"
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "a b done1 done2"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
