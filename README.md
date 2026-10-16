@@ -462,7 +462,7 @@ Listed from highest to lowest precedence:
 - **`Unknown` (Internal Inference Type)**:
   - Internal compiler placeholder used when a type cannot be statically constrained (for example, unannotated function parameters or empty dictionary `{}`).
   - Bidirectionally assignable during type inference, allowing unconstrained values to unify with any required type.
-  - **Not a type annotation**: Writing `x: Unknown` or `x: Any` is prohibited and causes a compile-time error. All user-facing types must be concrete or interfaces.
+  - **Not a type annotation**: Writing `x: Unknown` is prohibited and causes a compile-time error. All user-facing types must be concrete or interfaces.
 
 ### 10. Variadic Arguments & Tuple Unpacking
 
