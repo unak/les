@@ -683,6 +683,32 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		env.Set(s.Name, iDef)
 		return nil, nil
 
+	case *ast.MemberAssignStmt:
+		targetVal := Force(NewThunk(s.Target, env))
+		si, ok := targetVal.(*StructInstance)
+		if !ok {
+			return nil, fmt.Errorf("cannot assign member '%s' on non-struct %s", s.Member, targetVal.String())
+		}
+		if !si.IsInitializing {
+			return nil, fmt.Errorf("cannot mutate field '%s' of immutable struct '%s'", s.Member, si.Def.Name)
+		}
+		found := false
+		for _, fName := range si.Def.FieldOrder {
+			if fName == s.Member {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("struct '%s' has no field '%s'", si.Def.Name, s.Member)
+		}
+		val, err := env.evalExpr(s.Value)
+		if err != nil {
+			return nil, err
+		}
+		si.Fields[s.Member] = val
+		return nil, nil
+
 	case *ast.ReturnStmt:
 		var retVal Value = &TupleValue{Elements: []Value{}}
 		if s.Value != nil {
@@ -1329,6 +1355,36 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 		for k, v := range baseInstance.Embedded {
 			embedded[k] = v
 		}
+		posIdx := 0
+		for i := argStartIdx; i < len(args); i++ {
+			arg := args[i]
+			if named, ok := arg.(*ast.NamedArgExpr); ok {
+				fields[named.Name] = NewThunk(named.Value, env)
+			} else {
+				if posIdx < len(sDef.FieldOrder) {
+					fName := sDef.FieldOrder[posIdx]
+					fields[fName] = NewThunk(arg, env)
+					posIdx++
+				}
+			}
+		}
+		for _, embName := range sDef.EmbeddedNames {
+			if fVal, ok := fields[embName]; ok {
+				forced := Force(fVal)
+				if si, ok := forced.(*StructInstance); ok {
+					embedded[embName] = si
+				}
+			}
+		}
+		return &StructInstance{
+			Def:      sDef,
+			Fields:   fields,
+			Embedded: embedded,
+		}, nil
+	}
+
+	if initDef, hasInit := sDef.Methods["init"]; hasInit {
+		return env.instantiateStructWithInit(sDef, initDef, args)
 	}
 
 	// Positional index for non-named arguments
@@ -1393,6 +1449,147 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 		Fields:   fields,
 		Embedded: embedded,
 	}, nil
+}
+
+func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef *ast.FuncDef, args []ast.Expr) (*StructInstance, error) {
+	fields := make(map[string]Value)
+	embedded := make(map[string]*StructInstance)
+
+	isEmbeddedField := make(map[string]bool)
+	for _, embName := range sDef.EmbeddedNames {
+		isEmbeddedField[embName] = true
+	}
+
+	// 1. Initialize fields with default values
+	for _, fName := range sDef.FieldOrder {
+		if isEmbeddedField[fName] {
+			continue
+		}
+		if defExpr, hasDef := sDef.FieldDefaults[fName]; hasDef {
+			fields[fName] = NewThunk(defExpr, sDef.Env)
+		} else {
+			fields[fName] = &TupleValue{Elements: []Value{}}
+		}
+	}
+
+	// 2. Auto-instantiate embedded struct instances if defined in environment
+	for _, embName := range sDef.EmbeddedNames {
+		if embDefVal, ok := env.Get(embName); ok {
+			if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
+				subInst, err := env.instantiateStruct(embDef, []ast.Expr{})
+				if err == nil {
+					embedded[embName] = subInst
+					fields[embName] = subInst
+				}
+			}
+		}
+	}
+
+	// 3. Create initializing instance
+	inst := &StructInstance{
+		Def:            sDef,
+		Fields:         fields,
+		Embedded:       embedded,
+		IsInitializing: true,
+	}
+
+	// 4. Determine init parameter list (skip explicit 'self' if present)
+	initParams := initDef.Params
+	if len(initParams) > 0 && initParams[0].Name == "self" {
+		initParams = initParams[1:]
+	}
+
+	// 5. Match arguments to init parameters and perform auto-binding for matching fields
+	argValues := make([]Value, len(initParams))
+	posIdx := 0
+
+	namedArgs := make(map[string]ast.Expr)
+	var posArgs []ast.Expr
+	for _, arg := range args {
+		if named, ok := arg.(*ast.NamedArgExpr); ok {
+			namedArgs[named.Name] = named.Value
+		} else {
+			posArgs = append(posArgs, arg)
+		}
+	}
+
+	for i, param := range initParams {
+		if param.IsVariadic {
+			var rest []Value
+			for p := posIdx; p < len(posArgs); p++ {
+				rest = append(rest, NewThunk(posArgs[p], env))
+			}
+			tup := &TupleValue{Elements: rest}
+			argValues[i] = tup
+			for _, fName := range sDef.FieldOrder {
+				if fName == param.Name {
+					fields[param.Name] = tup
+					break
+				}
+			}
+			break
+		}
+
+		var argExpr ast.Expr
+		if expr, ok := namedArgs[param.Name]; ok {
+			argExpr = expr
+		} else if posIdx < len(posArgs) {
+			argExpr = posArgs[posIdx]
+			posIdx++
+		}
+
+		if argExpr != nil {
+			var val Value
+			if env.isForceDemand(argExpr) {
+				val = Force(env.newThunk(argExpr))
+			} else if lit, ok := evalLiteral(argExpr); ok {
+				val = lit
+			} else {
+				val = env.newThunk(argExpr)
+			}
+			argValues[i] = val
+
+			// Auto-bind: if param name matches struct field, assign to fields
+			for _, fName := range sDef.FieldOrder {
+				if fName == param.Name {
+					fields[param.Name] = val
+					break
+				}
+			}
+		} else {
+			argValues[i] = &TupleValue{Elements: []Value{}}
+		}
+	}
+
+	// Also check if any named args directly target fields that weren't in initParams
+	for name, expr := range namedArgs {
+		foundInParams := false
+		for _, param := range initParams {
+			if param.Name == name {
+				foundInParams = true
+				break
+			}
+		}
+		if !foundInParams {
+			for _, fName := range sDef.FieldOrder {
+				if fName == name {
+					fields[name] = NewThunk(expr, env)
+					break
+				}
+			}
+		}
+	}
+
+	// 6. Bind and invoke init
+	closure := inst.bindMethod(initDef)
+	_, err := env.invokeClosure(closure, argValues)
+	if err != nil {
+		return nil, err
+	}
+
+	// 7. Freeze instance
+	inst.IsInitializing = false
+	return inst, nil
 }
 
 func evalBinary(op string, left, right Value) (Value, error) {

@@ -349,6 +349,17 @@ type StructDef struct {
 func (s *StructDef) node() {}
 func (s *StructDef) stmt() {}
 
+// MemberAssignStmt represents target.member = expr (e.g. self.x = 10)
+type MemberAssignStmt struct {
+	Target Expr
+	Member string
+	Value  Expr
+}
+
+func (m *MemberAssignStmt) node() {}
+func (m *MemberAssignStmt) stmt() {}
+
+
 // MethodSig represents a method signature in an interface definition.
 type MethodSig struct {
 	Name       string

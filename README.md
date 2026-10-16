@@ -517,6 +517,32 @@ struct Point:
   p2 = Point(p, x: 30)  # y is preserved from p
   ```
 
+#### Custom Initializer (`def init`) & Argument Auto-Binding
+- Users can define custom initializers using `def init(...)` inside the struct body.
+- **Auto-binding**: Parameters matching struct field names are automatically assigned to `self` upon entry.
+- **Member Assignment**: Fields can be explicitly assigned or overridden via `self.<field> = <expr>` during initialization. Once initialization finishes, struct instances are frozen and strictly immutable (modifying `p.x = ...` outside `init` is a runtime error).
+- **Default Values**: Fields omitted from `init` retain their declared default values.
+
+```python
+struct PolarPoint:
+    x: Float
+    y: Float
+
+    def init(r: Float, theta: Float):
+        self.x = r * cos(theta)
+        self.y = r * sin(theta)
+
+struct Person:
+    name: String
+    age: Int
+    city: String = "Tokyo"
+
+    def init(name, age):
+        if age < 0:
+            exit(1)
+        # name and age are auto-bound; city retains default "Tokyo"
+```
+
 #### Dot Access
 - Member access: `p.x`, `p.DistSq()`
 - Struct fields are lazily evaluated thunks.

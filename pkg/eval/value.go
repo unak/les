@@ -232,9 +232,10 @@ func (i *InterfaceDefValue) String() string {
 
 // StructInstance represents an instantiated struct value.
 type StructInstance struct {
-	Def      *StructDefValue
-	Fields   map[string]Value
-	Embedded map[string]*StructInstance
+	Def            *StructDefValue
+	Fields         map[string]Value
+	Embedded       map[string]*StructInstance
+	IsInitializing bool
 }
 
 func (si *StructInstance) String() string {
