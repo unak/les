@@ -140,7 +140,42 @@ func (f *FuncType) MaxArgs() int {
 }
 
 func (f *FuncType) String() string {
-	return fmt.Sprintf("%s -> %s", f.Arg.String(), f.Ret.String())
+	argStr := f.Arg.String()
+	if f.BlockParam != nil {
+		bpStr := f.BlockParam.String()
+		if tup, ok := f.Arg.(*TupleType); ok {
+			var parts []string
+			for _, el := range tup.Elems {
+				parts = append(parts, el.String())
+			}
+			if tup.IsVariadic {
+				parts = append(parts, "...")
+			}
+			parts = append(parts, bpStr)
+			argStr = "(" + strings.Join(parts, ", ") + ")"
+		} else {
+			argStr = fmt.Sprintf("(%s, %s)", f.Arg.String(), bpStr)
+		}
+	}
+	return fmt.Sprintf("%s -> %s", argStr, f.Ret.String())
+}
+
+func (f *FuncType) effectiveArgType() Type {
+	if f.BlockParam == nil {
+		return f.Arg
+	}
+	if tup, ok := f.Arg.(*TupleType); ok {
+		elems := make([]Type, len(tup.Elems)+1)
+		copy(elems, tup.Elems)
+		elems[len(tup.Elems)] = f.BlockParam
+		return &TupleType{
+			Elems:      elems,
+			IsVariadic: tup.IsVariadic,
+		}
+	}
+	return &TupleType{
+		Elems: []Type{f.Arg, f.BlockParam},
+	}
 }
 
 func (f *FuncType) Equals(other Type) bool {
@@ -148,10 +183,27 @@ func (f *FuncType) Equals(other Type) bool {
 	if !ok {
 		return false
 	}
-	argEq := f.Arg == TypeUnknown || of.Arg == TypeUnknown || f.Arg.Equals(of.Arg)
+	fArg := f.effectiveArgType()
+	oArg := of.effectiveArgType()
+	argEq := fArg == TypeUnknown || oArg == TypeUnknown || fArg.Equals(oArg)
+	if !argEq {
+		fTup, fOk := fArg.(*TupleType)
+		oTup, oOk := oArg.(*TupleType)
+		if fOk && oOk && !fTup.IsVariadic && !oTup.IsVariadic && len(fTup.Elems) == len(oTup.Elems) {
+			argEq = true
+			for i := range fTup.Elems {
+				if fTup.Elems[i] != TypeUnknown && oTup.Elems[i] != TypeUnknown && !fTup.Elems[i].Equals(oTup.Elems[i]) {
+					argEq = false
+					break
+				}
+			}
+		}
+	}
 	retEq := f.Ret == TypeUnknown || of.Ret == TypeUnknown || f.Ret.Equals(of.Ret)
 	return argEq && retEq
 }
+
+
 
 
 // TypeVar represents uninstantiated type variable for inference.
@@ -274,8 +326,8 @@ func IsAssignableTo(src, target Type) bool {
 	// If both are FuncType
 	if fSrc, ok := src.(*FuncType); ok {
 		if fTarget, ok := target.(*FuncType); ok {
-			srcArgs, sIsTuple := fSrc.Arg.(*TupleType)
-			targetArgs, tIsTuple := fTarget.Arg.(*TupleType)
+			srcArgs, sIsTuple := fSrc.effectiveArgType().(*TupleType)
+			targetArgs, tIsTuple := fTarget.effectiveArgType().(*TupleType)
 			if sIsTuple && tIsTuple {
 				if len(srcArgs.Elems) != len(targetArgs.Elems) {
 					return false
@@ -287,7 +339,7 @@ func IsAssignableTo(src, target Type) bool {
 					}
 				}
 			} else {
-				if !IsAssignableTo(fTarget.Arg, fSrc.Arg) {
+				if !IsAssignableTo(fTarget.effectiveArgType(), fSrc.effectiveArgType()) {
 					return false
 				}
 			}
@@ -295,6 +347,7 @@ func IsAssignableTo(src, target Type) bool {
 			return IsAssignableTo(fSrc.Ret, fTarget.Ret)
 		}
 	}
+
 	// If both are DictType
 	if dTarget, ok := target.(*DictType); ok {
 		if dSrc, ok := src.(*DictType); ok {
@@ -360,6 +413,12 @@ func (i *InterfaceType) Equals(other Type) bool {
 func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
 	if m, ok := i.Methods[name]; ok {
 		return m, true
+	}
+	if name == "Type" {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		}, true
 	}
 	return nil, false
 }

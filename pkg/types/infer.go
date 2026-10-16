@@ -845,9 +845,12 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				retType = t
+			} else if m.Name == "init" {
+				retType = st
 			} else if lastExprType != nil {
 				retType = lastExprType
 			}
+
 
 			mType := &FuncType{
 				Arg: &TupleType{

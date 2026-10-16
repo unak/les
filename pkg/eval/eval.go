@@ -436,7 +436,15 @@ func typeNameWithDepth(val Value, depth int) string {
 	case *StructInstance:
 		return v.Def.Name
 	case *StructDefValue:
-		return "Type"
+		if v.StructType != nil {
+			if st, ok := v.StructType.(*types.StructType); ok {
+				if initFn, ok := st.Methods["init"]; ok {
+					return initFn.String()
+				}
+			}
+		}
+		return "() -> " + v.Name
+
 	case *Closure:
 		if v.FuncType != nil {
 			if t, ok := v.FuncType.(*types.FuncType); ok {
@@ -2184,7 +2192,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		return ok
 	case "Function":
 		switch val.(type) {
-		case *Closure, *BuiltinFunc:
+		case *Closure, *BuiltinFunc, *StructDefValue:
 			return true
 		default:
 			return false
@@ -2219,6 +2227,23 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				}
 				if targetFT, ok := targetType.(*types.FuncType); ok {
 					return types.IsAssignableTo(fnT, targetFT)
+				}
+			}
+		case *StructDefValue:
+			if st, ok := fnVal.StructType.(*types.StructType); ok && st.Methods != nil {
+				if fnT, exists := st.Methods["init"]; exists && fnT != nil {
+					var targetType types.Type
+					if len(optEnv) > 0 && optEnv[0] != nil && optEnv[0].Inferencer != nil {
+						if inf, ok := optEnv[0].Inferencer.(*types.Inferencer); ok {
+							targetType, _ = inf.ParseTypeAnnot(typeAnnot)
+						}
+					}
+					if targetType == nil {
+						targetType, _ = types.ParseTypeAnnot(typeAnnot)
+					}
+					if targetFT, ok := targetType.(*types.FuncType); ok {
+						return types.IsAssignableTo(fnT, targetFT)
+					}
 				}
 			}
 		}
@@ -2502,7 +2527,14 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 					nonSelfCount++
 				}
 			}
-			if nonSelfCount != len(sig.Params) {
+			if fn.BlockParam != nil {
+				nonSelfCount++
+			}
+			expectedCount := len(sig.Params)
+			if sig.BlockParam != nil {
+				expectedCount++
+			}
+			if nonSelfCount != expectedCount {
 				return false
 			}
 		case *BuiltinFunc:
