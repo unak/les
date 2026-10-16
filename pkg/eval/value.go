@@ -215,6 +215,7 @@ type StructDefValue struct {
 	FieldDefaults map[string]ast.Expr
 	EmbeddedNames []string
 	Methods       map[string]*ast.FuncDef
+	AllMethods    map[string][]*ast.FuncDef
 	Env           *Environment
 	StructType    any // Inferred *types.StructType
 }
@@ -315,6 +316,119 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	return closure
 }
 
+func nonSelfParamCount(m *ast.FuncDef) int {
+	count := 0
+	for _, p := range m.Params {
+		if p.Name != "self" {
+			count++
+		}
+	}
+	if m.BlockParam != nil {
+		count++
+	}
+	return count
+}
+
+func (si *StructInstance) makeDispatcher(name string, methods []*ast.FuncDef) Value {
+	if len(methods) == 1 {
+		return si.bindMethod(methods[0])
+	}
+	bf := &BuiltinFunc{
+		Name: name,
+		Fn: func(args []Value) (Value, error) {
+			for _, m := range methods {
+				if nonSelfParamCount(m) == len(args) {
+					c := si.bindMethod(m)
+					return c.Env.invokeClosure(c, args)
+				}
+			}
+			return nil, fmt.Errorf("method %s on %s called with %d arguments", name, si.Def.Name, len(args))
+		},
+	}
+	if si.Def != nil && si.Def.StructType != nil {
+		if st, ok := si.Def.StructType.(*types.StructType); ok {
+			if mType, ok := st.Methods[name]; ok {
+				bf.FuncType = mType
+			}
+		}
+	}
+	return bf
+}
+
+// LookupMethod searches for method on StructInstance matching arity.
+func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error) {
+	if si.Def != nil && si.Def.AllMethods != nil {
+		for _, m := range si.Def.AllMethods[name] {
+			if nonSelfParamCount(m) == arity {
+				return si.bindMethod(m), nil
+			}
+		}
+	} else if si.Def != nil && si.Def.Methods != nil {
+		if m, ok := si.Def.Methods[name]; ok && nonSelfParamCount(m) == arity {
+			return si.bindMethod(m), nil
+		}
+	}
+
+	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
+	for _, embName := range si.Def.EmbeddedNames {
+		if emb, ok := si.Embedded[embName]; ok {
+			currentLevel = append(currentLevel, emb)
+		}
+	}
+
+	visited := make(map[string]bool)
+	visited[si.Def.Name] = true
+
+	for len(currentLevel) > 0 {
+		type candidate struct {
+			closure *Closure
+			origin  string
+		}
+		var candidates []candidate
+		var nextLevel []*StructInstance
+
+		for _, emb := range currentLevel {
+			if visited[emb.Def.Name] {
+				continue
+			}
+			visited[emb.Def.Name] = true
+
+			if emb.Def != nil && emb.Def.AllMethods != nil {
+				for _, m := range emb.Def.AllMethods[name] {
+					if nonSelfParamCount(m) == arity {
+						candidates = append(candidates, candidate{closure: emb.bindMethod(m), origin: emb.Def.Name})
+					}
+				}
+			} else if emb.Def != nil && emb.Def.Methods != nil {
+				if m, ok := emb.Def.Methods[name]; ok && nonSelfParamCount(m) == arity {
+					candidates = append(candidates, candidate{closure: emb.bindMethod(m), origin: emb.Def.Name})
+				}
+			}
+
+			for _, subName := range emb.Def.EmbeddedNames {
+				if sub, ok := emb.Embedded[subName]; ok {
+					nextLevel = append(nextLevel, sub)
+				}
+			}
+		}
+
+		if len(candidates) == 1 {
+			return candidates[0].closure, nil
+		}
+		if len(candidates) > 1 {
+			origins := make([]string, len(candidates))
+			for i, c := range candidates {
+				origins[i] = c.origin
+			}
+			return nil, fmt.Errorf("ambiguous selector '%s' on type %s (candidates in %s)", name, si.Def.Name, strings.Join(origins, ", "))
+		}
+
+		currentLevel = nextLevel
+	}
+
+	return nil, fmt.Errorf("type %s has no method '%s' with arity %d", si.Def.Name, name, arity)
+}
+
 // LookupMember searches for field or method on StructInstance with Go-style promotion rules.
 func (si *StructInstance) LookupMember(name string) (Value, error) {
 	// 1. Direct fields
@@ -323,8 +437,13 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 	}
 
 	// 2. Direct methods
-	if m, ok := si.Def.Methods[name]; ok {
-		return si.bindMethod(m), nil
+	if si.Def != nil {
+		if ms, ok := si.Def.AllMethods[name]; ok && len(ms) > 0 {
+			return si.makeDispatcher(name, ms), nil
+		}
+		if m, ok := si.Def.Methods[name]; ok {
+			return si.bindMethod(m), nil
+		}
 	}
 
 	// 3. BFS over embedded structs
@@ -355,8 +474,14 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 			if v, ok := emb.Fields[name]; ok {
 				candidates = append(candidates, candidate{val: v, origin: emb.Def.Name})
 			}
-			if m, ok := emb.Def.Methods[name]; ok {
-				candidates = append(candidates, candidate{val: emb.bindMethod(m), origin: emb.Def.Name})
+			if emb.Def != nil && emb.Def.AllMethods != nil {
+				if ms, ok := emb.Def.AllMethods[name]; ok && len(ms) > 0 {
+					candidates = append(candidates, candidate{val: emb.makeDispatcher(name, ms), origin: emb.Def.Name})
+				}
+			} else if emb.Def != nil && emb.Def.Methods != nil {
+				if m, ok := emb.Def.Methods[name]; ok {
+					candidates = append(candidates, candidate{val: emb.bindMethod(m), origin: emb.Def.Name})
+				}
 			}
 
 			for _, subName := range emb.Def.EmbeddedNames {

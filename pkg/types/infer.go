@@ -87,6 +87,38 @@ var BuiltinGetsFuncType = &FuncType{
 	Ret: NewUnionType(TypeString, TypeNil),
 }
 
+var BuiltinEqualIface = &InterfaceType{
+	Name: "Equal",
+	Methods: map[string]*FuncType{
+		"==": {
+			Arg:      &TupleType{Elems: []Type{TypeUnknown}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      TypeBool,
+		},
+	},
+	Embedded: []*InterfaceType{},
+}
+
+var BuiltinComparableIface = &InterfaceType{
+	Name: "Comparable",
+	Methods: map[string]*FuncType{
+		"==": {
+			Arg:      &TupleType{Elems: []Type{TypeUnknown}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      TypeBool,
+		},
+		"<": {
+			Arg:      &TupleType{Elems: []Type{TypeUnknown}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      TypeBool,
+		},
+	},
+	Embedded: []*InterfaceType{BuiltinEqualIface},
+}
+
 var BuiltinShowIface = &InterfaceType{
 	Name: "Show",
 	Methods: map[string]*FuncType{
@@ -125,6 +157,10 @@ func NewInferencer() *Inferencer {
 
 	// Built-in Show interface: ToString(): String, Type(): String
 	_ = rootScope.Declare("Show", BuiltinShowIface)
+
+	// Built-in Equal & Comparable interfaces
+	_ = rootScope.Declare("Equal", BuiltinEqualIface)
+	_ = rootScope.Declare("Comparable", BuiltinComparableIface)
 
 	// Built-in print: (*args: Show) -> ()
 	_ = rootScope.Declare("print", BuiltinPrintFuncType)
@@ -863,7 +899,33 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				BlockOpt:   blockOpt,
 				Ret:        retType,
 			}
-			st.Methods[m.Name] = mType
+			if existing, ok := st.Methods[m.Name]; ok && (m.Name == "+" || m.Name == "-") {
+				var unaryFT, binaryFT *FuncType
+				if mType.MaxArity == 0 && existing.MinArity >= 1 {
+					unaryFT = mType
+					binaryFT = existing
+				} else if existing.MaxArity == 0 && mType.MinArity >= 1 {
+					unaryFT = existing
+					binaryFT = mType
+				}
+				if unaryFT != nil && binaryFT != nil {
+					ret := binaryFT.Ret
+					if !unaryFT.Ret.Equals(binaryFT.Ret) {
+						ret = NewUnionType(unaryFT.Ret, binaryFT.Ret)
+					}
+					st.Methods[m.Name] = &FuncType{
+						Arg:           binaryFT.Arg,
+						OverloadUnion: fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String()),
+						MinArity:      0,
+						MaxArity:      binaryFT.MaxArity,
+						Ret:           ret,
+					}
+				} else {
+					st.Methods[m.Name] = mType
+				}
+			} else {
+				st.Methods[m.Name] = mType
+			}
 		}
 
 		if _, hasInit := st.Methods["init"]; !hasInit {
@@ -1088,6 +1150,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		if st, ok := t.(*StructType); ok {
+			if m, err := st.LookupMember(e.Op); err == nil {
+				if fnT, ok := m.(*FuncType); ok {
+					return fnT.Ret, nil
+				}
+			}
+		}
+		if it, ok := t.(*InterfaceType); ok {
+			if m, ok := it.LookupMethod(e.Op); ok {
+				return m.Ret, nil
+			}
+		}
 		switch e.Op {
 		case "+", "-":
 			if t == TypeFloat {
@@ -1107,6 +1181,34 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		rightT, err := inf.inferExpr(e.Right)
 		if err != nil {
 			return nil, err
+		}
+		if e.Op == "!=" {
+			// Desugars to !(left == right)
+			if st, ok := leftT.(*StructType); ok {
+				if m, err := st.LookupMember("=="); err == nil {
+					if fnT, ok := m.(*FuncType); ok {
+						return fnT.Ret, nil
+					}
+				}
+			}
+			if it, ok := leftT.(*InterfaceType); ok {
+				if m, ok := it.LookupMethod("=="); ok {
+					return m.Ret, nil
+				}
+			}
+			return TypeBool, nil
+		}
+		if st, ok := leftT.(*StructType); ok {
+			if m, err := st.LookupMember(e.Op); err == nil {
+				if fnT, ok := m.(*FuncType); ok {
+					return fnT.Ret, nil
+				}
+			}
+		}
+		if it, ok := leftT.(*InterfaceType); ok {
+			if m, ok := it.LookupMethod(e.Op); ok {
+				return m.Ret, nil
+			}
 		}
 		switch e.Op {
 		case "+":
@@ -1380,6 +1482,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		targetT, err := inf.inferExpr(e.Target)
 		if err != nil {
 			return nil, err
+		}
+		if st, ok := targetT.(*StructType); ok {
+			if m, err := st.LookupMember("[]"); err == nil {
+				if fnT, ok := m.(*FuncType); ok {
+					return fnT.Ret, nil
+				}
+			}
+		}
+		if it, ok := targetT.(*InterfaceType); ok {
+			if m, ok := it.LookupMethod("[]"); ok {
+				return m.Ret, nil
+			}
 		}
 		if tt, ok := targetT.(*TupleType); ok {
 			if len(tt.Elems) > 0 {

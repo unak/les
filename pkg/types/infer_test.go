@@ -1484,3 +1484,62 @@ lType: String = l.Type()
 		t.Fatalf("unexpected type error in block param interface/assignability test: %v", err)
 	}
 }
+
+func TestOperatorMethodInference(t *testing.T) {
+	code := `
+struct Vec2:
+    x: Int
+    y: Int
+
+    def +(other: Vec2):
+        Vec2(x: x + other.x, y: y + other.y)
+
+    def ==(other: Vec2):
+        x == other.x && y == other.y
+
+    def -():
+        Vec2(x: -x, y: -y)
+
+    def [](idx: Int):
+        idx == 0 ? x : y
+
+v1 = Vec2(x: 1, y: 2)
+v2 = Vec2(x: 3, y: 4)
+
+v3: Vec2 = v1 + v2
+eq: Bool = v1 == v2
+neq: Bool = v1 != v2
+neg: Vec2 = -v1
+elem: Int = v1[0]
+
+eqObj: Equal = v1
+cmpInt: Comparable = 42
+cmpStr: Comparable = "abc"
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error for operator methods: %v", err)
+	}
+
+	v3T, ok := inf.scope.Lookup("v3")
+	if !ok || v3T.String() != "Vec2" {
+		t.Fatalf("expected v3 to be Vec2, got %v", v3T)
+	}
+	eqT, ok := inf.scope.Lookup("eq")
+	if !ok || eqT != TypeBool {
+		t.Fatalf("expected eq to be Bool, got %v", eqT)
+	}
+	neqT, ok := inf.scope.Lookup("neq")
+	if !ok || neqT != TypeBool {
+		t.Fatalf("expected neq to be Bool, got %v", neqT)
+	}
+	negT, ok := inf.scope.Lookup("neg")
+	if !ok || negT.String() != "Vec2" {
+		t.Fatalf("expected neg to be Vec2, got %v", negT)
+	}
+	elemT, ok := inf.scope.Lookup("elem")
+	if !ok || elemT != TypeInt {
+		t.Fatalf("expected elem to be Int, got %v", elemT)
+	}
+}
