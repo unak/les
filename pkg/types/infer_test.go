@@ -1082,7 +1082,7 @@ z: {String: Int | String} = {"a": 1, "b": "x"}
 		t.Fatalf("unexpected type error with union dict: %v", err)
 	}
 
-	// 13. Assigning dict with Any value (from unannotated function) is allowed
+	// 13. Assigning dict with Unknown value (from unannotated function) is allowed
 	code13 := `
 def get_val(x):
     x
@@ -1092,8 +1092,9 @@ d: {String: Int} = {"a": get_val(42)}
 	prog13 := parser.NewParser(lexer.NewLexer(code13)).ParseProgram()
 	inf13 := NewInferencer()
 	if err := inf13.InferProgram(prog13); err != nil {
-		t.Fatalf("unexpected type error assigning Any-valued dict to typed dict: %v", err)
+		t.Fatalf("unexpected type error assigning Unknown-valued dict to typed dict: %v", err)
 	}
+
 
 	// 14. IsAssignableTo with TypeUnknown:
 	emptyDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}

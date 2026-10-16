@@ -350,8 +350,9 @@ def puts_each(items):
     if len(tail) > 0:
         puts_each(tail)
 
-def puts(*args: Any):
+def puts(*args):
     if len(args) == 0:
+
         print "\n"
     else:
         puts_each(args)

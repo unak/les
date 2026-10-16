@@ -104,7 +104,8 @@ func (d *DictType) Equals(other Type) bool {
 
 // FuncType represents (Arg) -> Ret.
 type FuncType struct {
-	Arg        Type // argument is always a TupleType or Any
+	Arg        Type // argument is always a TupleType or TypeUnknown
+
 	MinArity   int  // Minimum number of required positional arguments
 	MaxArity   int  // Maximum number of positional arguments (-1 if variadic)
 	BlockParam Type // Type of &block parameter (nil if no &block)

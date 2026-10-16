@@ -3475,8 +3475,9 @@ print (d is {String: String})
 		t.Fatalf("expected 'true false', got %q", out3)
 	}
 
-	// 4. Dynamic unannotated function return (TypeAny preserves laziness until forced)
+	// 4. Dynamic unannotated function return (TypeUnknown preserves laziness until forced)
 	code4 := `
+
 def get_val(x):
     x
 
