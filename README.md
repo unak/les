@@ -374,12 +374,12 @@ Listed from highest to lowest precedence:
     p = (1, "ok")       # inferred as (Int, String)
     d = {"a": 42}       # inferred as {String: Int}
     ```
-  - Unannotated function parameters whose types cannot be uniquely constrained fall back to dynamic typing (`Any`), allowing flexible dynamic code alongside strictly typed code:
+  - Unannotated function parameters whose types cannot be uniquely constrained fall back to `Unknown`, allowing flexible dynamic code alongside strictly typed code:
     ```python
-    def identity(x): x  # parameter and return type inferred as Any
+    def identity(x): x  # parameter and return type inferred as Unknown
     ```
   - **Inferred Types on Lazy Thunks**:
-    Statically inferred types are propagated to lazy `Thunk` values at runtime (`thunk.InferredType`). This allows runtime type tests (`is`) and inspection (`type()`) to determine element types without forcing deferred computations or triggering premature side effects.
+    Statically inferred types are propagated to lazy `Thunk` values at runtime (`thunk.InferredType`). This allows runtime type tests (`is`) and inspection (`.Type()`) to determine element types without forcing deferred computations or triggering premature side effects.
 - **Function Types (`->`)**:
   Function types represent callable types mapping argument types to a return type: `(Arg1, Arg2) -> Ret`.
   - **Syntax**: `(T1, T2) -> Ret`, `(T) -> Ret`, `() -> Ret`, or right-associative higher-order types `(A) -> (B) -> C`.
@@ -423,14 +423,15 @@ Listed from highest to lowest precedence:
   > - **Constant literals** (e.g. `{"a": "hello"}`) are evaluated immediately at creation (WHNF), so type mismatches are caught right away (`d is {String: Int}` evaluates to `false`).
   > - **Lazy expressions** (e.g. `{"a": "he" + "llo"}`) carry their statically inferred types (`InferredType`). If the inferred type is incompatible with `V`, `is` returns `false` **without forcing the value**.
   > - **Exceptions & deferred computations** (e.g. `{"a": 1 / 0}`) with matching inferred types are **not forced**, safely evaluating to `true` without triggering runtime exceptions.
-  > - **Dynamically typed values** (such as returns from unannotated functions inferred as `Any`) preserve laziness and are skipped until demanded:
+  > - **Unconstrained values** (such as returns from unannotated functions inferred as `Unknown`) preserve laziness and are skipped until demanded:
   >   ```python
-  >   def get_val(x): x               # inferred return type: Any
+  >   def get_val(x): x               # inferred return type: Unknown
   >   d = {"a": get_val("hello")}
-  >   print (d is {String: Int})       # true (skipped because static type is Any)
-  >   _ = d["a"]!                      # forces evaluation of the value ("hello")
+  >   print (d is {String: Int})       # true (skipped because static type is Unknown)
+  >   _ = force d["a"]                 # forces evaluation of the value ("hello")
   >   print (d is {String: Int})       # false (now evaluated as String, mismatching Int)
   >   ```
+
 
 - **Pattern Match Expression `match ... case`**:
   Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, and default `_`:
@@ -874,8 +875,9 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
   - `t.ToString(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
 - **Index Access**:
-  - `t[i]: Any`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
+  - `t[i]`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
 - **Operators & Destructuring**:
+
   - `==`, `!=`: Structural element-wise equality comparison.
   - Pattern matching / unpacking: `(a, b) = t`, `(first, *rest) = t`.
 
