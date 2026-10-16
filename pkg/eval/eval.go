@@ -1790,27 +1790,29 @@ func evalBinary(op string, left, right Value) (Value, error) {
 			}
 		}
 		// Relational comparison fallback using < and == (Comparable)
-		switch op {
-		case "<=":
-			// left <= right <=> (left < right) || (left == right)
-			ltVal, errLt := evalBinary("<", left, right)
-			if errLt == nil {
-				if b, ok := ltVal.(BoolValue); ok && bool(b) {
-					return BoolValue(true), nil
-				}
-				eqVal, errEq := evalBinary("==", left, right)
-				if errEq == nil {
-					if b, ok := eqVal.(BoolValue); ok {
-						return b, nil
+		if _, hasLt := si.LookupMethod("<", 1); hasLt == nil {
+			switch op {
+			case "<=":
+				// left <= right <=> (left < right) || (left == right)
+				ltVal, errLt := evalBinary("<", left, right)
+				if errLt == nil {
+					if b, ok := ltVal.(BoolValue); ok && bool(b) {
+						return BoolValue(true), nil
+					}
+					eqVal, errEq := evalBinary("==", left, right)
+					if errEq == nil {
+						if b, ok := eqVal.(BoolValue); ok {
+							return b, nil
+						}
 					}
 				}
+			case ">":
+				// left > right <=> right < left
+				return evalBinary("<", right, left)
+			case ">=":
+				// left >= right <=> right <= left
+				return evalBinary("<=", right, left)
 			}
-		case ">":
-			// left > right <=> right < left
-			return evalBinary("<", right, left)
-		case ">=":
-			// left >= right <=> right <= left
-			return evalBinary("<=", right, left)
 		}
 	}
 
@@ -2396,13 +2398,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					return Force(t.Elements[idx]), nil
 				},
 			}
-			var elemT types.Type = types.TypeUnknown
-			if len(t.Elements) > 0 {
-				elemT = types.TypeUnknown
-			}
 			bf.FuncType = &types.FuncType{
 				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
-				Ret: elemT,
+				Ret: types.TypeUnknown,
 			}
 			return bf, nil
 
