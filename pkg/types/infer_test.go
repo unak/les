@@ -146,16 +146,16 @@ val: Int | String = res
 	}
 }
 
-func TestAssignableAnyAndNil(t *testing.T) {
-	// Any is a safe top type: anything is assignable to Any, but Any is not assignable to Int
-	if !IsAssignableTo(TypeInt, TypeAny) {
-		t.Errorf("expected Int to be assignable to Any")
+func TestAssignableUnknownAndNil(t *testing.T) {
+	// Unknown is internal inference placeholder: compatible during inference
+	if !IsAssignableTo(TypeInt, TypeUnknown) {
+		t.Errorf("expected Int to be assignable to Unknown")
 	}
-	if !IsAssignableTo(TypeNil, TypeAny) {
-		t.Errorf("expected Nil to be assignable to Any")
+	if !IsAssignableTo(TypeUnknown, TypeInt) {
+		t.Errorf("expected Unknown to be assignable to Int")
 	}
-	if IsAssignableTo(TypeAny, TypeInt) {
-		t.Errorf("Any should NOT be assignable to Int without narrowing")
+	if !IsAssignableTo(TypeNil, TypeUnknown) {
+		t.Errorf("expected Nil to be assignable to Unknown")
 	}
 
 	// Nil with Union
@@ -623,29 +623,17 @@ print NoShow(x: 1)
 }
 
 func TestForceExprTypeInference(t *testing.T) {
-	// 1. Both expr! and force(expr) preserve inner expression types
+	// 1. Both expr! and force expr keyword preserve inner expression types
 	code := `
 a: Int = (10 + 20)!
-b: Int = force(30)
+b: Int = force 30
 c: String = ("hello")!
-d: String = force("world")
+d: String = force "world"
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()
 	if err := inf.InferProgram(prog); err != nil {
 		t.Fatalf("unexpected type error in force expression inference: %v", err)
-	}
-
-	// 2. Shadowed force parameter uses the parameter's type
-	codeShadow := `
-def run_callback(force: (Int) -> String):
-    res: String = force(10)
-    res
-`
-	progShadow := parser.NewParser(lexer.NewLexer(codeShadow)).ParseProgram()
-	infShadow := NewInferencer()
-	if err := infShadow.InferProgram(progShadow); err != nil {
-		t.Fatalf("unexpected type error in shadowed force: %v", err)
 	}
 }
 
@@ -1107,19 +1095,19 @@ d: {String: Int} = {"a": get_val(42)}
 		t.Fatalf("unexpected type error assigning Any-valued dict to typed dict: %v", err)
 	}
 
-	// 14. IsAssignableTo with TypeAny:
-	emptyDict := &DictType{Key: TypeAny, Value: TypeAny}
+	// 14. IsAssignableTo with TypeUnknown:
+	emptyDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}
 	intDict := &DictType{Key: TypeString, Value: TypeInt}
-	anyValDict := &DictType{Key: TypeString, Value: TypeAny}
+	unknownValDict := &DictType{Key: TypeString, Value: TypeUnknown}
 
 	if !IsAssignableTo(emptyDict, intDict) {
 		t.Fatalf("expected empty dict to be assignable to {String: Int}")
 	}
-	if !IsAssignableTo(anyValDict, intDict) {
-		t.Fatalf("expected {String: Any} to be assignable to {String: Int}")
+	if !IsAssignableTo(unknownValDict, intDict) {
+		t.Fatalf("expected {String: Unknown} to be assignable to {String: Int}")
 	}
-	if !IsAssignableTo(intDict, anyValDict) {
-		t.Fatalf("expected {String: Int} to be assignable to {String: Any}")
+	if !IsAssignableTo(intDict, unknownValDict) {
+		t.Fatalf("expected {String: Int} to be assignable to {String: Unknown}")
 	}
 }
 
@@ -1220,6 +1208,16 @@ func TestUnknownTypeAnnotationError(t *testing.T) {
 			code:        `x: @unknownmod.Type = 1`,
 			expectedErr: "unknown type '@unknownmod.Type'",
 		},
+		{
+			name:        "prohibit Any type annotation",
+			code:        `x: Any = 1`,
+			expectedErr: "unknown type 'Any'",
+		},
+		{
+			name:        "prohibit Unknown type annotation",
+			code:        `x: Unknown = 1`,
+			expectedErr: "unknown type 'Unknown'",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1245,7 +1243,6 @@ func TestValidTypeAnnotations(t *testing.T) {
 		`x: Bytes = Bytes("abc")`,
 		`x: Bool = true`,
 		`x: Nil = nil`,
-		`x: Any = 123`,
 		`x: Tuple = (1, 2, 3)`,
 		`x: Dict = {"a": 1}`,
 		`x: {String: Int} = {"a": 1}`,

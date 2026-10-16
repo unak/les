@@ -380,6 +380,18 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 		currentLevel = nextLevel
 	}
 
+	if name == "Type" {
+		return &BuiltinFunc{
+			Name: "Type",
+			Fn: func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return nil, fmt.Errorf("Type() takes 0 arguments, got %d", len(args))
+				}
+				return StringValue(si.Def.Name), nil
+			},
+		}, nil
+	}
+
 	return nil, fmt.Errorf("type %s has no field or method '%s'", si.Def.Name, name)
 }
 

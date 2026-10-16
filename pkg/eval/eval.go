@@ -152,50 +152,6 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// type: returns string representation of the runtime type of the value(s).
-	ev.builtinsEnv.Set("type", &BuiltinFunc{
-		Name:     "type",
-		FuncType: types.BuiltinTypeFuncType,
-		Fn: func(args []Value) (Value, error) {
-			if len(args) == 0 {
-				return StringValue("()"), nil
-			}
-			if len(args) == 1 {
-				val := Force(args[0])
-				return StringValue(typeNameOf(val)), nil
-			}
-			parts := make([]string, len(args))
-			for i, a := range args {
-				parts[i] = typeNameOf(Force(a))
-			}
-			return StringValue("(" + strings.Join(parts, ", ") + ")"), nil
-		},
-	})
-
-	// len: returns integer length of tuple, string, or dict.
-	ev.builtinsEnv.Set("len", &BuiltinFunc{
-		Name:     "len",
-		FuncType: types.BuiltinLenFuncType,
-		Fn: func(args []Value) (Value, error) {
-			if len(args) != 1 {
-				return nil, fmt.Errorf("len expects 1 argument, got %d", len(args))
-			}
-			val := Force(args[0])
-			switch v := val.(type) {
-			case StringValue:
-				return IntValue(len([]rune(string(v)))), nil
-			case BytesValue:
-				return IntValue(len(v)), nil
-			case *TupleValue:
-				return IntValue(len(v.Elements)), nil
-			case *DictValue:
-				return IntValue(len(v.Entries)), nil
-			default:
-				return nil, fmt.Errorf("len expects String, Bytes, Tuple, or Dict, got %v", val)
-			}
-		},
-	})
-
 	// exit: terminates process with exit code (0 or 1 arg, Bool or Int).
 	ev.builtinsEnv.Set("exit", &BuiltinFunc{
 		Name:     "exit",
@@ -222,18 +178,6 @@ func (ev *Evaluator) registerBuiltins() {
 				return nil, fmt.Errorf("exit expects 0 or 1 argument, got %d", len(args))
 			}
 			panic(&ExitError{Code: code})
-		},
-	})
-
-	// force: strictly evaluates (forces) its argument and returns it.
-	ev.builtinsEnv.Set("force", &BuiltinFunc{
-		Name:     "force",
-		FuncType: types.BuiltinForceFuncType,
-		Fn: func(args []Value) (Value, error) {
-			if len(args) != 1 {
-				return nil, fmt.Errorf("force expects 1 argument, got %d", len(args))
-			}
-			return Force(args[0]), nil
 		},
 	})
 
@@ -349,7 +293,7 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("Error", &BuiltinFunc{
 		Name: "Error",
 		FuncType: &types.FuncType{
-			Arg:      &types.TupleType{Elems: []types.Type{types.TypeAny}},
+			Arg:      &types.TupleType{Elems: []types.Type{types.BuiltinShowIface}},
 			MinArity: 0,
 			MaxArity: 1,
 			Ret:      types.BuiltinErrorIface,
@@ -371,12 +315,16 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Show interface definition: ToString(): String
+	// Built-in Show interface definition: ToString(): String, Type(): String
 	ev.builtinsEnv.Set("Show", &InterfaceDefValue{
 		Name: "Show",
 		Methods: map[string]ast.MethodSig{
 			"ToString": {
 				Name:   "ToString",
+				Params: []ast.FuncParam{},
+			},
+			"Type": {
+				Name:   "Type",
 				Params: []ast.FuncParam{},
 			},
 		},
@@ -418,11 +366,11 @@ func valueOrThunkTypeNameWithDepth(val Value, depth int) string {
 	}
 	if thunk, ok := val.(*Thunk); ok {
 		if thunk.InferredType != nil {
-			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeAny {
+			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown {
 				return t.String()
 			}
 		}
-		return "Any"
+		return "Unknown"
 	}
 	return typeNameWithDepth(Force(val), depth)
 }
@@ -461,7 +409,7 @@ func typeNameWithDepth(val Value, depth int) string {
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *DictValue:
 		if len(v.Entries) == 0 {
-			return "{Any: Any}"
+			return "{Unknown: Unknown}"
 		}
 		keyTypesSet := make(map[string]bool)
 		valTypesSet := make(map[string]bool)
@@ -504,7 +452,7 @@ func typeNameWithDepth(val Value, depth int) string {
 		}
 		return "Function"
 	default:
-		return "Any"
+		return "Unknown"
 	}
 }
 
@@ -570,17 +518,9 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 }
 
 func (env *Environment) isForceDemand(expr ast.Expr) bool {
-	switch e := expr.(type) {
+	switch expr.(type) {
 	case *ast.ForceExpr:
 		return true
-	case *ast.CallExpr:
-		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
-			if val, ok := env.Get("force"); ok {
-				if bf, ok := val.(*BuiltinFunc); ok && bf.Name == "force" {
-					return true
-				}
-			}
-		}
 	}
 	return false
 }
@@ -1861,6 +1801,81 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			},
 		}, nil
 	}
+	if member == "Type" {
+		return &BuiltinFunc{
+			Name: "Type",
+			FuncType: &types.FuncType{
+				Arg: &types.TupleType{Elems: []types.Type{}},
+				Ret: types.TypeString,
+			},
+			Fn: func(args []Value) (Value, error) {
+				if len(args) != 0 {
+					return nil, fmt.Errorf("Type() takes 0 arguments, got %d", len(args))
+				}
+				return StringValue(typeNameOf(val)), nil
+			},
+		}, nil
+	}
+	if member == "Len" {
+		switch v := val.(type) {
+		case StringValue:
+			return &BuiltinFunc{
+				Name: "Len",
+				FuncType: &types.FuncType{
+					Arg: &types.TupleType{Elems: []types.Type{}},
+					Ret: types.TypeInt,
+				},
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
+					}
+					return IntValue(len([]rune(string(v)))), nil
+				},
+			}, nil
+		case BytesValue:
+			return &BuiltinFunc{
+				Name: "Len",
+				FuncType: &types.FuncType{
+					Arg: &types.TupleType{Elems: []types.Type{}},
+					Ret: types.TypeInt,
+				},
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
+					}
+					return IntValue(len(v)), nil
+				},
+			}, nil
+		case *TupleValue:
+			return &BuiltinFunc{
+				Name: "Len",
+				FuncType: &types.FuncType{
+					Arg: &types.TupleType{Elems: []types.Type{}},
+					Ret: types.TypeInt,
+				},
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
+					}
+					return IntValue(len(v.Elements)), nil
+				},
+			}, nil
+		case *DictValue:
+			return &BuiltinFunc{
+				Name: "Len",
+				FuncType: &types.FuncType{
+					Arg: &types.TupleType{Elems: []types.Type{}},
+					Ret: types.TypeInt,
+				},
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
+					}
+					return IntValue(len(v.Entries)), nil
+				},
+			}, nil
+		}
+	}
 	if member == "Ord" {
 		if sv, ok := val.(StringValue); ok {
 			bf := &BuiltinFunc{
@@ -2090,7 +2105,7 @@ func parseStringToInt(s string, radix int) int64 {
 
 func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {
 	typeAnnot = strings.TrimSpace(typeAnnot)
-	if typeAnnot == "" || typeAnnot == "Any" {
+	if typeAnnot == "" {
 		return true
 	}
 	if thunk, ok := val.(*Thunk); ok {
@@ -2137,8 +2152,6 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	}
 
 	switch typeAnnot {
-	case "Any":
-		return true
 	case "Nil", "nil":
 		_, ok := val.(NilValue)
 		return ok
@@ -2299,7 +2312,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			lastIdx := len(elemAnnots) - 1
 			for i, el := range tVal.Elements {
-				expectedAnnot := "Any"
+				expectedAnnot := "Unknown"
 				if lastIdx >= 0 {
 					if i < len(elemAnnots) {
 						expectedAnnot = elemAnnots[i]
@@ -2399,12 +2412,12 @@ func checkThunkInferredType(thunk *Thunk, targetAnnot string, optEnv ...*Environ
 		return true // unknown inferred type, preserve laziness
 	}
 	infT, ok := thunk.InferredType.(types.Type)
-	if !ok || infT == nil || infT == types.TypeAny {
-		return true // TypeAny could be anything at runtime, preserve laziness
+	if !ok || infT == nil || infT == types.TypeUnknown {
+		return true // TypeUnknown could be anything at runtime, preserve laziness
 	}
 
 	targetAnnot = strings.TrimSpace(targetAnnot)
-	if targetAnnot == "" || targetAnnot == "Any" {
+	if targetAnnot == "" || targetAnnot == "Unknown" {
 		return true
 	}
 

@@ -56,11 +56,6 @@ type Inferencer struct {
 	StmtTypes    map[ast.Stmt]Type
 }
 
-var BuiltinForceFuncType = &FuncType{
-	Arg: TypeAny,
-	Ret: TypeAny,
-}
-
 var BuiltinBytesFuncType = &FuncType{
 	Arg: &TupleType{
 		Elems: []Type{NewUnionType(TypeString, TypeBytes)},
@@ -87,16 +82,6 @@ var BuiltinPrintFuncType = &FuncType{
 	Ret: &TupleType{Elems: []Type{}},
 }
 
-var BuiltinTypeFuncType = &FuncType{
-	Arg: TypeAny,
-	Ret: TypeString,
-}
-
-var BuiltinLenFuncType = &FuncType{
-	Arg: TypeAny,
-	Ret: TypeInt,
-}
-
 var BuiltinGetsFuncType = &FuncType{
 	Arg: &TupleType{Elems: []Type{}},
 	Ret: NewUnionType(TypeString, TypeNil),
@@ -106,6 +91,10 @@ var BuiltinShowIface = &InterfaceType{
 	Name: "Show",
 	Methods: map[string]*FuncType{
 		"ToString": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+		"Type": {
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeString,
 		},
@@ -134,19 +123,13 @@ func NewInferencer() *Inferencer {
 	// Built-in Error interface: Message(): String, ToString(): String
 	_ = rootScope.Declare("Error", BuiltinErrorIface)
 
-	// Built-in Show interface: ToString(): String
+	// Built-in Show interface: ToString(): String, Type(): String
 	_ = rootScope.Declare("Show", BuiltinShowIface)
 
 	// Built-in print: (*args: Show) -> ()
 	_ = rootScope.Declare("print", BuiltinPrintFuncType)
-	// Built-in type: (Any) -> String
-	_ = rootScope.Declare("type", BuiltinTypeFuncType)
-	// Built-in len: (Any) -> Int
-	_ = rootScope.Declare("len", BuiltinLenFuncType)
 	// Built-in exit: ([code: Int]) -> Nil
 	_ = rootScope.Declare("exit", BuiltinExitFuncType)
-	// Built-in force: (Any) -> Any
-	_ = rootScope.Declare("force", BuiltinForceFuncType)
 	// Built-in Bytes: (String?) -> Bytes
 	_ = rootScope.Declare("Bytes", BuiltinBytesFuncType)
 	// Built-in gets: () -> String | Nil
@@ -469,7 +452,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if tt, ok := valT.(*TupleType); ok {
 			for i, name := range s.Pattern.Elements {
 				if name != "_" {
-					var elemT Type = TypeAny
+					var elemT Type = TypeUnknown
 					if i < len(tt.Elems) {
 						elemT = tt.Elems[i]
 					} else if tt.IsVariadic && len(tt.Elems) > 0 {
@@ -479,7 +462,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 			}
 			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-				var restElemT Type = TypeAny
+				var restElemT Type = TypeUnknown
 				if tt.IsVariadic && len(tt.Elems) > 0 {
 					restElemT = tt.Elems[len(tt.Elems)-1]
 				} else if len(tt.Elems) > len(s.Pattern.Elements) {
@@ -490,11 +473,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		} else {
 			for _, name := range s.Pattern.Elements {
 				if name != "_" {
-					_ = inf.scope.Declare(name, TypeAny)
+					_ = inf.scope.Declare(name, TypeUnknown)
 				}
 			}
 			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeAny}, IsVariadic: true})
+				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
 			}
 		}
 		return nil
@@ -505,7 +488,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		isVariadic := false
 		minArity := 0
 		for i, p := range s.Params {
-			var elemType Type = TypeAny
+			var elemType Type = TypeUnknown
 			if p.TypeAnnot != "" {
 				t, err := inf.parseTypeAnnot(p.TypeAnnot)
 				if err != nil {
@@ -518,7 +501,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				if err != nil {
 					return err
 				}
-				if elemType != TypeAny && !IsAssignableTo(defT, elemType) {
+				if elemType != TypeUnknown && !IsAssignableTo(defT, elemType) {
 					return fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
 				}
 			} else if !p.IsVariadic {
@@ -542,7 +525,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		var blockT Type
 		blockOpt := false
 		if s.BlockParam != nil {
-			blockT = TypeAny
+			blockT = TypeUnknown
 			if s.BlockParam.TypeAnnot != "" {
 				t, err := inf.parseTypeAnnot(s.BlockParam.TypeAnnot)
 				if err != nil {
@@ -556,13 +539,13 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				if err != nil {
 					return err
 				}
-				if blockT != TypeAny && !IsAssignableTo(defT, blockT) {
+				if blockT != TypeUnknown && !IsAssignableTo(defT, blockT) {
 					return fmt.Errorf("type mismatch in default value for block parameter '&%s': expected %s, got %s", s.BlockParam.Name, blockT, defT)
 				}
 			}
 		}
 
-		var declaredRetType Type = TypeAny
+		var declaredRetType Type = TypeUnknown
 		if s.ReturnType != "" {
 			t, err := inf.parseTypeAnnot(s.ReturnType)
 			if err != nil {
@@ -605,7 +588,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		prevScope := inf.scope
 		inf.scope = childScope
-		var lastT Type = TypeAny
+		var lastT Type = TypeUnknown
 		for _, bStmt := range s.Body {
 			if es, ok := bStmt.(*ast.ExprStmt); ok {
 				if et, err := inf.inferExpr(es.Value); err == nil {
@@ -629,7 +612,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if !IsAssignableTo(lastT, declaredRetType) {
 				return fmt.Errorf("return type mismatch in function '%s': expected %s, got %s", s.Name, declaredRetType, lastT)
 			}
-		} else if lastT != TypeAny {
+		} else if lastT != TypeUnknown {
 			fnType.Ret = lastT
 		}
 		return nil
@@ -775,7 +758,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				if p.Name == "self" {
 					continue
 				}
-				var pType Type = TypeAny
+				var pType Type = TypeUnknown
 				if p.TypeAnnot != "" {
 					t, err := inf.parseTypeAnnot(p.TypeAnnot)
 					if err != nil {
@@ -824,7 +807,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			var blockT Type
 			blockOpt := false
 			if m.BlockParam != nil {
-				blockT = TypeAny
+				blockT = TypeUnknown
 				if m.BlockParam.TypeAnnot != "" {
 					t, err := inf.parseTypeAnnot(m.BlockParam.TypeAnnot)
 					if err != nil {
@@ -838,7 +821,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 			prevScope := inf.scope
 			inf.scope = methodScope
-			var lastExprType Type = TypeAny
+			var lastExprType Type = TypeUnknown
 			for _, bStmt := range m.Body {
 				_ = inf.inferStmt(bStmt)
 				if es, ok := bStmt.(*ast.ExprStmt); ok {
@@ -855,7 +838,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 			inf.scope = prevScope
 
-			var retType Type = TypeAny
+			var retType Type = TypeUnknown
 			if m.ReturnType != "" {
 				t, err := inf.parseTypeAnnot(m.ReturnType)
 				if err != nil {
@@ -955,7 +938,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			paramTypes := make([]Type, len(m.Params))
 			minArity := 0
 			for i, p := range m.Params {
-				var pType Type = TypeAny
+				var pType Type = TypeUnknown
 				if p.TypeAnnot != "" {
 					t, err := inf.parseTypeAnnot(p.TypeAnnot)
 					if err != nil {
@@ -972,7 +955,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			var blockT Type
 			blockOpt := false
 			if m.BlockParam != nil {
-				blockT = TypeAny
+				blockT = TypeUnknown
 				if m.BlockParam.TypeAnnot != "" {
 					t, err := inf.parseTypeAnnot(m.BlockParam.TypeAnnot)
 					if err != nil {
@@ -982,7 +965,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
 			}
-			var retType Type = TypeAny
+			var retType Type = TypeUnknown
 			if m.ReturnType != "" {
 				t, err := inf.parseTypeAnnot(m.ReturnType)
 				if err != nil {
@@ -1048,7 +1031,7 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 
 func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 	if expr == nil {
-		return TypeAny, nil
+		return TypeUnknown, nil
 	}
 	switch e := expr.(type) {
 	case *ast.IntLit:
@@ -1067,7 +1050,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if t, ok := inf.scope.Lookup(e.Name); ok {
 			return t, nil
 		}
-		return TypeAny, nil // forward reference or flexible variable
+		return TypeUnknown, nil // forward reference or flexible variable
 	case *ast.TupleLit:
 		elems := make([]Type, len(e.Elements))
 		for i, el := range e.Elements {
@@ -1080,7 +1063,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		return &TupleType{Elems: elems}, nil
 	case *ast.DictLit:
 		if len(e.Entries) == 0 {
-			return &DictType{Key: TypeAny, Value: TypeAny}, nil
+			return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
 		}
 		var keyTypes []Type
 		var valTypes []Type
@@ -1111,7 +1094,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		case "!":
 			return TypeBool, nil
 		default:
-			return TypeAny, nil
+			return TypeUnknown, nil
 		}
 	case *ast.BinaryExpr:
 		leftT, err := inf.inferExpr(e.Left)
@@ -1150,7 +1133,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		case "&&", "||":
 			return TypeBool, nil
 		default:
-			return TypeAny, nil
+			return TypeUnknown, nil
 		}
 	case *ast.TernaryExpr:
 		_, err := inf.inferExpr(e.Cond)
@@ -1173,11 +1156,6 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		calleeT, err := inf.inferExpr(e.Callee)
 		if err != nil {
 			return nil, err
-		}
-		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
-			if t, ok := inf.scope.Lookup("force"); ok && t == BuiltinForceFuncType {
-				return inf.inferExpr(e.Args[0])
-			}
 		}
 		if st, ok := calleeT.(*StructType); ok {
 			isCopyUpdate := false
@@ -1269,7 +1247,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if err != nil {
 						return nil, err
 					}
-					if fnT.BlockParam != TypeAny && !IsAssignableTo(bT, fnT.BlockParam) {
+					if fnT.BlockParam != TypeUnknown && !IsAssignableTo(bT, fnT.BlockParam) {
 						return nil, fmt.Errorf("type mismatch for block argument: expected %s, got %s", fnT.BlockParam, bT)
 					}
 				} else if !fnT.BlockOpt {
@@ -1371,7 +1349,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return nil, err
 			}
 		}
-		return TypeAny, nil
+		return TypeUnknown, nil
 	case *ast.MemberAccessExpr:
 		targetT, err := inf.inferExpr(e.Target)
 		if err != nil {
@@ -1386,8 +1364,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return nil, fmt.Errorf("interface %s has no method '%s'", it.Name, e.Member)
 		}
-		if targetT == TypeAny {
-			return TypeAny, nil
+		if targetT == TypeUnknown {
+			return TypeUnknown, nil
 		}
 		if bSig, ok := LookupBuiltinTypeMethod(targetT, e.Member); ok {
 			return bSig, nil
@@ -1411,7 +1389,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		} else if targetT == TypeBytes {
 			return TypeInt, nil
 		}
-		return TypeAny, nil
+		return TypeUnknown, nil
 	case *ast.ModuleAccessExpr:
 		if mod, ok := inf.modules[e.Module]; ok {
 			if t, ok := mod.Exports[e.Member]; ok {
@@ -1419,7 +1397,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return nil, fmt.Errorf("undefined member '%s' in module '%s'", e.Member, e.Module)
 		}
-		return TypeAny, nil
+		return TypeUnknown, nil
 	case *ast.IsExpr:
 		_, err := inf.inferExpr(e.Expr)
 		if err != nil {
@@ -1442,17 +1420,17 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if c.TuplePattern != nil {
 				for _, name := range c.TuplePattern.Elements {
 					if name != "_" {
-						_ = caseScope.Declare(name, TypeAny)
+						_ = caseScope.Declare(name, TypeUnknown)
 					}
 				}
 				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeAny}, IsVariadic: true})
+					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
 				}
 			}
 			prevScope := inf.scope
 			inf.scope = caseScope
 
-			var lastT Type = TypeAny
+			var lastT Type = TypeUnknown
 			for _, stmt := range c.Body {
 				if es, ok := stmt.(*ast.ExprStmt); ok {
 					t, err := inf.inferExpr(es.Value)
@@ -1479,7 +1457,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			caseTypes = append(caseTypes, lastT)
 		}
 		if len(caseTypes) == 0 {
-			return TypeAny, nil
+			return TypeUnknown, nil
 		}
 		return NewUnionType(caseTypes...), nil
 	case *ast.LambdaExpr:
@@ -1488,7 +1466,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		isVariadic := false
 		minArity := 0
 		for i, p := range e.Params {
-			var elemType Type = TypeAny
+			var elemType Type = TypeUnknown
 			if p.TypeAnnot != "" {
 				t, err := inf.parseTypeAnnot(p.TypeAnnot)
 				if err != nil {
@@ -1501,7 +1479,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				if err != nil {
 					return nil, err
 				}
-				if elemType != TypeAny && !IsAssignableTo(defT, elemType) {
+				if elemType != TypeUnknown && !IsAssignableTo(defT, elemType) {
 					return nil, fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
 				}
 			} else if !p.IsVariadic {
@@ -1530,7 +1508,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 
 		prevScope := inf.scope
 		inf.scope = childScope
-		var lastT Type = TypeAny
+		var lastT Type = TypeUnknown
 		for _, stmt := range e.Body {
 			if es, ok := stmt.(*ast.ExprStmt); ok {
 				t, err := inf.inferExpr(es.Value)
@@ -1577,7 +1555,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		})
 
 	default:
-		return TypeAny, nil
+		return TypeUnknown, nil
 	}
 }
 
@@ -1596,7 +1574,7 @@ func parseTypeAnnot(annot string) (Type, error) {
 func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	annot = strings.TrimSpace(annot)
 	if annot == "" {
-		return TypeAny, nil
+		return TypeUnknown, nil
 	}
 
 	// 1. Check top-level Union: A | B
@@ -1718,12 +1696,12 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		return TypeBool, nil
 	case "Nil", "nil":
 		return TypeNil, nil
-	case "Any":
-		return TypeAny, nil
+	case "Any", "Unknown":
+		return nil, fmt.Errorf("unknown type '%s'", annot)
 	case "Tuple":
-		return &TupleType{Elems: []Type{TypeAny}, IsVariadic: true}, nil
+		return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 	case "Dict":
-		return &DictType{Key: TypeAny, Value: TypeAny}, nil
+		return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
 	}
 
 	// Tuple annotation or grouping: (Int, ...) or (Int, String) or ((Int) -> String)

@@ -58,7 +58,7 @@ print x, " ", y`
 }
 
 func TestArgsAndProgramName(t *testing.T) {
-	code := `print ProgramName, " ", scriptName, " ", len(Args), " ", Args[0], " ", Args[1]`
+	code := `print ProgramName, " ", scriptName, " ", Args.Len(), " ", Args[0], " ", Args[1]`
 	l := lexer.NewLexer(code)
 	p := parser.NewParser(l)
 	prog := p.ParseProgram()
@@ -526,10 +526,10 @@ classify true
 	}
 }
 
-func TestEvalNilAndAny(t *testing.T) {
+func TestEvalNil(t *testing.T) {
 	code := `
 x = nil
-print x is Nil, x is Any, 42 is Any, 42 is Nil
+print x is Nil, 42 is Nil
 print "\n"
 
 match x:
@@ -552,9 +552,9 @@ match x:
 	}
 	_, err := ev.EvalProgram(prog)
 	if err != nil {
-		t.Fatalf("eval nil/any failed: %v", err)
+		t.Fatalf("eval nil failed: %v", err)
 	}
-	expected := "truetruetruefalse\ngot nil"
+	expected := "truefalse\ngot nil"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
@@ -562,7 +562,7 @@ match x:
 
 func TestEvalVariadicFunction(t *testing.T) {
 	code := `
-def my_print(prefix: String, *args: Any):
+def my_print(prefix: String, *args):
     print prefix, args
     print "\n"
 
@@ -674,23 +674,21 @@ print "\n"
 	}
 }
 
-func TestEvalTypeBuiltin(t *testing.T) {
+func TestEvalTypeMethod(t *testing.T) {
 	code := `
-print type(42)
+print (42).Type()
 print "\n"
-print type((1,))
+print (1,).Type()
 print "\n"
-print type(1, 2)
+print (1, 2).Type()
 print "\n"
-print type((1, 2))
+print "les".Type()
 print "\n"
-print type("les")
+print true.Type()
 print "\n"
-print type(true)
+print nil.Type()
 print "\n"
-print type(nil)
-print "\n"
-print type()
+print ().Type()
 print "\n"
 `
 	var out strings.Builder
@@ -705,26 +703,26 @@ print "\n"
 	}
 	_, err := ev.EvalProgram(prog)
 	if err != nil {
-		t.Fatalf("eval type builtin failed: %v", err)
+		t.Fatalf("eval type method failed: %v", err)
 	}
-	expected := "Int\n(Int)\n(Int, Int)\n(Int, Int)\nString\nBool\nNil\n()"
+	expected := "Int\n(Int)\n(Int, Int)\nString\nBool\nNil\n()"
 	if strings.TrimSpace(out.String()) != expected {
 		t.Fatalf("expected %q, got %q", expected, out.String())
 	}
 
 	// Non-forcing tuple type tests:
 	codeNonForcing := `
-def get_any(x):
+def get_val(x):
     x
 
 t1 = (1, 1 / 0)
-print type(t1)
+print t1.Type()
 print "\n"
-t2 = (get_any(42),)
-print type(t2)
+t2 = (get_val(42),)
+print t2.Type()
 print "\n"
 _ = t2[0]!
-print type(t2)
+print t2.Type()
 `
 	var out2 strings.Builder
 	ev2 := NewEvaluator()
@@ -739,31 +737,31 @@ print type(t2)
 	if err != nil {
 		t.Fatalf("eval non-forcing tuple type failed: %v", err)
 	}
-	expected2 := "(Int, Int)\n(Any)\n(Int)"
+	expected2 := "(Int, Int)\n(Unknown)\n(Int)"
 	if strings.TrimSpace(out2.String()) != expected2 {
 		t.Fatalf("expected %q, got %q", expected2, out2.String())
 	}
 
 	// Dict type tests:
 	codeDictType := `
-print type({})
+print ({}).Type()
 print "\n"
-print type({"key": "value"})
+print ({"key": "value"}).Type()
 print "\n"
-print type({1: 10, 2: 20})
+print ({1: 10, 2: 20}).Type()
 print "\n"
-print type({"a": 1, 2: "b"})
+print ({"a": 1, 2: "b"}).Type()
 print "\n"
 d_lazy = {"k": 1 / 0}
-print type(d_lazy)
+print d_lazy.Type()
 print "\n"
-def get_val(x):
+def get_dyn(x):
     x
-d_any = {"a": get_val(10)}
-print type(d_any)
+d_unk = {"a": get_dyn(10)}
+print d_unk.Type()
 print "\n"
-_ = d_any["a"]!
-print type(d_any)
+_ = d_unk["a"]!
+print d_unk.Type()
 `
 	var out3 strings.Builder
 	ev3 := NewEvaluator()
@@ -778,16 +776,16 @@ print type(d_any)
 	if err != nil {
 		t.Fatalf("eval dict type failed: %v", err)
 	}
-	expected3 := "{Any: Any}\n{String: String}\n{Int: Int}\n{Int | String: Int | String}\n{String: Int}\n{String: Any}\n{String: Int}"
+	expected3 := "{Unknown: Unknown}\n{String: String}\n{Int: Int}\n{Int | String: Int | String}\n{String: Int}\n{String: Unknown}\n{String: Int}"
 	if strings.TrimSpace(out3.String()) != expected3 {
 		t.Fatalf("expected %q, got %q", expected3, out3.String())
 	}
 
 	// Direct argument nested dict and tuple type inference:
 	codeDirectNested := `
-print type({"outer": {"inner": 1}})
+print ({"outer": {"inner": 1}}).Type()
 print "\n"
-print type(((1 / 0), (2 > 1) ? 1 : "a"))
+print (((1 / 0), (2 > 1) ? 1 : "a")).Type()
 `
 	var out4 strings.Builder
 	ev4 := NewEvaluator()
@@ -813,15 +811,15 @@ func TestPutsFunction(t *testing.T) {
 def puts_each(items):
     (head, ...tail) = items
     print head
-    if head is String && len(head) > 0 && head[-1] == "\n":
+    if head is String && head.Len() > 0 && head[-1] == "\n":
         ()
     else:
         print "\n"
-    if len(tail) > 0:
+    if tail.Len() > 0:
         puts_each(tail)
 
-def puts(*args: Any):
-    if len(args) == 0:
+def puts(*args):
+    if args.Len() == 0:
         print "\n"
     else:
         puts_each(args)
@@ -1736,17 +1734,18 @@ print check(true), " ", check(false), " ", check(nil), " ", check(42)
 }
 
 func TestForceBuiltinAndPostfixOperator(t *testing.T) {
-	// 1. Basic calculation with force() and postfix !
+	// 1. Basic calculation with force keyword and postfix !
 	code1 := `
 a = (10 + 20)!
-b = force(30 + 40)
-print a, " ", b
+b = force (30 + 40)
+c = force 50 + 60
+print a, " ", b, " ", c
 `
 	out1, err := runLesCode(code1)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	expected1 := "30 70"
+	expected1 := "30 70 110"
 	if strings.TrimSpace(out1) != expected1 {
 		t.Fatalf("expected %q, got %q", expected1, out1)
 	}
@@ -1781,6 +1780,21 @@ print pick(42, (1 / 0)!)
 		t.Fatalf("expected division by zero, got: %v", err)
 	}
 
+	// 4. Unused argument WITH prefix force keyword triggers division by zero immediately
+	codeForcePrefix := `
+def pick(a, b):
+    a
+
+print pick(42, force (1 / 0))
+`
+	_, err = runLesCode(codeForcePrefix)
+	if err == nil {
+		t.Fatalf("expected division by zero error for prefix force, got nil")
+	}
+	if !strings.Contains(err.Error(), "division by zero") {
+		t.Fatalf("expected division by zero, got: %v", err)
+	}
+
 	// 5. Tuple with postfix ! evaluates elements at construction
 	codeTupleLazy := `
 t = (42, 1 / 0)
@@ -1803,7 +1817,7 @@ print t[0]
 		t.Fatalf("expected division by zero error for tuple force, got nil")
 	}
 
-	// 6. Dict with postfix ! evaluates values at construction
+	// 6. Dict with prefix force evaluates values at construction
 	codeDictLazy := `
 d = {"a": 42, "b": 1 / 0}
 print d["a"]
@@ -1817,29 +1831,12 @@ print d["a"]
 	}
 
 	codeDictForce := `
-d = {"a": 42, "b": force(1 / 0)}
+d = {"a": 42, "b": force (1 / 0)}
 print d["a"]
 `
 	_, err = runLesCode(codeDictForce)
 	if err == nil {
 		t.Fatalf("expected division by zero error for dict force, got nil")
-	}
-
-	// 7. Shadowed force does NOT trigger built-in force eager demand
-	codeShadow := `
-def run_shadowed(force):
-    unused = force(1 / 0)
-    42
-
-cb = |x|: x
-print run_shadowed(cb)
-`
-	outShadow, err := runLesCode(codeShadow)
-	if err != nil {
-		t.Fatalf("shadowed force unexpectedly failed: %v", err)
-	}
-	if strings.TrimSpace(outShadow) != "42" {
-		t.Fatalf("expected 42, got %q", outShadow)
 	}
 }
 
@@ -2154,7 +2151,7 @@ struct MyWriter:
     output: String = ""
     def Write(b: Bytes):
         print "[W:", b.String(), "]"
-        len(b)
+        b.Len()
 
 mr = MyReader()
 mw = MyWriter()
@@ -2298,7 +2295,7 @@ import bufio
 
 struct FailingWriter:
     def Write(b: Bytes):
-        len(b) - 1000 # negative write count causes error
+        b.Len() - 1000 # negative write count causes error
 
 fw = FailingWriter()
 bw = @bufio.Writer(fw)
@@ -2328,7 +2325,7 @@ import bufio
 struct LoggingWriter:
     def Write(b: Bytes):
         Stdout.Write("logged:".Bytes() + b + "\n".Bytes())
-        len(b)
+        b.Len()
 
 lw = LoggingWriter()
 bw = @bufio.Writer(lw)
@@ -2632,7 +2629,7 @@ struct Buffer:
     content: Bytes
     def Write(b: Bytes): Int:
         content = content + b
-        len(b)
+        b.Len()
 
 buf = Buffer(content: Bytes(""))
 bw = @bufio.Writer(buf)
@@ -2674,7 +2671,7 @@ import bufio
 struct LoggingWriter:
     def Write(b: Bytes): Int:
         Stdout.Write("logged:".Bytes() + b)
-        len(b)
+        b.Len()
 
 lw = LoggingWriter()
 bw = @bufio.Writer(lw)
@@ -2758,7 +2755,7 @@ import bufio
 struct LoggingWriter:
     def Write(b: Bytes): Int:
         Stdout.Write("logged:".Bytes() + b)
-        len(b)
+        b.Len()
 
 lw = LoggingWriter()
 bw = @bufio.Writer(lw)
@@ -3053,9 +3050,9 @@ b1 = "hello".Bytes()
 b2 = Bytes("world")
 b_empty = Bytes()
 
-if len(b1) != 5:
+if b1.Len() != 5:
     1 / 0
-if len(b_empty) != 0:
+if b_empty.Len() != 0:
     1 / 0
 if b1[0] != 104:
     1 / 0
@@ -3075,7 +3072,7 @@ if !(b1 is Bytes):
     1 / 0
 if !(b1 is Show):
     1 / 0
-if type(b1) != "Bytes":
+if b1.Type() != "Bytes":
     1 / 0
 
 b_cat = b1 + b2
@@ -3105,7 +3102,7 @@ func TestBytesMultibyteRoundtrip(t *testing.T) {
 	code := `
 orig = "こんにちは世界"
 b = orig.Bytes()
-if len(b) != 21:
+if b.Len() != 21:
     1 / 0
 if b.String() != orig:
     1 / 0
@@ -3148,7 +3145,7 @@ func TestBytesInvalidUtf8(t *testing.T) {
 	code := `
 if bad.IsValidString():
     1 / 0
-if len(bad) != 3:
+if bad.Len() != 3:
     1 / 0
 if bad[0] != 255:
     1 / 0
@@ -3204,7 +3201,7 @@ import io
 import bufio
 
 read_bin = Stdin.Read(4)!
-if len(read_bin) != 4:
+if read_bin.Len() != 4:
     1 / 0
 if read_bin[0] != 255:
     1 / 0
@@ -3295,7 +3292,7 @@ print (42 is {String: Int})
 print " "
 
 empty: {String: Int} = {}
-print len(empty)
+print empty.Len()
 print " "
 
 lazyDict = {"a": 1, "b": 1 / 0}
@@ -3363,7 +3360,7 @@ func TestEvalDictKeyTypeStrictness(t *testing.T) {
 	// 1. Separate keys for 1 and "1", true and "true"
 	code1 := `
 d = {1: "int_one", "1": "str_one", true: "bool_true", "true": "str_true"}
-print len(d)
+print d.Len()
 print " "
 print d[1]
 print " "
@@ -3593,7 +3590,7 @@ func TestBlockLiteralFollowedByStatement(t *testing.T) {
 	code := `
 def mymap(t, fn):
   i = 0
-  for i < len(t):
+  for i < t.Len():
     fn(t[i])
     i = i + 1
 
@@ -3739,7 +3736,7 @@ struct StringList:
     def join():
         res = ""
         i = 0
-        for i < len(t):
+        for i < t.Len():
             if i > 0:
                 res = res + ","
             res = res + t[i]
@@ -3750,7 +3747,7 @@ sl0 = StringList()
 sl1 = StringList("foo")
 sl2 = StringList("foo", "bar")
 
-print len(sl0.t), " ", sl1.join(), " ", sl2.join()
+print sl0.t.Len(), " ", sl1.join(), " ", sl2.join()
 `
 	out, err := runLesCode(code)
 	if err != nil {
@@ -3891,29 +3888,26 @@ struct Person:
 
 p = Person("Alice")
 
-print type(add), "|"
-print type(inc), "|"
-print type(answer), "|"
-print type(sum), "|"
-print type(f), "|"
-print type(p.Greet), "|"
-print type(print), "|"
-print type(type), "|"
-print type(len), "|"
-print type(exit), "|"
-print type(force), "|"
-print type(Bytes), "|"
-print type(gets), "|"
+print add.Type(), "|"
+print inc.Type(), "|"
+print answer.Type(), "|"
+print sum.Type(), "|"
+print f.Type(), "|"
+print p.Greet.Type(), "|"
+print print.Type(), "|"
+print exit.Type(), "|"
+print Bytes.Type(), "|"
+print gets.Type(), "|"
 s = "test"
-print type(s.Ord), "|"
-print type(s.Bytes)
+print s.Ord.Type(), "|"
+print s.Bytes.Type()
 `
 	out, err := runLesCode(code)
 	if err != nil {
 		t.Fatalf("unexpected eval error in TestFunctionTypeReflection: %v", err)
 	}
 
-	expected := "(Int, Int) -> Int|(Int) -> Int|() -> Int|(Int, ...) -> Int|(String) -> String|() -> String|(Show, ...) -> ()|Any -> String|Any -> Int|(Int) -> Nil|Any -> Any|(String | Bytes) -> Bytes|() -> String | Nil|() -> Int|() -> Bytes"
+	expected := "(Int, Int) -> Int|(Int) -> Int|() -> Int|(Int, ...) -> Int|(String) -> String|() -> String|(Show, ...) -> ()|(Int) -> Nil|(String | Bytes) -> Bytes|() -> String | Nil|() -> Int|() -> Bytes"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
@@ -3930,13 +3924,13 @@ def outer(): String:
     if true:
         def inIf(n: Int): Bool:
             n > 0
-        return type(shadowed) + "|" + type(inIf)
+        return shadowed.Type() + "|" + inIf.Type()
     return ""
 
 varLambda = |*nums: Int|: 0
 
 def withBlock(&b: (Int) -> String): String:
-    type(b)
+    b.Type()
 
 blkType = withBlock() do |x: Int|:
     "ok"
@@ -3952,15 +3946,15 @@ sub = Sub()
 errObj = Error("fail")
 
 print outer(), "|"
-print type(varLambda), "|"
+print varLambda.Type(), "|"
 print blkType, "|"
-print type(sub.BaseVal), "|"
-print type(Stdin.ReadLine), "|"
-print type(Stdout.Write), "|"
-print type(Stderr.Write), "|"
-print type(@bufio.Reader), "|"
-print type(Error), "|"
-print type(errObj.Message), "|"
+print sub.BaseVal.Type(), "|"
+print Stdin.ReadLine.Type(), "|"
+print Stdout.Write.Type(), "|"
+print Stderr.Write.Type(), "|"
+print (@bufio.Reader).Type(), "|"
+print Error.Type(), "|"
+print errObj.Message.Type(), "|"
 print shadowed == 123, "|"
 def topAdd(a: Int, b: Int): Int:
     a + b
@@ -3972,7 +3966,7 @@ print topAdd is Function
 	if err != nil {
 		t.Fatalf("unexpected eval error in edgeCode: %v", err)
 	}
-	expectedEdge := "(String) -> String|(Int) -> Bool|(Int, ...) -> Int|(Int) -> String|() -> Int|() -> String | Nil|(Bytes) -> Int|(Bytes) -> Int|(io.Reader) -> bufio.Reader|(Any) -> Error|() -> String|true|true|false|true"
+	expectedEdge := "(String) -> String|(Int) -> Bool|(Int, ...) -> Int|(Int) -> String|() -> Int|() -> String | Nil|(Bytes) -> Int|(Bytes) -> Int|(io.Reader) -> bufio.Reader|(Show) -> Error|() -> String|true|false|false|true"
 	if edgeOut != expectedEdge {
 		t.Fatalf("expected %q, got %q", expectedEdge, edgeOut)
 	}

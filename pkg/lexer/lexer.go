@@ -606,6 +606,8 @@ func (l *Lexer) readIdentifier() Token {
 		tokType = TokenFor
 	case "continue":
 		tokType = TokenContinue
+	case "force":
+		tokType = TokenForce
 	case "true", "false":
 		tokType = TokenBool
 	case "nil":

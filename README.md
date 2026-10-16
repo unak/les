@@ -329,12 +329,13 @@ Listed from highest to lowest precedence:
 | 1 (Highest) | `.` | `p.x`, `p.dist()` | `StructInstance` | Member / method access (with promotion) |
 | 1 | `[]` | `s[0]`, `t[1]`, `d["k"]` | `String`, `Tuple`, `Dict` | Indexing (0-based rune for String, negative indices supported) |
 | 1 | `()` | `f(a, b)` | Function / Struct | Function call or struct constructor |
-| 1 | `!` (postfix) | `expr!` | `Any` | Explicit demand point (syntactic sugar for unshadowed built-in `force(expr)`) |
+| 1 | `!` (postfix) | `expr!` | | Explicit demand point (postfix sugar for `force expr`) |
+| 1 | `force` (prefix) | `force expr` | | Explicit demand point (strict evaluation) |
 | 2 | `+`, `-`, `!` | `+x`, `-x`, `!flag` | `Int`/`Float` (`+`, `-`), `Bool` (`!`) | Unary plus, negation, and logical NOT |
 | 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int` | Multiplication, division, modulo |
 | 4 | `+`, `-` | `a + b`, `a - b` | `Int` (`+`, `-`), `String` (`+`) | Addition, subtraction, string concatenation |
 | 5 | `<`, `<=`, `>`, `>=` | `a < b`, `a >= b` | `Int` | Relational comparisons |
-| 6 | `is` | `x is Int`, `p is Reader` | `Any` | Dynamic type / interface satisfaction test |
+| 6 | `is` | `x is Int`, `p is Reader` | | Dynamic type / interface satisfaction test |
 | 7 | `==`, `!=` | `a == b`, `a != b` | `Int`, `String`, `Bool` | Equality / inequality comparison |
 | 8 | `&&` | `cond1 && cond2` | `Bool` | Short-circuit logical AND |
 | 9 | `\|\|` | `cond1 \|\| cond2` | `Bool` | Short-circuit logical OR |
@@ -351,11 +352,11 @@ Listed from highest to lowest precedence:
   - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`). Arguments are forced immediately when the statement executes.
   - Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
   - Ensures prompt output (e.g. `print "Name: "`) displays before subsequent reads.
-- **Explicit Demand Points (`expr!` / `force(expr)`)**:
+- **Explicit Demand Points (`expr!` / `force expr`)**:
   - By default, function arguments, variable initializations, tuple elements, and dict values are wrapped in lazy `Thunk`s (while constant literals are evaluated immediately to concrete values in WHNF).
-  - Suffixing an expression with `!` (e.g. `expr!`) acts as an unconditional syntax-level strict evaluation demand point. Calling the unshadowed built-in `force(expr)` has the same effect.
-  - When passed as a function argument (`f(expr!)`), bound to a variable (`x = expr!`), or stored in a container (`(expr!,)` or `{"k": expr!}`), the expression is strictly evaluated (forced) immediately at that site instead of creating a deferred lazy `Thunk`.
-  - *Note*: If the identifier `force` is shadowed in local scope (e.g. by a parameter), `expr!` continues to strictly force evaluation at the syntax level, while `force(expr)` resolves to the shadowed local binding without creating an automatic eager demand point.
+  - Suffixing an expression with `!` (e.g. `expr!`) or prefixing with `force` (e.g. `force expr`) acts as an unconditional syntax-level strict evaluation demand point.
+  - When passed as a function argument (`f(force expr)` or `f(expr!)`), bound to a variable (`x = force expr`), or stored in a container (`(force expr,)` or `{"k": force expr}`), the expression is strictly evaluated (forced) immediately at that site instead of creating a deferred lazy `Thunk`.
+
 - **Input is a Deferred Thunk (Lazy Read)**:
   - I/O read operations (e.g. `gets()`) return a deferred `Thunk` without blocking at invocation time.
   - The actual I/O read / system call occurs only when the value is demanded (e.g., printed, compared, or concatenated). Unused inputs never block or perform reads.
@@ -453,23 +454,24 @@ Listed from highest to lowest precedence:
   classify nil
   ```
 
-### 9. Special Types: `Nil` and `Any`
+### 9. Special Types: `Nil` and `Unknown`
 - **`Nil`**:
   - Represents the absence of a value (literal `nil`, type `Nil`).
   - Useful in union types such as `Int | Nil` (nullable/optional semantics).
-- **`Any`**:
-  - Safe top type, analogous to Go's `any` or TypeScript's `unknown`.
-  - Any value can be assigned to `Any`, but values typed as `Any` cannot be used directly in operations without type refinement via `is` or `match`.
+- **`Unknown` (Internal Inference Type)**:
+  - Internal compiler placeholder used when a type cannot be statically constrained (for example, unannotated function parameters or empty dictionary `{}`).
+  - Bidirectionally assignable during type inference, allowing unconstrained values to unify with any required type.
+  - **Not a type annotation**: Writing `x: Unknown` or `x: Any` is prohibited and causes a compile-time error. All user-facing types must be concrete or interfaces.
 
 ### 10. Variadic Arguments & Tuple Unpacking
 
 #### Variadic Parameters (`*args`)
 - Function parameters can accept 0 or more arguments by prefixing with `*`:
   ```python
-  def log(prefix: String, *args: Any):
+  def log(prefix: String, *args):
       print prefix, args
   ```
-- **Type Representation**: A variadic parameter `*args: T` corresponds to the union type `() | (T, ...)`.
+- **Type Representation**: A variadic parameter `*args` corresponds to the union type `() | (Unknown, ...)`.
 
 #### Tuple Destructuring in Pattern Matching
 - Extract head and lazy tail stream elements via `(h, ...t)`:
@@ -714,34 +716,6 @@ Outputs string representations of all arguments directly without inserting space
   print "a", "b", 42  # outputs "ab42" without space or newline
   ```
 
-#### `def len(collection: Any): Int`
-Returns the length of a `String` (rune count), `Tuple`, or `Dict`.
-
-- **Arguments**: `collection: Any`
-- **Returns**: `Int`
-- **Indexing Support**: `String` and `Tuple` support 0-based indexing as well as negative indices (`[-1]` for last element).
-
-#### `def type(*args: Any): String`
-Returns the string representation of the runtime type of the given value or argument tuple.
-
-- **Arguments**: `*args: Any` — single value or multiple arguments.
-- **Returns**: `String` — type name (e.g. `"Int"`, `"(Int, Int)"`, `"(Int)"`).
-- **Behavior**:
-  - `type(42)` -> `"Int"`
-  - `type((1,))` -> `"(Int)"`
-  - `type(1, 2)` -> `"(Int, Int)"`
-  - `type("hello")` -> `"String"`
-  - `type(nil)` -> `"Nil"`
-  - `type()` -> `"()"`
-  - `type({"key": "value"})` -> `"{String: String}"`
-  - `type({})` -> `"{Any: Any}"`
-- **Usage**:
-  ```python
-  t = type(42)       # "Int"
-  t2 = type(1, 2)    # "(Int, Int)"
-  td = type({"a": 1}) # "{String: Int}"
-  ```
-
 #### `def exit(code: Int | Bool = 0)`
 Terminates the program execution immediately with the given exit status code.
 
@@ -758,20 +732,8 @@ Terminates the program execution immediately with the given exit status code.
   exit 1
   ```
 
-#### `def force(x: Any): Any`
-Explicit demand point that strictly evaluates (forces) its argument and returns the evaluated concrete value.
-
-- **Arguments**: `x: Any` — expression or value to force.
-- **Returns**: `Any` — concrete evaluated value.
-- **Syntactic Sugar**: The postfix exclamation mark `expr!` is syntactic sugar for the built-in `force(expr)`. Unlike function calls which can be shadowed by local bindings or parameters, `expr!` is a dedicated syntax form that always guarantees immediate evaluation.
-- **Usage**:
-  ```python
-  x = force(10 + 20)
-  # Forces argument evaluation before function application or container construction:
-  pick(42, force(expensive_call()))
-  ```
-
 #### `def gets(): String | Nil`
+
 Reads a single line from standard input, stripping any trailing newline (`\n` or `\r\n`). Returns `nil` upon reaching EOF.
 
 - **Effect**: Returns a deferred lazy `Thunk`. Invoking `gets()` does not block immediately; the actual read occurs only when the value is demanded (e.g. forced via `print`, `!`, or string concatenation).
@@ -816,6 +778,8 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 
 #### `String`
 - **Methods**:
+  - `s.Len(): Int`: Returns the number of runes (Unicode code points) in `s`.
+  - `s.Type(): String`: Returns `"String"`. Satisfies `interface Show`.
   - `s.Ord(): Int`: Returns the Unicode code point of the first rune (character) in `s`. Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
     ```python
     "A".Ord()        # 65
@@ -838,14 +802,13 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `s.ToString(): String`: Returns `s` itself. Satisfies `interface Show`.
 - **Index Access**:
   - `s[i]: String`: 0-based Unicode rune (code point) indexing, returning a 1-rune `String`. Supports negative indexing (`s[-1]` is the last rune). Out-of-bounds index raises a runtime error.
-- **Length**:
-  - `len(s): Int`: Returns the number of runes (Unicode code points) in `s`.
 - **Operators**:
   - `s1 + s2 -> String`: Concatenates two strings.
   - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison based on Unicode code points.
 
 #### `Int`
 - **Methods**:
+  - `n.Type(): String`: Returns `"Int"`. Satisfies `interface Show`.
   - `n.Chr(): String`: Returns a 1-rune string corresponding to the Unicode code point `n`. Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
     ```python
     65.Chr()         # "A"
@@ -868,6 +831,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 
 #### `Float`
 - **Methods**:
+  - `f.Type(): String`: Returns `"Float"`. Satisfies `interface Show`.
   - `f.ToString(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (IEEE 754 floating-point operations).
@@ -876,6 +840,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 
 #### `Bool`
 - **Methods**:
+  - `b.Type(): String`: Returns `"Bool"`. Satisfies `interface Show`.
   - `b.ToString(): String`: Returns `"true"` or `"false"`. Satisfies `interface Show`.
 - **Operators**:
   - Logical: `&&` (short-circuit logical AND), `||` (short-circuit logical OR), `!` (logical NOT).
@@ -884,42 +849,43 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 
 #### `Nil`
 - **Methods**:
+  - `nil.Type(): String`: Returns `"Nil"`. Satisfies `interface Show`.
   - `nil.ToString(): String`: Returns `"nil"`. Satisfies `interface Show`.
 - **Operators**:
   - Comparison: `==`, `!=` (commonly used for nullable union types, e.g. `val == nil` or `val is Nil`).
 
 #### `Bytes`
 - **Methods**:
+  - `b.Len(): Int`: Returns the number of bytes in `b`.
+  - `b.Type(): String`: Returns `"Bytes"`. Satisfies `interface Show`.
   - `b.Bytes(): Bytes`: Returns the byte sequence itself (identity conversion).
   - `b.String(): String`: Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
   - `b.IsValidString(): Bool`: Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
   - `b.ToString(): String`: Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
 - **Index Access**:
   - `b[i]: Int`: Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
-- **Length**:
-  - `len(b): Int`: Returns the number of bytes in `b`.
 - **Operators**:
   - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
   - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
 
 #### `Tuple`
 - **Methods**:
+  - `t.Len(): Int`: Returns the number of elements in `t`.
+  - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
   - `t.ToString(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
 - **Index Access**:
   - `t[i]: Any`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
-- **Length**:
-  - `len(t): Int`: Returns the number of elements in `t`.
 - **Operators & Destructuring**:
   - `==`, `!=`: Structural element-wise equality comparison.
   - Pattern matching / unpacking: `(a, b) = t`, `(first, *rest) = t`.
 
 #### `Dict`
 - **Methods**:
+  - `d.Len(): Int`: Returns the number of key-value pairs in `d`.
+  - `d.Type(): String`: Returns the string representation of dict type (e.g., `"{String: Int}"`, `"{Unknown: Unknown}"`). Satisfies `interface Show`.
   - `d.ToString(): String`: Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
 - **Key Access**:
   - `d[key]: Value`: Returns the value associated with `key`. Non-existent key lookup raises a runtime error.
-- **Length**:
-  - `len(d): Int`: Returns the number of key-value pairs in `d`.
 - **Operators**:
   - `==`, `!=`: Structural equality comparison of all key-value entries.
 
@@ -928,12 +894,14 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 Les provides predefined standard interfaces in the global scope for polymorphism, string conversion, and error handling:
 
 #### `interface Show`
-Declares the contract for converting values to human-readable string representations:
+Declares the contract for converting values to human-readable string representations and inspecting their runtime type:
 ```python
 interface Show:
     def ToString(): String
+    def Type(): String
 ```
-- **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`) implicitly satisfy `interface Show`.
+- **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`), functions, and struct instances implicitly satisfy `interface Show`.
+
 - **Usage**: Built-in functions like `print` accept any value satisfying `Show` (`*args: Show`). Any user-defined `struct` implementing `ToString(): String` automatically satisfies `Show`.
 
 #### `interface Error`
