@@ -1079,6 +1079,51 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						}
 					}
 				}
+			} else if ut, ok := fnT.Arg.(*UnionType); ok {
+				argTypes := make([]Type, len(args))
+				for i, argExpr := range args {
+					argT, err := inf.inferExpr(argExpr)
+					if err != nil {
+						return nil, err
+					}
+					argTypes[i] = argT
+				}
+				matched := false
+				var lastMismatch error
+				for _, cand := range ut.Members {
+					if optTuple, ok := cand.(*TupleType); ok {
+						if !optTuple.IsVariadic && len(args) != len(optTuple.Elems) {
+							continue
+						}
+						if optTuple.IsVariadic && len(optTuple.Elems) > 0 && len(args) < len(optTuple.Elems)-1 {
+							continue
+						}
+						typesMatch := true
+						for i, argT := range argTypes {
+							var expectedParamT Type
+							if i < len(optTuple.Elems) {
+								expectedParamT = optTuple.Elems[i]
+							} else if optTuple.IsVariadic && len(optTuple.Elems) > 0 {
+								expectedParamT = optTuple.Elems[len(optTuple.Elems)-1]
+							}
+							if expectedParamT != nil && !IsAssignableTo(argT, expectedParamT) {
+								typesMatch = false
+								lastMismatch = fmt.Errorf("type mismatch in argument %d: expected %s, got %s", i+1, expectedParamT, argT)
+								break
+							}
+						}
+						if typesMatch {
+							matched = true
+							break
+						}
+					}
+				}
+				if !matched {
+					if lastMismatch != nil {
+						return nil, lastMismatch
+					}
+					return nil, fmt.Errorf("no matching signature for function call with %d arguments", len(args))
+				}
 			} else {
 				for _, argExpr := range args {
 					if _, err := inf.inferExpr(argExpr); err != nil {

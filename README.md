@@ -793,6 +793,15 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
     "あ".Ord()       # 12354
     "Hello".Ord()    # 72 (first character 'H')
     ```
+  - `s.Int([radix: Int]): Int`: Parses the integer value from `s` using base `radix` (optional, default: `10`; supported: `2`, `8`, `10`, `16`). Parsing scans characters after an optional leading `+` or `-` sign, stopping at the first invalid digit for the radix (ignoring trailing characters and prefixes like `0x`). Returns `0` if no valid digits are found. Specifying an unsupported radix raises a runtime error.
+    ```python
+    "123".Int()        # 123
+    "123a".Int()       # 123 (stops at non-digit 'a')
+    "123a".Int(16)     # 4666 (0x123a)
+    "0x".Int()         # 0 (stops at 'x')
+    "1010".Int(2)      # 10
+    "-42abc".Int()     # -42
+    ```
   - `s.Bytes(): Bytes`: Returns the UTF-8 byte sequence of `s` as an immutable `Bytes` value.
     ```python
     b = "hello".Bytes()  # Bytes with 5 bytes
@@ -813,6 +822,14 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
     65.Chr()         # "A"
     12354.Chr()      # "あ"
     (97).Chr()       # "a"
+    ```
+  - `n.String([radix: Int]): String`: Returns the string representation of integer `n` using base `radix` (optional, default: `10`; supported: `2`, `8`, `10`, `16`). Base 16 uses lowercase characters `a`–`f`. Negative numbers include a leading `-`. Specifying an unsupported radix raises a runtime error.
+    ```python
+    123.String()       # "123"
+    255.String(16)     # "ff"
+    10.String(2)       # "1010"
+    493.String(8)      # "755"
+    (-42).String()     # "-42"
     ```
   - `n.ToString(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
 - **Operators**:

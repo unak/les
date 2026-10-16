@@ -422,6 +422,18 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			Ret: TypeBool,
 		}, true
 	}
+	if mName == "Int" && t == TypeString {
+		return &FuncType{
+			Arg: NewUnionType(&TupleType{Elems: []Type{}}, &TupleType{Elems: []Type{TypeInt}}),
+			Ret: TypeInt,
+		}, true
+	}
+	if mName == "String" && t == TypeInt {
+		return &FuncType{
+			Arg: NewUnionType(&TupleType{Elems: []Type{}}, &TupleType{Elems: []Type{TypeInt}}),
+			Ret: TypeString,
+		}, true
+	}
 	return nil, false
 }
 

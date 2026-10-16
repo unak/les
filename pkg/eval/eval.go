@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -1783,6 +1785,57 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				},
 			}, nil
 		}
+		if iv, ok := val.(IntValue); ok {
+			return &BuiltinFunc{
+				Name: "String",
+				Fn: func(args []Value) (Value, error) {
+					radix := 10
+					if len(args) == 1 {
+						rVal := Force(args[0])
+						rv, ok := rVal.(IntValue)
+						if !ok {
+							return nil, fmt.Errorf("String() radix must be an integer, got %s", typeNameOf(rVal))
+						}
+						radix = int(rv)
+					} else if len(args) > 1 {
+						return nil, fmt.Errorf("String() takes at most 1 argument, got %d", len(args))
+					}
+
+					if radix != 2 && radix != 8 && radix != 10 && radix != 16 {
+						return nil, fmt.Errorf("unsupported radix %d (supported: 2, 8, 10, 16)", radix)
+					}
+
+					return StringValue(strconv.FormatInt(int64(iv), radix)), nil
+				},
+			}, nil
+		}
+	}
+	if member == "Int" {
+		if sv, ok := val.(StringValue); ok {
+			return &BuiltinFunc{
+				Name: "Int",
+				Fn: func(args []Value) (Value, error) {
+					radix := 10
+					if len(args) == 1 {
+						rVal := Force(args[0])
+						iv, ok := rVal.(IntValue)
+						if !ok {
+							return nil, fmt.Errorf("Int() radix must be an integer, got %s", typeNameOf(rVal))
+						}
+						radix = int(iv)
+					} else if len(args) > 1 {
+						return nil, fmt.Errorf("Int() takes at most 1 argument, got %d", len(args))
+					}
+
+					if radix != 2 && radix != 8 && radix != 10 && radix != 16 {
+						return nil, fmt.Errorf("unsupported radix %d (supported: 2, 8, 10, 16)", radix)
+					}
+
+					parsed := parseStringToInt(string(sv), radix)
+					return IntValue(parsed), nil
+				},
+			}, nil
+		}
 	}
 	if member == "IsValidString" {
 		if bv, ok := val.(BytesValue); ok {
@@ -1798,6 +1851,55 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		}
 	}
 	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)
+}
+
+func isValidDigitForRadix(c byte, radix int) bool {
+	switch radix {
+	case 2:
+		return c == '0' || c == '1'
+	case 8:
+		return c >= '0' && c <= '7'
+	case 10:
+		return c >= '0' && c <= '9'
+	case 16:
+		return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+	default:
+		return false
+	}
+}
+
+func parseStringToInt(s string, radix int) int64 {
+	s = strings.TrimSpace(s)
+	if len(s) == 0 {
+		return 0
+	}
+	start := 0
+	if s[0] == '+' || s[0] == '-' {
+		start = 1
+	}
+	end := start
+	for end < len(s) {
+		c := s[end]
+		if !isValidDigitForRadix(c, radix) {
+			break
+		}
+		end++
+	}
+	if end == start {
+		return 0
+	}
+	sub := s[:end]
+	v, err := strconv.ParseInt(sub, radix, 64)
+	if err != nil {
+		if strings.Contains(err.Error(), "value out of range") {
+			if s[0] == '-' {
+				return math.MinInt64
+			}
+			return math.MaxInt64
+		}
+		return 0
+	}
+	return v
 }
 
 func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {

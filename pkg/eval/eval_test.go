@@ -3788,5 +3788,86 @@ print item.val, " ", r1, " ", r2
 	}
 }
 
+func TestStringIntAndIntString(t *testing.T) {
+	code := `
+# 1. String.Int() default radix 10
+r1 = "123".Int()
+r2 = "123a".Int()
+r3 = "0x".Int()
+r4 = "-42abc".Int()
+r5 = "+99xyz".Int()
+r6 = "".Int()
+r7 = "xyz".Int()
+
+# 2. String.Int(radix) with 2, 8, 16
+r8 = "123a".Int(16)
+r9 = "0x".Int(16)
+r10 = "0b101".Int(2)
+r11 = "101".Int(2)
+r12 = "755".Int(8)
+r13 = "-1010xyz".Int(2)
+
+# 3. Int.String() default radix 10
+s1 = 123.String()
+s2 = (-42).String()
+s3 = 0.String()
+
+# 4. Int.String(radix) with 2, 8, 16
+s4 = 255.String(16)
+s5 = 10.String(2)
+s6 = 493.String(8)
+s7 = (-255).String(16)
+
+print r1, " ", r2, " ", r3, " ", r4, " ", r5, " ", r6, " ", r7, " | ", \
+      r8, " ", r9, " ", r10, " ", r11, " ", r12, " ", r13, " | ", \
+      s1, " ", s2, " ", s3, " | ", \
+      s4, " ", s5, " ", s6, " ", s7
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "123 123 0 -42 99 0 0 | 4666 0 0 5 493 -10 | 123 -42 0 | ff 1010 755 -ff"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// 5. Unsupported radix errors
+	badRadixCases := []string{
+		`"123".Int(3)`,
+		`"123".Int(0)`,
+		`"123".Int(36)`,
+		`123.String(5)`,
+		`123.String(12)`,
+	}
+	for _, badCode := range badRadixCases {
+		_, err := runLesCode(badCode)
+		if err == nil {
+			t.Fatalf("expected error for bad radix code: %s, got nil", badCode)
+		}
+		if !strings.Contains(err.Error(), "unsupported radix") {
+			t.Fatalf("expected 'unsupported radix' error, got: %v", err)
+		}
+	}
+
+	// 6. 64-bit overflow saturation & MinInt64
+	codeOverflow := `
+maxOverflow = "99999999999999999999999999999".Int()
+minOverflow = "-99999999999999999999999999999".Int()
+exactMin = "-9223372036854775808".Int()
+exactMax = "9223372036854775807".Int()
+print maxOverflow, " ", minOverflow, " ", exactMin, " ", exactMax
+`
+	outOvf, err := runLesCode(codeOverflow)
+	if err != nil {
+		t.Fatalf("unexpected eval error on overflow code: %v", err)
+	}
+	expectedOvf := "9223372036854775807 -9223372036854775808 -9223372036854775808 9223372036854775807"
+	if outOvf != expectedOvf {
+		t.Fatalf("expected %q, got %q", expectedOvf, outOvf)
+	}
+}
+
+
 
 
