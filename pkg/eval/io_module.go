@@ -5,11 +5,25 @@ import (
 	"io"
 
 	"les/pkg/ast"
+	"les/pkg/types"
 )
 
 // initIOModule registers the built-in @io module.
 func (ev *Evaluator) initIOModule() {
 	ioExports := make(map[string]Value)
+
+	readFuncType := &types.FuncType{
+		Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+		Ret: types.NewUnionType(types.TypeBytes, types.TypeNil),
+	}
+	writeFuncType := &types.FuncType{
+		Arg: &types.TupleType{Elems: []types.Type{types.TypeBytes}},
+		Ret: types.TypeInt,
+	}
+	voidFuncType := &types.FuncType{
+		Arg: &types.TupleType{Elems: []types.Type{}},
+		Ret: &types.TupleType{Elems: []types.Type{}},
+	}
 
 	// Reader interface definition: Read(n: Int): Bytes | Nil
 	readerIface := &InterfaceDefValue{
@@ -107,7 +121,8 @@ func (ev *Evaluator) initIOModule() {
 	}
 
 	stdinInstance.Fields["Read"] = &BuiltinFunc{
-		Name: "Read",
+		Name:     "Read",
+		FuncType: readFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Read expects 1 argument, got %d", len(args))
@@ -146,7 +161,8 @@ func (ev *Evaluator) initIOModule() {
 		},
 	}
 	stdinInstance.Fields["Close"] = &BuiltinFunc{
-		Name: "Close",
+		Name:     "Close",
+		FuncType: voidFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
@@ -191,7 +207,8 @@ func (ev *Evaluator) initIOModule() {
 		Embedded: make(map[string]*StructInstance),
 	}
 	stdoutInstance.Fields["Write"] = &BuiltinFunc{
-		Name: "Write",
+		Name:     "Write",
+		FuncType: writeFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
@@ -216,7 +233,8 @@ func (ev *Evaluator) initIOModule() {
 		},
 	}
 	stdoutInstance.Fields["Close"] = &BuiltinFunc{
-		Name: "Close",
+		Name:     "Close",
+		FuncType: voidFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
@@ -230,7 +248,8 @@ func (ev *Evaluator) initIOModule() {
 		},
 	}
 	stdoutInstance.Fields["Flush"] = &BuiltinFunc{
-		Name: "Flush",
+		Name:     "Flush",
+		FuncType: voidFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Flush expects 0 arguments, got %d", len(args))
@@ -280,7 +299,8 @@ func (ev *Evaluator) initIOModule() {
 		Embedded: make(map[string]*StructInstance),
 	}
 	stderrInstance.Fields["Write"] = &BuiltinFunc{
-		Name: "Write",
+		Name:     "Write",
+		FuncType: writeFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
@@ -305,7 +325,8 @@ func (ev *Evaluator) initIOModule() {
 		},
 	}
 	stderrInstance.Fields["Close"] = &BuiltinFunc{
-		Name: "Close",
+		Name:     "Close",
+		FuncType: voidFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Close expects 0 arguments, got %d", len(args))
@@ -314,7 +335,8 @@ func (ev *Evaluator) initIOModule() {
 		},
 	}
 	stderrInstance.Fields["Flush"] = &BuiltinFunc{
-		Name: "Flush",
+		Name:     "Flush",
+		FuncType: voidFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Flush expects 0 arguments, got %d", len(args))

@@ -53,14 +53,15 @@ type Inferencer struct {
 	modules      map[string]*ModuleType
 	moduleLoader func(path string) (*ModuleType, error)
 	ExprTypes    map[ast.Expr]Type
+	StmtTypes    map[ast.Stmt]Type
 }
 
-var builtinForceFuncType = &FuncType{
+var BuiltinForceFuncType = &FuncType{
 	Arg: TypeAny,
 	Ret: TypeAny,
 }
 
-var builtinBytesFuncType = &FuncType{
+var BuiltinBytesFuncType = &FuncType{
 	Arg: &TupleType{
 		Elems: []Type{NewUnionType(TypeString, TypeBytes)},
 	},
@@ -69,7 +70,7 @@ var builtinBytesFuncType = &FuncType{
 	Ret:      TypeBytes,
 }
 
-var builtinExitFuncType = &FuncType{
+var BuiltinExitFuncType = &FuncType{
 	Arg: &TupleType{
 		Elems: []Type{TypeInt},
 	},
@@ -78,68 +79,78 @@ var builtinExitFuncType = &FuncType{
 	Ret:      TypeNil,
 }
 
+var BuiltinPrintFuncType = &FuncType{
+	Arg: &TupleType{
+		Elems:      []Type{BuiltinShowIface},
+		IsVariadic: true,
+	},
+	Ret: &TupleType{Elems: []Type{}},
+}
+
+var BuiltinTypeFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeString,
+}
+
+var BuiltinLenFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeInt,
+}
+
+var BuiltinGetsFuncType = &FuncType{
+	Arg: &TupleType{Elems: []Type{}},
+	Ret: NewUnionType(TypeString, TypeNil),
+}
+
+var BuiltinShowIface = &InterfaceType{
+	Name: "Show",
+	Methods: map[string]*FuncType{
+		"ToString": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+	},
+	Embedded: []*InterfaceType{},
+}
+
+var BuiltinErrorIface = &InterfaceType{
+	Name: "Error",
+	Methods: map[string]*FuncType{
+		"Message": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+		"ToString": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+	},
+	Embedded: []*InterfaceType{},
+}
+
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
 	// Built-in Error interface: Message(): String, ToString(): String
-	errorIface := &InterfaceType{
-		Name: "Error",
-		Methods: map[string]*FuncType{
-			"Message": {
-				Arg: &TupleType{Elems: []Type{}},
-				Ret: TypeString,
-			},
-			"ToString": {
-				Arg: &TupleType{Elems: []Type{}},
-				Ret: TypeString,
-			},
-		},
-		Embedded: []*InterfaceType{},
-	}
-	_ = rootScope.Declare("Error", errorIface)
+	_ = rootScope.Declare("Error", BuiltinErrorIface)
 
 	// Built-in Show interface: ToString(): String
-	showIface := &InterfaceType{
-		Name: "Show",
-		Methods: map[string]*FuncType{
-			"ToString": {
-				Arg: &TupleType{Elems: []Type{}},
-				Ret: TypeString,
-			},
-		},
-		Embedded: []*InterfaceType{},
-	}
-	_ = rootScope.Declare("Show", showIface)
+	_ = rootScope.Declare("Show", BuiltinShowIface)
 
 	// Built-in print: (*args: Show) -> ()
-	_ = rootScope.Declare("print", &FuncType{
-		Arg: &TupleType{
-			Elems:      []Type{showIface},
-			IsVariadic: true,
-		},
-		Ret: &TupleType{Elems: []Type{}},
-	})
+	_ = rootScope.Declare("print", BuiltinPrintFuncType)
 	// Built-in type: (Any) -> String
-	_ = rootScope.Declare("type", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeString,
-	})
+	_ = rootScope.Declare("type", BuiltinTypeFuncType)
 	// Built-in len: (Any) -> Int
-	_ = rootScope.Declare("len", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeInt,
-	})
+	_ = rootScope.Declare("len", BuiltinLenFuncType)
 	// Built-in exit: ([code: Int]) -> Nil
-	_ = rootScope.Declare("exit", builtinExitFuncType)
+	_ = rootScope.Declare("exit", BuiltinExitFuncType)
 	// Built-in force: (Any) -> Any
-	_ = rootScope.Declare("force", builtinForceFuncType)
+	_ = rootScope.Declare("force", BuiltinForceFuncType)
 	// Built-in Bytes: (String?) -> Bytes
-	_ = rootScope.Declare("Bytes", builtinBytesFuncType)
+	_ = rootScope.Declare("Bytes", BuiltinBytesFuncType)
 	// Built-in gets: () -> String | Nil
-	_ = rootScope.Declare("gets", &FuncType{
-		Arg: &TupleType{Elems: []Type{}},
-		Ret: NewUnionType(TypeString, TypeNil),
-	})
+	_ = rootScope.Declare("gets", BuiltinGetsFuncType)
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -211,6 +222,7 @@ func NewInferencer() *Inferencer {
 		scope:     fileScope,
 		modules:   make(map[string]*ModuleType),
 		ExprTypes: make(map[ast.Expr]Type),
+		StmtTypes: make(map[ast.Stmt]Type),
 	}
 	inf.modules["io"] = makeIOModuleType("io")
 	inf.modules["bufio"] = makeBufioModuleType("bufio")
@@ -406,6 +418,10 @@ func (inf *Inferencer) RegisterModule(name string, mod *ModuleType) {
 	inf.modules[name] = mod
 }
 
+func (inf *Inferencer) Scope() *Scope {
+	return inf.scope
+}
+
 func (inf *Inferencer) freshVar() *TypeVar {
 	v := &TypeVar{ID: inf.nextVarID}
 	inf.nextVarID++
@@ -566,6 +582,9 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			BlockOpt:   blockOpt,
 			Ret:        declaredRetType,
 		}
+		if inf.StmtTypes != nil {
+			inf.StmtTypes[s] = fnType
+		}
 		// Function declaration in current scope
 		if err := inf.scope.Declare(s.Name, fnType); err != nil {
 			return err
@@ -650,6 +669,35 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		return nil
 
+	case *ast.IfStmt:
+		if s.Cond != nil {
+			if _, err := inf.inferExpr(s.Cond); err != nil {
+				return err
+			}
+		}
+		thenScope := NewScope(inf.scope)
+		prevScope := inf.scope
+		inf.scope = thenScope
+		for _, bStmt := range s.ThenBody {
+			if err := inf.inferStmt(bStmt); err != nil {
+				inf.scope = prevScope
+				return err
+			}
+		}
+		inf.scope = prevScope
+		if len(s.ElseBody) > 0 {
+			elseScope := NewScope(inf.scope)
+			inf.scope = elseScope
+			for _, bStmt := range s.ElseBody {
+				if err := inf.inferStmt(bStmt); err != nil {
+					inf.scope = prevScope
+					return err
+				}
+			}
+			inf.scope = prevScope
+		}
+		return nil
+
 	case *ast.MemberAssignStmt:
 		targetT, err := inf.inferExpr(s.Target)
 		if err != nil {
@@ -679,6 +727,9 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			FieldOrder: make([]string, 0),
 			Embedded:   make([]*StructType, 0),
 			Methods:    make(map[string]*FuncType),
+		}
+		if inf.StmtTypes != nil {
+			inf.StmtTypes[s] = st
 		}
 
 		// Declare struct type in current scope so methods/self can reference it
@@ -1124,7 +1175,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
-			if t, ok := inf.scope.Lookup("force"); ok && t == builtinForceFuncType {
+			if t, ok := inf.scope.Lookup("force"); ok && t == BuiltinForceFuncType {
 				return inf.inferExpr(e.Args[0])
 			}
 		}
@@ -1203,17 +1254,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return st, nil
 		}
 		if iface, ok := calleeT.(*InterfaceType); ok && iface.Name == "Error" {
+			for _, argExpr := range e.Args {
+				if _, err := inf.inferExpr(argExpr); err != nil {
+					return nil, err
+				}
+			}
 			return iface, nil
 		}
 		if fnT, ok := calleeT.(*FuncType); ok {
 			args := e.Args
 			if fnT.BlockParam != nil {
 				if e.Block != nil {
-					blockLambda := &ast.LambdaExpr{
-						Params: e.Block.Params,
-						Body:   e.Block.Body,
-					}
-					bT, err := inf.inferExpr(blockLambda)
+					bT, err := inf.inferExpr(e.Block)
 					if err != nil {
 						return nil, err
 					}
@@ -1225,10 +1277,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 			} else {
 				if e.Block != nil {
-					args = append(append([]ast.Expr(nil), e.Args...), &ast.LambdaExpr{
-						Params: e.Block.Params,
-						Body:   e.Block.Body,
-					})
+					args = append(append([]ast.Expr(nil), e.Args...), e.Block)
 				}
 			}
 
@@ -1311,6 +1360,16 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 			}
 			return fnT.Ret, nil
+		}
+		for _, argExpr := range e.Args {
+			if _, err := inf.inferExpr(argExpr); err != nil {
+				return nil, err
+			}
+		}
+		if e.Block != nil {
+			if _, err := inf.inferExpr(e.Block); err != nil {
+				return nil, err
+			}
 		}
 		return TypeAny, nil
 	case *ast.MemberAccessExpr:
@@ -1425,6 +1484,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		return NewUnionType(caseTypes...), nil
 	case *ast.LambdaExpr:
 		paramTypes := make([]Type, len(e.Params))
+		callerParamTypes := make([]Type, len(e.Params))
+		isVariadic := false
+		minArity := 0
 		for i, p := range e.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
@@ -1434,13 +1496,31 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 				elemType = t
 			}
+			if p.DefaultValue != nil {
+				defT, err := inf.inferExpr(p.DefaultValue)
+				if err != nil {
+					return nil, err
+				}
+				if elemType != TypeAny && !IsAssignableTo(defT, elemType) {
+					return nil, fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
+				}
+			} else if !p.IsVariadic {
+				minArity++
+			}
 			if p.IsVariadic {
+				isVariadic = true
+				callerParamTypes[i] = elemType
 				emptyTuple := &TupleType{Elems: []Type{}}
 				streamTuple := &TupleType{Elems: []Type{elemType}, IsVariadic: true}
 				paramTypes[i] = NewUnionType(emptyTuple, streamTuple)
 			} else {
+				callerParamTypes[i] = elemType
 				paramTypes[i] = elemType
 			}
+		}
+		maxArity := len(e.Params)
+		if isVariadic {
+			maxArity = -1
 		}
 
 		childScope := NewScope(inf.scope)
@@ -1482,8 +1562,13 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		inf.scope = prevScope
 		return &FuncType{
-			Arg: &TupleType{Elems: paramTypes},
-			Ret: lastT,
+			Arg: &TupleType{
+				Elems:      callerParamTypes,
+				IsVariadic: isVariadic,
+			},
+			MinArity: minArity,
+			MaxArity: maxArity,
+			Ret:      lastT,
 		}, nil
 	case *ast.BlockLiteral:
 		return inf.inferExpr(&ast.LambdaExpr{

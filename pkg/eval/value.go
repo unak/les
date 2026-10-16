@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"les/pkg/ast"
+	"les/pkg/types"
 )
 
 // Value represents evaluated runtime value in Les.
@@ -184,15 +185,17 @@ type Closure struct {
 	Env             *Environment
 	IsFuncDef       bool
 	EnclosingFuncID uint64
+	FuncType        any // types.Type if known, for type reflection
 }
 
 func (c *Closure) String() string { return "<function>" }
 
 // BuiltinFunc represents built-in effect / primitive functions.
 type BuiltinFunc struct {
-	Name    string
-	Fn      func(args []Value) (Value, error)
-	TypeDef Value // optional underlying StructDefValue or InterfaceDefValue (for type checking / constructors)
+	Name     string
+	Fn       func(args []Value) (Value, error)
+	TypeDef  Value // optional underlying StructDefValue or InterfaceDefValue (for type checking / constructors)
+	FuncType any   // types.Type if known, for type reflection
 }
 
 func (b *BuiltinFunc) String() string { return fmt.Sprintf("<builtin %s>", b.Name) }
@@ -213,6 +216,7 @@ type StructDefValue struct {
 	EmbeddedNames []string
 	Methods       map[string]*ast.FuncDef
 	Env           *Environment
+	StructType    any // Inferred *types.StructType
 }
 
 func (s *StructDefValue) String() string {
@@ -292,7 +296,7 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 		params = params[1:]
 	}
 
-	return &Closure{
+	closure := &Closure{
 		Params:          params,
 		BlockParam:      m.BlockParam,
 		Body:            m.Body,
@@ -300,6 +304,15 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 		IsFuncDef:       true,
 		EnclosingFuncID: methodEnv.EnclosingFuncID,
 	}
+	if si.Def != nil && si.Def.StructType != nil {
+		if st, ok := si.Def.StructType.(*types.StructType); ok {
+			if mType, ok := st.Methods[m.Name]; ok {
+				closure.FuncType = mType
+			}
+		}
+	}
+
+	return closure
 }
 
 // LookupMember searches for field or method on StructInstance with Go-style promotion rules.

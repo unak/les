@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"les/pkg/ast"
+	"les/pkg/types"
 )
 
 // customReaderAdapter adapts a Les value with a Read method into an io.Reader.
@@ -204,10 +205,71 @@ func (ev *Evaluator) initBufioModule() {
 		Env: ev.globalEnv,
 	}
 
+	ioReaderIfaceType := &types.InterfaceType{
+		Name: "io.Reader",
+		Methods: map[string]*types.FuncType{
+			"Read": {
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+				Ret: types.NewUnionType(types.TypeBytes, types.TypeNil),
+			},
+		},
+	}
+	ioWriterIfaceType := &types.InterfaceType{
+		Name: "io.Writer",
+		Methods: map[string]*types.FuncType{
+			"Write": {
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeBytes}},
+				Ret: types.TypeInt,
+			},
+			"Flush": {
+				Arg: &types.TupleType{Elems: []types.Type{}},
+				Ret: &types.TupleType{Elems: []types.Type{}},
+			},
+		},
+	}
+	bufioReaderStructType := &types.StructType{
+		Name: "bufio.Reader",
+		Methods: map[string]*types.FuncType{
+			"Read": {
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+				Ret: types.NewUnionType(types.TypeBytes, types.TypeNil),
+			},
+			"ReadLine": {
+				Arg: &types.TupleType{Elems: []types.Type{}},
+				Ret: types.NewUnionType(types.TypeString, types.TypeNil),
+			},
+			"ReadString": {
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeString}},
+				Ret: types.NewUnionType(types.TypeString, types.TypeNil),
+			},
+			"Peek": {
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+				Ret: types.NewUnionType(types.TypeBytes, types.TypeNil),
+			},
+		},
+	}
+	bufioWriterStructType := &types.StructType{
+		Name: "bufio.Writer",
+		Methods: map[string]*types.FuncType{
+			"Write": {
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeBytes}},
+				Ret: types.TypeInt,
+			},
+			"Flush": {
+				Arg: &types.TupleType{Elems: []types.Type{}},
+				Ret: &types.TupleType{Elems: []types.Type{}},
+			},
+		},
+	}
+
 	// Reader constructor: @bufio.Reader(r)
 	readerConstructor := &BuiltinFunc{
 		Name:    "Reader",
 		TypeDef: readerDef,
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{ioReaderIfaceType}},
+			Ret: bufioReaderStructType,
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Reader constructor expects 1 argument, got %d", len(args))
@@ -245,6 +307,10 @@ func (ev *Evaluator) initBufioModule() {
 	writerConstructor := &BuiltinFunc{
 		Name:    "Writer",
 		TypeDef: writerDef,
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{ioWriterIfaceType}},
+			Ret: bufioWriterStructType,
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Writer constructor expects 1 argument, got %d", len(args))
@@ -298,6 +364,10 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 
 	inst.Fields["Read"] = &BuiltinFunc{
 		Name: "Read",
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+			Ret: types.NewUnionType(types.TypeBytes, types.TypeNil),
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Read expects 1 argument, got %d", len(args))
@@ -342,6 +412,10 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 
 	inst.Fields["ReadLine"] = &BuiltinFunc{
 		Name: "ReadLine",
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{}},
+			Ret: types.NewUnionType(types.TypeString, types.TypeNil),
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("ReadLine expects 0 arguments, got %d", len(args))
@@ -371,6 +445,10 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 
 	inst.Fields["ReadString"] = &BuiltinFunc{
 		Name: "ReadString",
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{types.TypeString}},
+			Ret: types.NewUnionType(types.TypeString, types.TypeNil),
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("ReadString expects 1 argument, got %d", len(args))
@@ -422,6 +500,10 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 
 	inst.Fields["Peek"] = &BuiltinFunc{
 		Name: "Peek",
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+			Ret: types.NewUnionType(types.TypeBytes, types.TypeNil),
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Peek expects 1 argument, got %d", len(args))
@@ -467,6 +549,10 @@ func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, get
 
 	inst.Fields["Write"] = &BuiltinFunc{
 		Name: "Write",
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{types.TypeBytes}},
+			Ret: types.TypeInt,
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("Write expects 1 argument, got %d", len(args))
@@ -492,6 +578,10 @@ func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, get
 
 	inst.Fields["Flush"] = &BuiltinFunc{
 		Name: "Flush",
+		FuncType: &types.FuncType{
+			Arg: &types.TupleType{Elems: []types.Type{}},
+			Ret: &types.TupleType{Elems: []types.Type{}},
+		},
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("Flush expects 0 arguments, got %d", len(args))
