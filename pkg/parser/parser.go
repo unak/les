@@ -321,7 +321,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 			if p.peekTokenIs(lexer.TokenLParen) {
 				// Method signature: ident(params...): ReturnType
 				p.nextToken() // advance to '('
-				params := p.parseFuncParams()
+				params, blockParam := p.parseFuncParams()
 				retType := "()"
 				if p.curTokenIs(lexer.TokenColon) {
 					p.nextToken() // consume ':'
@@ -334,6 +334,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 				methods = append(methods, ast.MethodSig{
 					Name:       ident,
 					Params:     params,
+					BlockParam: blockParam,
 					ReturnType: strings.TrimSpace(retType),
 				})
 				p.consumeStmtEnd()
@@ -373,7 +374,7 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 		return nil
 	}
 
-	params := p.parseFuncParams()
+	params, blockParam := p.parseFuncParams()
 
 	returnType := ""
 	if p.peekTokenIs(lexer.TokenArrow) {
@@ -400,20 +401,58 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	return &ast.FuncDef{
 		Name:       name,
 		Params:     params,
+		BlockParam: blockParam,
 		ReturnType: strings.TrimSpace(returnType),
 		Body:       body,
 	}
 }
 
-func (p *Parser) parseFuncParams() []ast.FuncParam {
+func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 	params := make([]ast.FuncParam, 0)
+	var blockParam *ast.FuncParam
+
 	if p.peekTokenIs(lexer.TokenRParen) {
 		p.nextToken()
-		return params
+		return params, nil
 	}
 
 	p.nextToken()
+	hasDefault := false
+
 	for {
+		// 1. Block param: &block [: Type] [= Expr]
+		if p.curTokenIs(lexer.TokenAmpersand) {
+			p.nextToken() // consume '&'
+			if !p.curTokenIs(lexer.TokenIdent) {
+				p.errors = append(p.errors, fmt.Sprintf("expected identifier after '&' at line %d col %d", p.curToken.Line, p.curToken.Col))
+				break
+			}
+			bp := &ast.FuncParam{
+				Name: p.curToken.Literal,
+			}
+			if p.peekTokenIs(lexer.TokenColon) {
+				p.nextToken() // advance to ':'
+				p.nextToken() // advance to type annot start
+				bp.TypeAnnot = p.parseTypeAnnotString()
+			}
+			if p.peekTokenIs(lexer.TokenAssign) {
+				p.nextToken() // advance to '='
+				p.nextToken() // advance to expr start
+				bp.DefaultValue = p.parseExpr(PREC_LOWEST)
+			}
+			blockParam = bp
+
+			// &block must be the last parameter!
+			if p.peekTokenIs(lexer.TokenComma) {
+				p.nextToken() // consume ','
+				if !p.peekTokenIs(lexer.TokenRParen) {
+					p.errors = append(p.errors, fmt.Sprintf("block parameter &%s must be the last parameter at line %d col %d", bp.Name, p.curToken.Line, p.curToken.Col))
+				}
+			}
+			break
+		}
+
+		// 2. Normal / Variadic param
 		isVariadic := false
 		if p.curTokenIs(lexer.TokenStar) {
 			isVariadic = true
@@ -431,6 +470,20 @@ func (p *Parser) parseFuncParams() []ast.FuncParam {
 			p.nextToken() // advance to type annot start
 			param.TypeAnnot = p.parseTypeAnnotString()
 		}
+		if p.peekTokenIs(lexer.TokenAssign) {
+			if isVariadic {
+				p.errors = append(p.errors, fmt.Sprintf("variadic parameter *%s cannot have a default value at line %d col %d", param.Name, p.curToken.Line, p.curToken.Col))
+			}
+			p.nextToken() // advance to '='
+			p.nextToken() // advance to expr start
+			param.DefaultValue = p.parseExpr(PREC_LOWEST)
+			hasDefault = true
+		} else if !isVariadic {
+			if hasDefault {
+				p.errors = append(p.errors, fmt.Sprintf("required parameter '%s' cannot follow default parameter at line %d col %d", param.Name, p.curToken.Line, p.curToken.Col))
+			}
+		}
+
 		params = append(params, param)
 
 		if p.peekTokenIs(lexer.TokenComma) {
@@ -445,7 +498,7 @@ func (p *Parser) parseFuncParams() []ast.FuncParam {
 	}
 
 	p.expectPeek(lexer.TokenRParen)
-	return params
+	return params, blockParam
 }
 
 func (p *Parser) parseTypeAnnotString() string {

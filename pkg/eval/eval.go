@@ -636,10 +636,11 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 	case *ast.FuncDef:
 		closure := &Closure{
-			Params:    s.Params,
-			Body:      s.Body,
-			Env:       env,
-			IsFuncDef: true,
+			Params:     s.Params,
+			BlockParam: s.BlockParam,
+			Body:       s.Body,
+			Env:        env,
+			IsFuncDef:  true,
 		}
 		env.Set(s.Name, closure)
 		return nil, nil
@@ -883,7 +884,7 @@ func (env *Environment) evalBlock(body []ast.Stmt) (Value, error) {
 	return lastVal, nil
 }
 
-func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (val Value, err error) {
+func (env *Environment) invokeClosure(fn *Closure, argValues []Value, optBlock ...Value) (val Value, err error) {
 	callEnv := NewEnvironment(fn.Env)
 	var myCallID uint64
 
@@ -910,8 +911,24 @@ func (env *Environment) invokeClosure(fn *Closure, argValues []Value) (val Value
 		}
 		if i < len(argValues) {
 			callEnv.Set(p.Name, argValues[i])
+		} else if p.DefaultValue != nil {
+			callEnv.Set(p.Name, NewThunk(p.DefaultValue, callEnv))
 		} else {
 			callEnv.Set(p.Name, &TupleValue{Elements: []Value{}})
+		}
+	}
+
+	if fn.BlockParam != nil {
+		var blockVal Value
+		if len(optBlock) > 0 && optBlock[0] != nil {
+			blockVal = optBlock[0]
+		}
+		if blockVal != nil {
+			callEnv.Set(fn.BlockParam.Name, blockVal)
+		} else if fn.BlockParam.DefaultValue != nil {
+			callEnv.Set(fn.BlockParam.Name, NewThunk(fn.BlockParam.DefaultValue, callEnv))
+		} else {
+			return nil, fmt.Errorf("missing required block argument &%s", fn.BlockParam.Name)
 		}
 	}
 
@@ -1221,23 +1238,35 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			}
 		}
 
-		// Trailing block as closure argument
+		// Trailing block closure
+		var blockClosure *Closure
 		if e.Block != nil {
-			blockClosure := &Closure{
+			blockClosure = &Closure{
 				Params:          e.Block.Params,
 				Body:            e.Block.Body,
 				Env:             env,
 				IsFuncDef:       false,
 				EnclosingFuncID: env.EnclosingFuncID,
 			}
-			argValues = append(argValues, blockClosure)
 		}
 
 		switch fn := calleeVal.(type) {
 		case *BuiltinFunc:
+			if blockClosure != nil {
+				argValues = append(argValues, blockClosure)
+			}
 			return fn.Fn(argValues)
 
 		case *Closure:
+			if fn.BlockParam != nil {
+				if blockClosure != nil {
+					return env.invokeClosure(fn, argValues, blockClosure)
+				}
+				return env.invokeClosure(fn, argValues)
+			}
+			if blockClosure != nil {
+				argValues = append(argValues, blockClosure)
+			}
 			return env.invokeClosure(fn, argValues)
 
 		case *StructDefValue:
@@ -1552,6 +1581,15 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			argValues[i] = val
 
 			// Auto-bind: if param name matches struct field, assign to fields
+			for _, fName := range sDef.FieldOrder {
+				if fName == param.Name {
+					fields[param.Name] = val
+					break
+				}
+			}
+		} else if param.DefaultValue != nil {
+			val := env.newThunk(param.DefaultValue)
+			argValues[i] = val
 			for _, fName := range sDef.FieldOrder {
 				if fName == param.Name {
 					fields[param.Name] = val

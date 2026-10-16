@@ -179,6 +179,7 @@ func (d *DictValue) String() string {
 // Closure represents user defined function with closure environment.
 type Closure struct {
 	Params          []ast.FuncParam
+	BlockParam      *ast.FuncParam
 	Body            []ast.Stmt
 	Env             *Environment
 	IsFuncDef       bool
@@ -293,6 +294,7 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 
 	return &Closure{
 		Params:          params,
+		BlockParam:      m.BlockParam,
 		Body:            m.Body,
 		Env:             methodEnv,
 		IsFuncDef:       true,

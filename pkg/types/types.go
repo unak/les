@@ -104,8 +104,38 @@ func (d *DictType) Equals(other Type) bool {
 
 // FuncType represents (Arg) -> Ret.
 type FuncType struct {
-	Arg Type // argument is always a TupleType or Any
-	Ret Type
+	Arg        Type // argument is always a TupleType or Any
+	MinArity   int  // Minimum number of required positional arguments
+	MaxArity   int  // Maximum number of positional arguments (-1 if variadic)
+	BlockParam Type // Type of &block parameter (nil if no &block)
+	BlockOpt   bool // true if &block is optional (= nil)
+	Ret        Type
+}
+
+func (f *FuncType) MinArgs() int {
+	if f.MinArity > 0 || (f.Arg != nil && f.MaxArity > 0) {
+		return f.MinArity
+	}
+	if tup, ok := f.Arg.(*TupleType); ok {
+		if tup.IsVariadic && len(tup.Elems) > 0 {
+			return len(tup.Elems) - 1
+		}
+		return len(tup.Elems)
+	}
+	return 0
+}
+
+func (f *FuncType) MaxArgs() int {
+	if f.MaxArity != 0 {
+		return f.MaxArity
+	}
+	if tup, ok := f.Arg.(*TupleType); ok {
+		if tup.IsVariadic {
+			return -1
+		}
+		return len(tup.Elems)
+	}
+	return -1
 }
 
 func (f *FuncType) String() string {
@@ -424,14 +454,18 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 	}
 	if mName == "Int" && t == TypeString {
 		return &FuncType{
-			Arg: NewUnionType(&TupleType{Elems: []Type{}}, &TupleType{Elems: []Type{TypeInt}}),
-			Ret: TypeInt,
+			Arg:      &TupleType{Elems: []Type{TypeInt}},
+			MinArity: 0,
+			MaxArity: 1,
+			Ret:      TypeInt,
 		}, true
 	}
 	if mName == "String" && t == TypeInt {
 		return &FuncType{
-			Arg: NewUnionType(&TupleType{Elems: []Type{}}, &TupleType{Elems: []Type{TypeInt}}),
-			Ret: TypeString,
+			Arg:      &TupleType{Elems: []Type{TypeInt}},
+			MinArity: 0,
+			MaxArity: 1,
+			Ret:      TypeString,
 		}, true
 	}
 	return nil, false
