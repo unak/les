@@ -1460,10 +1460,27 @@ struct StringList:
 	if !initFn.Ret.Equals(st) {
 		t.Fatalf("expected init return type to be %s, got %s", st.Name, initFn.Ret)
 	}
+
+	// Verify BlockParam function type assignability and interface implementation
+	ifaceCode := `
+interface List:
+    Each(block)
+
+struct StringList:
+    t: (String, ...)
+    def init(*t: String):
+        ()
+    def Each(&block: (String) -> ()) -> ():
+        ()
+
+sl = StringList("a", "b")
+l: List = sl
+eachFn: ((String) -> ()) -> () = sl.Each
+lType: String = l.Type()
+`
+	progIface := parser.NewParser(lexer.NewLexer(ifaceCode)).ParseProgram()
+	infIface := NewInferencer()
+	if err := infIface.InferProgram(progIface); err != nil {
+		t.Fatalf("unexpected type error in block param interface/assignability test: %v", err)
+	}
 }
-
-
-
-
-
-

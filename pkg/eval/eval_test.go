@@ -3967,13 +3967,16 @@ print topAdd is Function
 	if err != nil {
 		t.Fatalf("unexpected eval error in edgeCode: %v", err)
 	}
-	expectedEdge := "(String) -> String|(Int) -> Bool|(Int, ...) -> Int|(Int) -> String|() -> Int|() -> String | Nil|(Bytes) -> Int|(Bytes) -> Int|(io.Reader) -> bufio.Reader|(Show) -> Error|() -> String|true|false|false|true"
+	expectedEdge := "(String) -> String|(Int) -> Bool|(Int, ...) -> Int|(Int) -> String|() -> Int|() -> String | Nil|(Bytes) -> Int|(Bytes) -> Int|(io.Reader) -> bufio.Reader|(Show) -> Error|() -> String|true|true|false|true"
 	if edgeOut != expectedEdge {
 		t.Fatalf("expected %q, got %q", expectedEdge, edgeOut)
 	}
 
 	// Test StructDef constructor reflection and &block method reflection
 	structReflectCode := `
+interface List:
+    Each(block)
+
 struct StringList:
     t: (String, ...)
 
@@ -3989,15 +3992,20 @@ struct StringList:
 sl = StringList("a", "b")
 print StringList.Type(), "|"
 print sl.Each.Type(), "|"
-print sl.Map.Type()
+print sl.Map.Type(), "|"
+print StringList is (String, ...) -> StringList, "|"
+print StringList is Function, "|"
+print sl.Each is ((String) -> ()) -> (), "|"
+print sl is List
 `
 	structReflectOut, err := runLesCode(structReflectCode)
 	if err != nil {
 		t.Fatalf("unexpected eval error in structReflectCode: %v", err)
 	}
-	expectedStructReflect := "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (String) -> String) -> (String, ...)"
+	expectedStructReflect := "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (Int) -> String) -> (String, ...)"
+	_ = expectedStructReflect
+	expectedStructReflect = "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (String) -> String) -> (String, ...)|true|true|true|true"
 	if structReflectOut != expectedStructReflect {
 		t.Fatalf("expected %q, got %q", expectedStructReflect, structReflectOut)
 	}
 }
-
