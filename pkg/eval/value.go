@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"les/pkg/ast"
+	"les/pkg/types"
 )
 
 // Value represents evaluated runtime value in Les.
@@ -302,6 +303,13 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 		Env:             methodEnv,
 		IsFuncDef:       true,
 		EnclosingFuncID: methodEnv.EnclosingFuncID,
+	}
+	if si.Def != nil && si.Def.StructType != nil {
+		if st, ok := si.Def.StructType.(*types.StructType); ok {
+			if mType, ok := st.Methods[m.Name]; ok {
+				closure.FuncType = mType
+			}
+		}
 	}
 
 	return closure

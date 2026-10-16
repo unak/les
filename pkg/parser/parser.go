@@ -1523,19 +1523,40 @@ func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
 	if p.peekTokenIs(lexer.TokenPipe) {
 		p.nextToken() // consume '|'
 		p.nextToken()
-		for {
+		for !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenEOF) {
+			isVariadic := false
+			if p.curTokenIs(lexer.TokenStar) {
+				isVariadic = true
+				p.nextToken()
+			}
 			if !p.curTokenIs(lexer.TokenIdent) {
 				break
 			}
-			params = append(params, ast.FuncParam{Name: p.curToken.Literal})
+			paramName := p.curToken.Literal
+			typeAnnot := ""
+			if p.peekTokenIs(lexer.TokenColon) {
+				p.nextToken() // consume ':'
+				p.nextToken() // advance to type annot start
+				typeAnnot = p.parseTypeAnnotString()
+			}
+			params = append(params, ast.FuncParam{
+				Name:       paramName,
+				TypeAnnot:  typeAnnot,
+				IsVariadic: isVariadic,
+			})
 			if p.peekTokenIs(lexer.TokenComma) {
 				p.nextToken()
+				if p.peekTokenIs(lexer.TokenPipe) {
+					break
+				}
 				p.nextToken()
 			} else {
 				break
 			}
 		}
-		p.expectPeek(lexer.TokenPipe)
+		if !p.curTokenIs(lexer.TokenPipe) {
+			p.expectPeek(lexer.TokenPipe)
+		}
 	}
 
 	if p.peekTokenIs(lexer.TokenColon) {

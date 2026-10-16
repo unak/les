@@ -3917,4 +3917,63 @@ print type(s.Bytes)
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
+
+	edgeCode := `
+import bufio
+import io
+
+shadowed = 123
+
+def outer(): String:
+    def shadowed(s: String): String:
+        s
+    if true:
+        def inIf(n: Int): Bool:
+            n > 0
+        return type(shadowed) + "|" + type(inIf)
+    return ""
+
+varLambda = |*nums: Int|: 0
+
+def withBlock(&b: (Int) -> String): String:
+    type(b)
+
+blkType = withBlock() do |x: Int|:
+    "ok"
+
+struct Base:
+    def BaseVal(): Int:
+        10
+
+struct Sub:
+    Base
+
+sub = Sub()
+errObj = Error("fail")
+
+print outer(), "|"
+print type(varLambda), "|"
+print blkType, "|"
+print type(sub.BaseVal), "|"
+print type(Stdin.ReadLine), "|"
+print type(Stdout.Write), "|"
+print type(Stderr.Write), "|"
+print type(@bufio.Reader), "|"
+print type(Error), "|"
+print type(errObj.Message), "|"
+print shadowed == 123, "|"
+def topAdd(a: Int, b: Int): Int:
+    a + b
+print topAdd is (Int, Int) -> Int, "|"
+print topAdd is (String) -> String, "|"
+print topAdd is Function
+`
+	edgeOut, err := runLesCode(edgeCode)
+	if err != nil {
+		t.Fatalf("unexpected eval error in edgeCode: %v", err)
+	}
+	expectedEdge := "(String) -> String|(Int) -> Bool|(Int, ...) -> Int|(Int) -> String|() -> Int|() -> String | Nil|(Bytes) -> Int|(Bytes) -> Int|(io.Reader) -> bufio.Reader|(Any) -> Error|() -> String|true|true|false|true"
+	if edgeOut != expectedEdge {
+		t.Fatalf("expected %q, got %q", expectedEdge, edgeOut)
+	}
 }

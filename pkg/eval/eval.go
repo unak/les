@@ -23,9 +23,10 @@ func nextCallID() uint64 {
 
 // Evaluator runs Les AST nodes.
 type Evaluator struct {
-	builtinsEnv *Environment
-	globalEnv   *Environment
-	inferencer  *types.Inferencer
+	builtinsEnv      *Environment
+	globalEnv        *Environment
+	inferencer       *types.Inferencer
+	fileModuleLoader *FileModuleLoader
 }
 
 func NewEvaluator() *Evaluator {
@@ -117,6 +118,7 @@ func (ev *Evaluator) SetModuleLoader(loader func(path string) (*ModuleValue, err
 }
 
 func (ev *Evaluator) SetFileModuleLoader(fml *FileModuleLoader) {
+	ev.fileModuleLoader = fml
 	if fml != nil {
 		fml.SetParentEnv(ev.builtinsEnv)
 		ev.builtinsEnv.Loader = fml.Load
@@ -294,6 +296,10 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("scriptName", StringValue(""))
 
 	// Built-in Error constructor & default Error struct definition
+	errorMethodFuncType := &types.FuncType{
+		Arg: &types.TupleType{Elems: []types.Type{}},
+		Ret: types.TypeString,
+	}
 	errorStructDef := &StructDefValue{
 		Name:          "SimpleError",
 		FieldOrder:    []string{"message"},
@@ -326,10 +332,28 @@ func (ev *Evaluator) registerBuiltins() {
 			},
 		},
 		Env: ev.builtinsEnv,
+		StructType: &types.StructType{
+			Name: "SimpleError",
+			Fields: map[string]types.Type{
+				"message": types.TypeString,
+			},
+			FieldOrder: []string{"message"},
+			Methods: map[string]*types.FuncType{
+				"Message":  errorMethodFuncType,
+				"ToString": errorMethodFuncType,
+				"Error":    errorMethodFuncType,
+			},
+		},
 	}
 
 	ev.builtinsEnv.Set("Error", &BuiltinFunc{
 		Name: "Error",
+		FuncType: &types.FuncType{
+			Arg:      &types.TupleType{Elems: []types.Type{types.TypeAny}},
+			MinArity: 0,
+			MaxArity: 1,
+			Ret:      types.BuiltinErrorIface,
+		},
 		Fn: func(args []Value) (Value, error) {
 			msg := "error"
 			if len(args) > 0 {
@@ -467,21 +491,15 @@ func typeNameWithDepth(val Value, depth int) string {
 		return "Type"
 	case *Closure:
 		if v.FuncType != nil {
-			if t, ok := v.FuncType.(types.Type); ok {
+			if t, ok := v.FuncType.(*types.FuncType); ok {
 				return t.String()
-			}
-			if s, ok := v.FuncType.(fmt.Stringer); ok {
-				return s.String()
 			}
 		}
 		return "Function"
 	case *BuiltinFunc:
 		if v.FuncType != nil {
-			if t, ok := v.FuncType.(types.Type); ok {
+			if t, ok := v.FuncType.(*types.FuncType); ok {
 				return t.String()
-			}
-			if s, ok := v.FuncType.(fmt.Stringer); ok {
-				return s.String()
 			}
 		}
 		return "Function"
@@ -493,6 +511,9 @@ func typeNameWithDepth(val Value, depth int) string {
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	if ev.inferencer == nil {
 		inf := types.NewInferencer()
+		if ev.fileModuleLoader != nil {
+			inf.SetModuleLoader(types.NewFileModuleLoader(ev.fileModuleLoader.baseDir).Load)
+		}
 		_ = inf.InferProgram(prog)
 		ev.SetInferencer(inf)
 	}
@@ -669,8 +690,19 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		}
 		if env != nil && env.Inferencer != nil {
 			if inf, ok := env.Inferencer.(*types.Inferencer); ok {
-				if fnType, ok := inf.Scope().Lookup(s.Name); ok {
-					closure.FuncType = fnType
+				if inf.StmtTypes != nil {
+					if fnType, ok := inf.StmtTypes[s]; ok {
+						if ft, isFT := fnType.(*types.FuncType); isFT {
+							closure.FuncType = ft
+						}
+					}
+				}
+				if closure.FuncType == nil {
+					if fnType, ok := inf.Scope().Lookup(s.Name); ok {
+						if ft, isFT := fnType.(*types.FuncType); isFT {
+							closure.FuncType = ft
+						}
+					}
 				}
 			}
 		}
@@ -705,8 +737,19 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 		if env != nil && env.Inferencer != nil {
 			if inf, ok := env.Inferencer.(*types.Inferencer); ok {
-				if st, ok := inf.Scope().Lookup(s.Name); ok {
-					sDef.StructType = st
+				if inf.StmtTypes != nil {
+					if st, ok := inf.StmtTypes[s]; ok {
+						if structT, isST := st.(*types.StructType); isST {
+							sDef.StructType = structT
+						}
+					}
+				}
+				if sDef.StructType == nil {
+					if st, ok := inf.Scope().Lookup(s.Name); ok {
+						if structT, isST := st.(*types.StructType); isST {
+							sDef.StructType = structT
+						}
+					}
 				}
 			}
 		}
@@ -1332,7 +1375,9 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 					if si.Def != nil && si.Def.StructType != nil {
 						if st, ok := si.Def.StructType.(*types.StructType); ok {
 							if mType, err := st.LookupMember(e.Member); err == nil {
-								closure.FuncType = mType
+								if ft, isFT := mType.(*types.FuncType); isFT {
+									closure.FuncType = ft
+								}
 							}
 						}
 					}
@@ -2124,7 +2169,46 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	case "Dict":
 		_, ok := val.(*DictValue)
 		return ok
+	case "Function":
+		switch val.(type) {
+		case *Closure, *BuiltinFunc:
+			return true
+		default:
+			return false
+		}
 	default:
+		switch fnVal := val.(type) {
+		case *Closure:
+			if fnT, ok := fnVal.FuncType.(*types.FuncType); ok {
+				var targetType types.Type
+				if len(optEnv) > 0 && optEnv[0] != nil && optEnv[0].Inferencer != nil {
+					if inf, ok := optEnv[0].Inferencer.(*types.Inferencer); ok {
+						targetType, _ = inf.ParseTypeAnnot(typeAnnot)
+					}
+				}
+				if targetType == nil {
+					targetType, _ = types.ParseTypeAnnot(typeAnnot)
+				}
+				if targetFT, ok := targetType.(*types.FuncType); ok {
+					return types.IsAssignableTo(fnT, targetFT)
+				}
+			}
+		case *BuiltinFunc:
+			if fnT, ok := fnVal.FuncType.(*types.FuncType); ok {
+				var targetType types.Type
+				if len(optEnv) > 0 && optEnv[0] != nil && optEnv[0].Inferencer != nil {
+					if inf, ok := optEnv[0].Inferencer.(*types.Inferencer); ok {
+						targetType, _ = inf.ParseTypeAnnot(typeAnnot)
+					}
+				}
+				if targetType == nil {
+					targetType, _ = types.ParseTypeAnnot(typeAnnot)
+				}
+				if targetFT, ok := targetType.(*types.FuncType); ok {
+					return types.IsAssignableTo(fnT, targetFT)
+				}
+			}
+		}
 		if strings.HasPrefix(typeAnnot, "{") && strings.HasSuffix(typeAnnot, "}") {
 			dVal, ok := val.(*DictValue)
 			if !ok {

@@ -8,6 +8,7 @@ import (
 
 	"les/pkg/lexer"
 	"les/pkg/parser"
+	"les/pkg/types"
 )
 
 // FileModuleLoader loads and executes other .les files as modules.
@@ -80,6 +81,11 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 	modEnv := NewEnvironment(fml.parentEnv)
 	modEnv.Loader = fml.Load
 	modEnv.Set("scriptName", StringValue(targetFile))
+
+	modInf := types.NewInferencer()
+	modInf.SetModuleLoader(types.NewFileModuleLoader(fml.baseDir).Load)
+	_ = modInf.InferProgram(prog)
+	modEnv.Inferencer = modInf
 
 	for _, stmt := range prog.Body {
 		if _, err := modEnv.evalStmt(stmt); err != nil {
