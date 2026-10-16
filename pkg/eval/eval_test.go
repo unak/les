@@ -3868,6 +3868,53 @@ print maxOverflow, " ", minOverflow, " ", exactMin, " ", exactMax
 	}
 }
 
+func TestFunctionTypeReflection(t *testing.T) {
+	code := `
+def add(a: Int, b: Int): Int:
+    a + b
 
+def inc(x: Int): Int:
+    x + 1
 
+def answer(): Int:
+    42
 
+def sum(*nums: Int): Int:
+    0
+
+f = |x: String|: x + "!"
+
+struct Person:
+    name: String
+    def Greet(): String:
+        "Hello"
+
+p = Person("Alice")
+
+print type(add), "|"
+print type(inc), "|"
+print type(answer), "|"
+print type(sum), "|"
+print type(f), "|"
+print type(p.Greet), "|"
+print type(print), "|"
+print type(type), "|"
+print type(len), "|"
+print type(exit), "|"
+print type(force), "|"
+print type(Bytes), "|"
+print type(gets), "|"
+s = "test"
+print type(s.Ord), "|"
+print type(s.Bytes)
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestFunctionTypeReflection: %v", err)
+	}
+
+	expected := "(Int, Int) -> Int|(Int) -> Int|() -> Int|(Int, ...) -> Int|(String) -> String|() -> String|(Show, ...) -> ()|Any -> String|Any -> Int|(Int) -> Nil|Any -> Any|(String | Bytes) -> Bytes|() -> String | Nil|() -> Int|() -> Bytes"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}

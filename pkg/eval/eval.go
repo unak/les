@@ -127,7 +127,8 @@ func (ev *Evaluator) SetFileModuleLoader(fml *FileModuleLoader) {
 func (ev *Evaluator) registerBuiltins() {
 	// print: built-in effect boundary. Demands evaluation of its arguments without automatic newline.
 	ev.builtinsEnv.Set("print", &BuiltinFunc{
-		Name: "print",
+		Name:     "print",
+		FuncType: types.BuiltinPrintFuncType,
 		Fn: func(args []Value) (Value, error) {
 			parts := make([]string, len(args))
 			for i, a := range args {
@@ -151,7 +152,8 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// type: returns string representation of the runtime type of the value(s).
 	ev.builtinsEnv.Set("type", &BuiltinFunc{
-		Name: "type",
+		Name:     "type",
+		FuncType: types.BuiltinTypeFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) == 0 {
 				return StringValue("()"), nil
@@ -170,7 +172,8 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// len: returns integer length of tuple, string, or dict.
 	ev.builtinsEnv.Set("len", &BuiltinFunc{
-		Name: "len",
+		Name:     "len",
+		FuncType: types.BuiltinLenFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("len expects 1 argument, got %d", len(args))
@@ -193,7 +196,8 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// exit: terminates process with exit code (0 or 1 arg, Bool or Int).
 	ev.builtinsEnv.Set("exit", &BuiltinFunc{
-		Name: "exit",
+		Name:     "exit",
+		FuncType: types.BuiltinExitFuncType,
 		Fn: func(args []Value) (Value, error) {
 			code := 0
 			if len(args) == 0 {
@@ -221,7 +225,8 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// force: strictly evaluates (forces) its argument and returns it.
 	ev.builtinsEnv.Set("force", &BuiltinFunc{
-		Name: "force",
+		Name:     "force",
+		FuncType: types.BuiltinForceFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 1 {
 				return nil, fmt.Errorf("force expects 1 argument, got %d", len(args))
@@ -232,7 +237,8 @@ func (ev *Evaluator) registerBuiltins() {
 
 	// Bytes: creates Bytes from String or empty if 0 args
 	ev.builtinsEnv.Set("Bytes", &BuiltinFunc{
-		Name: "Bytes",
+		Name:     "Bytes",
+		FuncType: types.BuiltinBytesFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) == 0 {
 				return BytesValue(""), nil
@@ -270,7 +276,8 @@ func (ev *Evaluator) registerBuiltins() {
 	// gets: reads a single line from standard input, returning String or Nil on EOF.
 	// Returns a lazy ActionThunk that only blocks when demanded.
 	ev.builtinsEnv.Set("gets", &BuiltinFunc{
-		Name: "gets",
+		Name:     "gets",
+		FuncType: types.BuiltinGetsFuncType,
 		Fn: func(args []Value) (Value, error) {
 			if len(args) != 0 {
 				return nil, fmt.Errorf("gets expects 0 arguments, got %d", len(args))
@@ -458,7 +465,25 @@ func typeNameWithDepth(val Value, depth int) string {
 		return v.Def.Name
 	case *StructDefValue:
 		return "Type"
-	case *Closure, *BuiltinFunc:
+	case *Closure:
+		if v.FuncType != nil {
+			if t, ok := v.FuncType.(types.Type); ok {
+				return t.String()
+			}
+			if s, ok := v.FuncType.(fmt.Stringer); ok {
+				return s.String()
+			}
+		}
+		return "Function"
+	case *BuiltinFunc:
+		if v.FuncType != nil {
+			if t, ok := v.FuncType.(types.Type); ok {
+				return t.String()
+			}
+			if s, ok := v.FuncType.(fmt.Stringer); ok {
+				return s.String()
+			}
+		}
 		return "Function"
 	default:
 		return "Any"
@@ -642,6 +667,13 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			Env:        env,
 			IsFuncDef:  true,
 		}
+		if env != nil && env.Inferencer != nil {
+			if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+				if fnType, ok := inf.Scope().Lookup(s.Name); ok {
+					closure.FuncType = fnType
+				}
+			}
+		}
 		env.Set(s.Name, closure)
 		return nil, nil
 
@@ -669,6 +701,14 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 		for _, m := range s.Methods {
 			sDef.Methods[m.Name] = m
+		}
+
+		if env != nil && env.Inferencer != nil {
+			if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+				if st, ok := inf.Scope().Lookup(s.Name); ok {
+					sDef.StructType = st
+				}
+			}
 		}
 
 		env.Set(s.Name, sDef)
@@ -1248,6 +1288,13 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				IsFuncDef:       false,
 				EnclosingFuncID: env.EnclosingFuncID,
 			}
+			if env != nil && env.Inferencer != nil {
+				if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
+					if fnType, ok := inf.ExprTypes[e.Block]; ok {
+						blockClosure.FuncType = fnType
+					}
+				}
+			}
 		}
 
 		switch fn := calleeVal.(type) {
@@ -1279,7 +1326,19 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.MemberAccessExpr:
 		targetVal := Force(NewThunk(e.Target, env))
 		if si, ok := targetVal.(*StructInstance); ok {
-			return si.LookupMember(e.Member)
+			memVal, err := si.LookupMember(e.Member)
+			if err == nil {
+				if closure, ok := memVal.(*Closure); ok && closure.FuncType == nil {
+					if si.Def != nil && si.Def.StructType != nil {
+						if st, ok := si.Def.StructType.(*types.StructType); ok {
+							if mType, err := st.LookupMember(e.Member); err == nil {
+								closure.FuncType = mType
+							}
+						}
+					}
+				}
+			}
+			return memVal, err
 		}
 		return lookupBuiltinMember(targetVal, e.Member)
 
@@ -1303,13 +1362,21 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return val, nil
 
 	case *ast.LambdaExpr:
-		return &Closure{
+		closure := &Closure{
 			Params:          e.Params,
 			Body:            e.Body,
 			Env:             env,
 			IsFuncDef:       false,
 			EnclosingFuncID: env.EnclosingFuncID,
-		}, nil
+		}
+		if env != nil && env.Inferencer != nil {
+			if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
+				if fnType, ok := inf.ExprTypes[e]; ok {
+					closure.FuncType = fnType
+				}
+			}
+		}
+		return closure, nil
 
 	case *ast.IsExpr:
 		val := Force(NewThunk(e.Expr, env))
@@ -1737,6 +1804,10 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 	if member == "ToString" {
 		return &BuiltinFunc{
 			Name: "ToString",
+			FuncType: &types.FuncType{
+				Arg: &types.TupleType{Elems: []types.Type{}},
+				Ret: types.TypeString,
+			},
 			Fn: func(args []Value) (Value, error) {
 				if len(args) != 0 {
 					return nil, fmt.Errorf("ToString() takes 0 arguments, got %d", len(args))
@@ -1747,7 +1818,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 	}
 	if member == "Ord" {
 		if sv, ok := val.(StringValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "Ord",
 				Fn: func(args []Value) (Value, error) {
 					if len(args) != 0 {
@@ -1763,12 +1834,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return IntValue(r), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "Ord"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 	}
 	if member == "Chr" {
 		if iv, ok := val.(IntValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "Chr",
 				Fn: func(args []Value) (Value, error) {
 					if len(args) != 0 {
@@ -1780,12 +1855,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return StringValue(string(rune(n))), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Chr"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 	}
 	if member == "Bytes" {
 		if sv, ok := val.(StringValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "Bytes",
 				Fn: func(args []Value) (Value, error) {
 					if len(args) != 0 {
@@ -1793,10 +1872,14 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return BytesValue(string(sv)), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "Bytes"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 		if bv, ok := val.(BytesValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "Bytes",
 				Fn: func(args []Value) (Value, error) {
 					if len(args) != 0 {
@@ -1804,12 +1887,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return bv, nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeBytes, "Bytes"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 	}
 	if member == "String" {
 		if bv, ok := val.(BytesValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "String",
 				Fn: func(args []Value) (Value, error) {
 					if len(args) != 0 {
@@ -1821,10 +1908,14 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return StringValue(string(bv)), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeBytes, "String"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 		if iv, ok := val.(IntValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "String",
 				Fn: func(args []Value) (Value, error) {
 					radix := 10
@@ -1845,12 +1936,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 
 					return StringValue(strconv.FormatInt(int64(iv), radix)), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "String"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 	}
 	if member == "Int" {
 		if sv, ok := val.(StringValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "Int",
 				Fn: func(args []Value) (Value, error) {
 					radix := 10
@@ -1872,12 +1967,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					parsed := parseStringToInt(string(sv), radix)
 					return IntValue(parsed), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "Int"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 	}
 	if member == "IsValidString" {
 		if bv, ok := val.(BytesValue); ok {
-			return &BuiltinFunc{
+			bf := &BuiltinFunc{
 				Name: "IsValidString",
 				Fn: func(args []Value) (Value, error) {
 					if len(args) != 0 {
@@ -1885,7 +1984,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return BoolValue(utf8.Valid([]byte(bv))), nil
 				},
-			}, nil
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeBytes, "IsValidString"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 	}
 	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)

@@ -55,12 +55,12 @@ type Inferencer struct {
 	ExprTypes    map[ast.Expr]Type
 }
 
-var builtinForceFuncType = &FuncType{
+var BuiltinForceFuncType = &FuncType{
 	Arg: TypeAny,
 	Ret: TypeAny,
 }
 
-var builtinBytesFuncType = &FuncType{
+var BuiltinBytesFuncType = &FuncType{
 	Arg: &TupleType{
 		Elems: []Type{NewUnionType(TypeString, TypeBytes)},
 	},
@@ -69,7 +69,7 @@ var builtinBytesFuncType = &FuncType{
 	Ret:      TypeBytes,
 }
 
-var builtinExitFuncType = &FuncType{
+var BuiltinExitFuncType = &FuncType{
 	Arg: &TupleType{
 		Elems: []Type{TypeInt},
 	},
@@ -78,68 +78,78 @@ var builtinExitFuncType = &FuncType{
 	Ret:      TypeNil,
 }
 
+var BuiltinPrintFuncType = &FuncType{
+	Arg: &TupleType{
+		Elems:      []Type{BuiltinShowIface},
+		IsVariadic: true,
+	},
+	Ret: &TupleType{Elems: []Type{}},
+}
+
+var BuiltinTypeFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeString,
+}
+
+var BuiltinLenFuncType = &FuncType{
+	Arg: TypeAny,
+	Ret: TypeInt,
+}
+
+var BuiltinGetsFuncType = &FuncType{
+	Arg: &TupleType{Elems: []Type{}},
+	Ret: NewUnionType(TypeString, TypeNil),
+}
+
+var BuiltinShowIface = &InterfaceType{
+	Name: "Show",
+	Methods: map[string]*FuncType{
+		"ToString": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+	},
+	Embedded: []*InterfaceType{},
+}
+
+var BuiltinErrorIface = &InterfaceType{
+	Name: "Error",
+	Methods: map[string]*FuncType{
+		"Message": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+		"ToString": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		},
+	},
+	Embedded: []*InterfaceType{},
+}
+
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
 	// Built-in Error interface: Message(): String, ToString(): String
-	errorIface := &InterfaceType{
-		Name: "Error",
-		Methods: map[string]*FuncType{
-			"Message": {
-				Arg: &TupleType{Elems: []Type{}},
-				Ret: TypeString,
-			},
-			"ToString": {
-				Arg: &TupleType{Elems: []Type{}},
-				Ret: TypeString,
-			},
-		},
-		Embedded: []*InterfaceType{},
-	}
-	_ = rootScope.Declare("Error", errorIface)
+	_ = rootScope.Declare("Error", BuiltinErrorIface)
 
 	// Built-in Show interface: ToString(): String
-	showIface := &InterfaceType{
-		Name: "Show",
-		Methods: map[string]*FuncType{
-			"ToString": {
-				Arg: &TupleType{Elems: []Type{}},
-				Ret: TypeString,
-			},
-		},
-		Embedded: []*InterfaceType{},
-	}
-	_ = rootScope.Declare("Show", showIface)
+	_ = rootScope.Declare("Show", BuiltinShowIface)
 
 	// Built-in print: (*args: Show) -> ()
-	_ = rootScope.Declare("print", &FuncType{
-		Arg: &TupleType{
-			Elems:      []Type{showIface},
-			IsVariadic: true,
-		},
-		Ret: &TupleType{Elems: []Type{}},
-	})
+	_ = rootScope.Declare("print", BuiltinPrintFuncType)
 	// Built-in type: (Any) -> String
-	_ = rootScope.Declare("type", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeString,
-	})
+	_ = rootScope.Declare("type", BuiltinTypeFuncType)
 	// Built-in len: (Any) -> Int
-	_ = rootScope.Declare("len", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeInt,
-	})
+	_ = rootScope.Declare("len", BuiltinLenFuncType)
 	// Built-in exit: ([code: Int]) -> Nil
-	_ = rootScope.Declare("exit", builtinExitFuncType)
+	_ = rootScope.Declare("exit", BuiltinExitFuncType)
 	// Built-in force: (Any) -> Any
-	_ = rootScope.Declare("force", builtinForceFuncType)
+	_ = rootScope.Declare("force", BuiltinForceFuncType)
 	// Built-in Bytes: (String?) -> Bytes
-	_ = rootScope.Declare("Bytes", builtinBytesFuncType)
+	_ = rootScope.Declare("Bytes", BuiltinBytesFuncType)
 	// Built-in gets: () -> String | Nil
-	_ = rootScope.Declare("gets", &FuncType{
-		Arg: &TupleType{Elems: []Type{}},
-		Ret: NewUnionType(TypeString, TypeNil),
-	})
+	_ = rootScope.Declare("gets", BuiltinGetsFuncType)
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -404,6 +414,10 @@ func (inf *Inferencer) SetModuleLoader(loader func(path string) (*ModuleType, er
 
 func (inf *Inferencer) RegisterModule(name string, mod *ModuleType) {
 	inf.modules[name] = mod
+}
+
+func (inf *Inferencer) Scope() *Scope {
+	return inf.scope
 }
 
 func (inf *Inferencer) freshVar() *TypeVar {
@@ -1124,7 +1138,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "force" && len(e.Args) == 1 {
-			if t, ok := inf.scope.Lookup("force"); ok && t == builtinForceFuncType {
+			if t, ok := inf.scope.Lookup("force"); ok && t == BuiltinForceFuncType {
 				return inf.inferExpr(e.Args[0])
 			}
 		}
