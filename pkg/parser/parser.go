@@ -1523,12 +1523,16 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		// left |> right => right(left)
 		prec := p.curPrecedence()
 		if p.peekTokenIs(lexer.TokenPlus) || p.peekTokenIs(lexer.TokenMinus) {
-			p.nextToken() // advance to '+' or '-'
-			op := p.curToken.Literal
 			// Unary operator on RHS of pipe: left |> - desugars to -(left)
-			return &ast.UnaryExpr{
-				Op:   op,
-				Expr: left,
+			// Only when standalone (e.g. "42 |> -" or "42 |> - |> print")
+			rest := strings.TrimSpace(p.l.PeekRestOfLine())
+			if rest == "" || strings.HasPrefix(rest, "|>") || strings.HasPrefix(rest, ")") || strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, ";") {
+				p.nextToken() // advance to '+' or '-'
+				op := p.curToken.Literal
+				return &ast.UnaryExpr{
+					Op:   op,
+					Expr: left,
+				}
 			}
 		}
 		p.nextToken()

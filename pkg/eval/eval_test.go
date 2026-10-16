@@ -4113,13 +4113,25 @@ print "|"
 print (v1 is Equal)
 print "|"
 print (v1 is Comparable)
+print "|"
+print (v1 <= v2)
+print "|"
+print (v2 > v1)
+print "|"
+print (v2 >= v1)
+print "|"
+print ((|x|: x) is Equal)
+print "|"
+print ((1, 2).[].Type())
+print "|"
+print (10 |> - |> (|x|: x + 5))
 `
 	out, err := runLesCode(code)
 	if err != nil {
 		t.Fatalf("unexpected eval error in TestOperatorMethodsAndEqualComparableInterfaces: %v", err)
 	}
 
-	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true"
+	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Unknown|-5"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}

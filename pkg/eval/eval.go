@@ -1789,6 +1789,29 @@ func evalBinary(op string, left, right Value) (Value, error) {
 				return bf.Fn([]Value{right})
 			}
 		}
+		// Relational comparison fallback using < and == (Comparable)
+		switch op {
+		case "<=":
+			// left <= right <=> (left < right) || (left == right)
+			ltVal, errLt := evalBinary("<", left, right)
+			if errLt == nil {
+				if b, ok := ltVal.(BoolValue); ok && bool(b) {
+					return BoolValue(true), nil
+				}
+				eqVal, errEq := evalBinary("==", left, right)
+				if errEq == nil {
+					if b, ok := eqVal.(BoolValue); ok {
+						return b, nil
+					}
+				}
+			}
+		case ">":
+			// left > right <=> right < left
+			return evalBinary("<", right, left)
+		case ">=":
+			// left >= right <=> right <= left
+			return evalBinary("<=", right, left)
+		}
 	}
 
 	// Numeric operations
@@ -2180,19 +2203,22 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 	// Operator methods on built-in types
 	switch member {
 	case "==":
-		bf := &BuiltinFunc{
-			Name: "==",
-			Fn: func(args []Value) (Value, error) {
-				if len(args) != 1 {
-					return nil, fmt.Errorf("== takes 1 argument, got %d", len(args))
-				}
-				return evalBinary("==", val, Force(args[0]))
-			},
+		switch val.(type) {
+		case IntValue, FloatValue, StringValue, BytesValue, BoolValue, NilValue, *TupleValue, *DictValue:
+			bf := &BuiltinFunc{
+				Name: "==",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("== takes 1 argument, got %d", len(args))
+					}
+					return evalBinary("==", val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "=="); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
-		if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "=="); ok {
-			bf.FuncType = sig
-		}
-		return bf, nil
 
 	case "<", "<=", ">", ">=":
 		switch val.(type) {
@@ -2367,8 +2393,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if idx < 0 || idx >= len(t.Elements) {
 						return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", int(i), len(t.Elements))
 					}
-					return t.Elements[idx], nil
+					return Force(t.Elements[idx]), nil
 				},
+			}
+			var elemT types.Type = types.TypeUnknown
+			if len(t.Elements) > 0 {
+				elemT = types.TypeUnknown
+			}
+			bf.FuncType = &types.FuncType{
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+				Ret: elemT,
 			}
 			return bf, nil
 
@@ -2382,10 +2416,14 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					idxVal := Force(args[0])
 					dk := MakeDictKey(idxVal)
 					if v, ok := t.Entries[dk]; ok {
-						return v, nil
+						return Force(v), nil
 					}
 					return nil, fmt.Errorf("key not found in dict: %s", idxVal.String())
 				},
+			}
+			bf.FuncType = &types.FuncType{
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeUnknown}},
+				Ret: types.TypeUnknown,
 			}
 			return bf, nil
 		}

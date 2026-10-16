@@ -104,12 +104,13 @@ func (d *DictType) Equals(other Type) bool {
 
 // FuncType represents (Arg) -> Ret.
 type FuncType struct {
-	Arg           Type   // argument is always a TupleType or TypeUnknown
-	OverloadUnion string // if set, custom string representation for overloaded methods
-	MinArity      int    // Minimum number of required positional arguments
-	MaxArity      int    // Maximum number of positional arguments (-1 if variadic)
-	BlockParam    Type   // Type of &block parameter (nil if no &block)
-	BlockOpt      bool   // true if &block is optional (= nil)
+	Arg           Type        // argument is always a TupleType or TypeUnknown
+	OverloadUnion string      // if set, custom string representation for overloaded methods
+	Overloads     []*FuncType // if overloaded, individual arity-specific signatures
+	MinArity      int         // Minimum number of required positional arguments
+	MaxArity      int         // Maximum number of positional arguments (-1 if variadic)
+	BlockParam    Type        // Type of &block parameter (nil if no &block)
+	BlockOpt      bool        // true if &block is optional (= nil)
 	Ret           Type
 }
 
@@ -453,7 +454,16 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok {
 				return false
 			}
-			if !targetSig.Equals(fnT) {
+			matched := targetSig.Equals(fnT)
+			if !matched && len(fnT.Overloads) > 0 {
+				for _, ov := range fnT.Overloads {
+					if targetSig.Equals(ov) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
 				return false
 			}
 		}

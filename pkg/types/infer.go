@@ -916,6 +916,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					st.Methods[m.Name] = &FuncType{
 						Arg:           binaryFT.Arg,
 						OverloadUnion: fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String()),
+						Overloads:     []*FuncType{unaryFT, binaryFT},
 						MinArity:      0,
 						MaxArity:      binaryFT.MaxArity,
 						Ret:           ret,
@@ -1153,6 +1154,13 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if st, ok := t.(*StructType); ok {
 			if m, err := st.LookupMember(e.Op); err == nil {
 				if fnT, ok := m.(*FuncType); ok {
+					if len(fnT.Overloads) > 0 {
+						for _, ov := range fnT.Overloads {
+							if ov.MinArity == 0 && ov.MaxArity == 0 {
+								return ov.Ret, nil
+							}
+						}
+					}
 					return fnT.Ret, nil
 				}
 			}
@@ -1201,13 +1209,32 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if st, ok := leftT.(*StructType); ok {
 			if m, err := st.LookupMember(e.Op); err == nil {
 				if fnT, ok := m.(*FuncType); ok {
+					if len(fnT.Overloads) > 0 {
+						for _, ov := range fnT.Overloads {
+							if ov.MinArity >= 1 || ov.MaxArity >= 1 {
+								return ov.Ret, nil
+							}
+						}
+					}
 					return fnT.Ret, nil
+				}
+			}
+			if e.Op == "<=" || e.Op == ">" || e.Op == ">=" {
+				if m, err := st.LookupMember("<"); err == nil {
+					if fnT, ok := m.(*FuncType); ok {
+						return fnT.Ret, nil
+					}
 				}
 			}
 		}
 		if it, ok := leftT.(*InterfaceType); ok {
 			if m, ok := it.LookupMethod(e.Op); ok {
 				return m.Ret, nil
+			}
+			if e.Op == "<=" || e.Op == ">" || e.Op == ">=" {
+				if m, ok := it.LookupMethod("<"); ok {
+					return m.Ret, nil
+				}
 			}
 		}
 		switch e.Op {
