@@ -61,8 +61,21 @@ var builtinForceFuncType = &FuncType{
 }
 
 var builtinBytesFuncType = &FuncType{
-	Arg: TypeAny,
-	Ret: TypeBytes,
+	Arg: &TupleType{
+		Elems: []Type{NewUnionType(TypeString, TypeBytes)},
+	},
+	MinArity: 0,
+	MaxArity: 1,
+	Ret:      TypeBytes,
+}
+
+var builtinExitFuncType = &FuncType{
+	Arg: &TupleType{
+		Elems: []Type{TypeInt},
+	},
+	MinArity: 0,
+	MaxArity: 1,
+	Ret:      TypeNil,
 }
 
 func NewInferencer() *Inferencer {
@@ -116,11 +129,8 @@ func NewInferencer() *Inferencer {
 		Arg: TypeAny,
 		Ret: TypeInt,
 	})
-	// Built-in exit: (Any) -> Nil
-	_ = rootScope.Declare("exit", &FuncType{
-		Arg: TypeAny,
-		Ret: TypeNil,
-	})
+	// Built-in exit: ([code: Int]) -> Nil
+	_ = rootScope.Declare("exit", builtinExitFuncType)
 	// Built-in force: (Any) -> Any
 	_ = rootScope.Declare("force", builtinForceFuncType)
 	// Built-in Bytes: (String?) -> Bytes
@@ -477,6 +487,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		paramTypes := make([]Type, len(s.Params))
 		callerParamTypes := make([]Type, len(s.Params))
 		isVariadic := false
+		minArity := 0
 		for i, p := range s.Params {
 			var elemType Type = TypeAny
 			if p.TypeAnnot != "" {
@@ -485,6 +496,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				elemType = t
+			}
+			if p.DefaultValue != nil {
+				defT, err := inf.inferExpr(p.DefaultValue)
+				if err != nil {
+					return err
+				}
+				if elemType != TypeAny && !IsAssignableTo(defT, elemType) {
+					return fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
+				}
+			} else if !p.IsVariadic {
+				minArity++
 			}
 			if p.IsVariadic {
 				isVariadic = true
@@ -497,6 +519,33 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				paramTypes[i] = elemType
 			}
 		}
+		maxArity := len(s.Params)
+		if isVariadic {
+			maxArity = -1
+		}
+		var blockT Type
+		blockOpt := false
+		if s.BlockParam != nil {
+			blockT = TypeAny
+			if s.BlockParam.TypeAnnot != "" {
+				t, err := inf.parseTypeAnnot(s.BlockParam.TypeAnnot)
+				if err != nil {
+					return err
+				}
+				blockT = t
+			}
+			blockOpt = (s.BlockParam.DefaultValue != nil)
+			if s.BlockParam.DefaultValue != nil {
+				defT, err := inf.inferExpr(s.BlockParam.DefaultValue)
+				if err != nil {
+					return err
+				}
+				if blockT != TypeAny && !IsAssignableTo(defT, blockT) {
+					return fmt.Errorf("type mismatch in default value for block parameter '&%s': expected %s, got %s", s.BlockParam.Name, blockT, defT)
+				}
+			}
+		}
+
 		var declaredRetType Type = TypeAny
 		if s.ReturnType != "" {
 			t, err := inf.parseTypeAnnot(s.ReturnType)
@@ -511,7 +560,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				Elems:      callerParamTypes,
 				IsVariadic: isVariadic,
 			},
-			Ret: declaredRetType,
+			MinArity:   minArity,
+			MaxArity:   maxArity,
+			BlockParam: blockT,
+			BlockOpt:   blockOpt,
+			Ret:        declaredRetType,
 		}
 		// Function declaration in current scope
 		if err := inf.scope.Declare(s.Name, fnType); err != nil {
@@ -523,6 +576,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		for i, p := range s.Params {
 			if err := childScope.Declare(p.Name, paramTypes[i]); err != nil {
 				return fmt.Errorf("duplicate parameter '%s' in function '%s'", p.Name, s.Name)
+			}
+		}
+		if s.BlockParam != nil {
+			if err := childScope.Declare(s.BlockParam.Name, blockT); err != nil {
+				return fmt.Errorf("duplicate parameter '&%s' in function '%s'", s.BlockParam.Name, s.Name)
 			}
 		}
 
@@ -699,6 +757,34 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 			}
 
+			minArity := 0
+			for _, p := range m.Params {
+				if p.Name == "self" {
+					continue
+				}
+				if p.DefaultValue == nil && !p.IsVariadic {
+					minArity++
+				}
+			}
+			maxArity := len(callerParamTypes)
+			if isVariadic {
+				maxArity = -1
+			}
+			var blockT Type
+			blockOpt := false
+			if m.BlockParam != nil {
+				blockT = TypeAny
+				if m.BlockParam.TypeAnnot != "" {
+					t, err := inf.parseTypeAnnot(m.BlockParam.TypeAnnot)
+					if err != nil {
+						return err
+					}
+					blockT = t
+				}
+				blockOpt = (m.BlockParam.DefaultValue != nil)
+				_ = methodScope.Declare(m.BlockParam.Name, blockT)
+			}
+
 			prevScope := inf.scope
 			inf.scope = methodScope
 			var lastExprType Type = TypeAny
@@ -734,9 +820,47 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					Elems:      callerParamTypes,
 					IsVariadic: isVariadic,
 				},
-				Ret: retType,
+				MinArity:   minArity,
+				MaxArity:   maxArity,
+				BlockParam: blockT,
+				BlockOpt:   blockOpt,
+				Ret:        retType,
 			}
 			st.Methods[m.Name] = mType
+		}
+
+		if _, hasInit := st.Methods["init"]; !hasInit {
+			embeddedSet := make(map[string]bool)
+			for _, emb := range st.Embedded {
+				embeddedSet[emb.Name] = true
+			}
+			var initParamTypes []Type
+			minArity := 0
+			for _, fName := range st.FieldOrder {
+				if embeddedSet[fName] {
+					continue
+				}
+				initParamTypes = append(initParamTypes, st.Fields[fName])
+				// Check if field has default value
+				hasDefault := false
+				for _, f := range s.Fields {
+					if f.Name == fName && f.DefaultValue != nil {
+						hasDefault = true
+						break
+					}
+				}
+				if !hasDefault {
+					minArity++
+				}
+			}
+			st.Methods["init"] = &FuncType{
+				Arg: &TupleType{
+					Elems: initParamTypes,
+				},
+				MinArity: minArity,
+				MaxArity: len(initParamTypes),
+				Ret:      st,
+			}
 		}
 
 		return nil
@@ -778,6 +902,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		// Next, process direct methods on interface
 		for _, m := range s.Methods {
 			paramTypes := make([]Type, len(m.Params))
+			minArity := 0
 			for i, p := range m.Params {
 				var pType Type = TypeAny
 				if p.TypeAnnot != "" {
@@ -788,6 +913,23 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					pType = t
 				}
 				paramTypes[i] = pType
+				if p.DefaultValue == nil && !p.IsVariadic {
+					minArity++
+				}
+			}
+			maxArity := len(m.Params)
+			var blockT Type
+			blockOpt := false
+			if m.BlockParam != nil {
+				blockT = TypeAny
+				if m.BlockParam.TypeAnnot != "" {
+					t, err := inf.parseTypeAnnot(m.BlockParam.TypeAnnot)
+					if err != nil {
+						return err
+					}
+					blockT = t
+				}
+				blockOpt = (m.BlockParam.DefaultValue != nil)
 			}
 			var retType Type = TypeAny
 			if m.ReturnType != "" {
@@ -798,8 +940,12 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				retType = t
 			}
 			mSig := &FuncType{
-				Arg: &TupleType{Elems: paramTypes},
-				Ret: retType,
+				Arg:        &TupleType{Elems: paramTypes},
+				MinArity:   minArity,
+				MaxArity:   maxArity,
+				BlockParam: blockT,
+				BlockOpt:   blockOpt,
+				Ret:        retType,
 			}
 
 			if existingSig, exists := iface.Methods[m.Name]; exists {
@@ -982,23 +1128,6 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return inf.inferExpr(e.Args[0])
 			}
 		}
-		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "Bytes" {
-			if t, ok := inf.scope.Lookup("Bytes"); ok && t == builtinBytesFuncType {
-				if len(e.Args) > 1 {
-					return nil, fmt.Errorf("Bytes expects 0 or 1 arguments, got %d", len(e.Args))
-				}
-				if len(e.Args) == 1 {
-					argT, err := inf.inferExpr(e.Args[0])
-					if err != nil {
-						return nil, err
-					}
-					if !IsAssignableTo(argT, TypeString) && !IsAssignableTo(argT, TypeBytes) {
-						return nil, fmt.Errorf("Bytes expects String or Bytes, got %s", argT)
-					}
-				}
-				return TypeBytes, nil
-			}
-		}
 		if st, ok := calleeT.(*StructType); ok {
 			isCopyUpdate := false
 			if len(e.Args) > 0 {
@@ -1011,16 +1140,45 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if !isCopyUpdate {
 				if initFn, hasInit := st.Methods["init"]; hasInit {
 					if argTuple, ok := initFn.Arg.(*TupleType); ok {
-						if !argTuple.IsVariadic && len(e.Args) != len(argTuple.Elems) {
-							return nil, fmt.Errorf("struct '%s' constructor expects %d arguments, got %d", st.Name, len(argTuple.Elems), len(e.Args))
-						}
-						if argTuple.IsVariadic && len(argTuple.Elems) > 0 && len(e.Args) < len(argTuple.Elems)-1 {
-							return nil, fmt.Errorf("struct '%s' constructor expects at least %d arguments, got %d", st.Name, len(argTuple.Elems)-1, len(e.Args))
-						}
-						for i, arg := range e.Args {
-							if _, isNamed := arg.(*ast.NamedArgExpr); isNamed {
-								continue
+						var posArgs []ast.Expr
+						hasNamed := false
+						namedNames := make(map[string]bool)
+						for _, arg := range e.Args {
+							if named, isNamed := arg.(*ast.NamedArgExpr); isNamed {
+								hasNamed = true
+								namedNames[named.Name] = true
+								// Validate named argument type if field exists
+								if expectedFieldT, hasField := st.Fields[named.Name]; hasField {
+									valT, err := inf.inferExpr(named.Value)
+									if err != nil {
+										return nil, err
+									}
+									if !IsAssignableTo(valT, expectedFieldT) {
+										return nil, fmt.Errorf("type mismatch for field '%s' in struct '%s': expected %s, got %s", named.Name, st.Name, expectedFieldT, valT)
+									}
+								}
+							} else {
+								posArgs = append(posArgs, arg)
 							}
+						}
+
+						minArgs := initFn.MinArgs()
+						maxArgs := initFn.MaxArgs()
+						if !hasNamed {
+							if len(posArgs) < minArgs {
+								return nil, fmt.Errorf("struct '%s' constructor expects at least %d arguments, got %d", st.Name, minArgs, len(posArgs))
+							}
+							if maxArgs != -1 && len(posArgs) > maxArgs {
+								return nil, fmt.Errorf("struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
+							}
+						} else {
+							// When named arguments are present, positional arguments must not exceed maxArgs
+							if maxArgs != -1 && len(posArgs) > maxArgs {
+								return nil, fmt.Errorf("struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
+							}
+						}
+
+						for i, arg := range posArgs {
 							var expectedParamT Type
 							if i < len(argTuple.Elems)-1 {
 								expectedParamT = argTuple.Elems[i]
@@ -1049,18 +1207,39 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		if fnT, ok := calleeT.(*FuncType); ok {
 			args := e.Args
-			if e.Block != nil {
-				args = append(append([]ast.Expr(nil), e.Args...), &ast.LambdaExpr{
-					Params: e.Block.Params,
-					Body:   e.Block.Body,
-				})
-			}
-			if argTuple, ok := fnT.Arg.(*TupleType); ok {
-				if !argTuple.IsVariadic && len(args) != len(argTuple.Elems) {
-					return nil, fmt.Errorf("function expects %d arguments, got %d", len(argTuple.Elems), len(args))
+			if fnT.BlockParam != nil {
+				if e.Block != nil {
+					blockLambda := &ast.LambdaExpr{
+						Params: e.Block.Params,
+						Body:   e.Block.Body,
+					}
+					bT, err := inf.inferExpr(blockLambda)
+					if err != nil {
+						return nil, err
+					}
+					if fnT.BlockParam != TypeAny && !IsAssignableTo(bT, fnT.BlockParam) {
+						return nil, fmt.Errorf("type mismatch for block argument: expected %s, got %s", fnT.BlockParam, bT)
+					}
+				} else if !fnT.BlockOpt {
+					return nil, fmt.Errorf("function requires a block argument (&block)")
 				}
-				if argTuple.IsVariadic && len(argTuple.Elems) > 0 && len(args) < len(argTuple.Elems)-1 {
-					return nil, fmt.Errorf("function expects at least %d arguments, got %d", len(argTuple.Elems)-1, len(args))
+			} else {
+				if e.Block != nil {
+					args = append(append([]ast.Expr(nil), e.Args...), &ast.LambdaExpr{
+						Params: e.Block.Params,
+						Body:   e.Block.Body,
+					})
+				}
+			}
+
+			if argTuple, ok := fnT.Arg.(*TupleType); ok {
+				minArgs := fnT.MinArgs()
+				maxArgs := fnT.MaxArgs()
+				if len(args) < minArgs {
+					return nil, fmt.Errorf("function expects at least %d arguments, got %d", minArgs, len(args))
+				}
+				if maxArgs != -1 && len(args) > maxArgs {
+					return nil, fmt.Errorf("function expects at most %d arguments, got %d", maxArgs, len(args))
 				}
 				for i, argExpr := range args {
 					argT, err := inf.inferExpr(argExpr)

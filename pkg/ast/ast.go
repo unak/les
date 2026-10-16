@@ -305,15 +305,17 @@ func (e *ExprStmt) stmt() {}
 
 // FuncParam represents function parameter with optional type annotation.
 type FuncParam struct {
-	Name       string
-	TypeAnnot  string
-	IsVariadic bool
+	Name         string
+	TypeAnnot    string
+	DefaultValue Expr // nil if required
+	IsVariadic   bool
 }
 
 // FuncDef represents function definition block: def name(params): body.
 type FuncDef struct {
 	Name       string
 	Params     []FuncParam
+	BlockParam *FuncParam // optional &block parameter
 	ReturnType string
 	Body       []Stmt
 }
@@ -364,6 +366,7 @@ func (m *MemberAssignStmt) stmt() {}
 type MethodSig struct {
 	Name       string
 	Params     []FuncParam
+	BlockParam *FuncParam
 	ReturnType string
 }
 

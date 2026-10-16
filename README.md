@@ -201,19 +201,48 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 - To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
 - Similarly, to pass a function call result as the input to a pipeline, use explicit parentheses on the call: `f(x) |> g` (evaluates as `g(f(x))`).
 
-### 3. Block Arguments (Ruby-like `do` blocks)
-- Trailing block syntax:
+### 3. Trailing Default Parameters & Block Parameters
+- **Trailing Default Parameters**:
+  Functions, methods, and struct definitions can define default values for trailing positional parameters. Once a parameter has a default value, all subsequent positional parameters must also provide defaults:
   ```python
-  each items do |x|:
-      print x
+  def greet(name: String, prefix: String = "Hello"):
+      prefix + " " + name
 
-  measure do:
-      heavy_computation()
-
-  map(items) do |x|:
-      x * 2
+  greet("Alice")           # "Hello Alice"
+  greet("Bob", "Hi")       # "Hi Bob"
   ```
-- Semantics: The block is desugared into a closure / anonymous function passed as the final argument (or appended to the argument tuple).
+  - Default expressions are lazily evaluated within the call environment when omitted, allowing defaults to reference preceding parameters (e.g., `def clamp(x, min_val = 0, max_val = min_val + 100)`).
+  - Struct fields also inherit default parameter initialization during positional instantiation:
+    ```python
+    struct Server:
+        host: String
+        port: Int = 8080
+
+    s = Server("localhost")  # port automatically defaults to 8080
+    ```
+
+- **Explicit Block Parameters (`&block` / `&block = nil`)**:
+  To cleanly distinguish regular arguments from trailing `do` blocks and avoid arity ambiguity when defaults are present, functions may declare an explicit block parameter at the end of the parameter list:
+  ```python
+  def each_step(items, step = 1, &block):
+      i = 0
+      for i < len(items):
+          block(items[i])
+          i = i + step
+
+  # Invocation with default step and trailing block:
+  each_step(numbers) do |n|:
+      print n
+
+  # Optional block:
+  def run_job(name, &block = nil):
+      if block != nil:
+          block(name)
+      else:
+          print "Running default job: ", name
+  ```
+- **Backward Compatibility**:
+  When a function does not define a `&block` parameter, trailing `do` blocks continue to be desugared and appended as the final positional argument.
 
 ### 4. Lambda Expressions
 Anonymous functions (lambdas) support both single-line expressions and multi-line indented blocks:

@@ -269,6 +269,9 @@ func (l *Lexer) NextToken() Token {
 		case '?':
 			tok.Type = TokenQuestion
 			tok.Literal = "?"
+		case '&':
+			tok.Type = TokenAmpersand
+			tok.Literal = "&"
 		case '|':
 			tok.Type = TokenPipe
 			tok.Literal = "|"

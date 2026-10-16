@@ -10,4 +10,8 @@ Thumbs.db
 .DS_Store
 
 # Tool state
+.agents/
 .omg/
+
+# Owner's temporary test
+test.les

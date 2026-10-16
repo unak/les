@@ -67,9 +67,10 @@ const (
 	TokenLte     // <=
 	TokenGt      // >
 	TokenGte     // >=
-	TokenNot     // !
-	TokenAnd     // &&
-	TokenOr      // ||
+	TokenNot       // !
+	TokenAnd       // &&
+	TokenOr        // ||
+	TokenAmpersand // &
 )
 
 // Token holds token information.
