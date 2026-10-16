@@ -1268,4 +1268,40 @@ struct Point:
 	}
 }
 
+func TestParseEmptyBlock(t *testing.T) {
+	input := `
+def noop():
+
+struct S:
+    def init():
+
+    def run():
+
+noop()
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	fn, ok := prog.Body[0].(*ast.FuncDef)
+	if !ok || fn.Name != "noop" || len(fn.Body) != 0 {
+		t.Fatalf("expected empty FuncDef, got %+v", prog.Body[0])
+	}
+
+	sd, ok := prog.Body[1].(*ast.StructDef)
+	if !ok || len(sd.Methods) != 2 {
+		t.Fatalf("expected StructDef with 2 methods, got %+v", prog.Body[1])
+	}
+	if len(sd.Methods[0].Body) != 0 || len(sd.Methods[1].Body) != 0 {
+		t.Fatalf("expected empty method bodies, got %v and %v", sd.Methods[0].Body, sd.Methods[1].Body)
+	}
+}
+
+
 

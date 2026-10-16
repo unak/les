@@ -502,8 +502,7 @@ func (p *Parser) parseBlockBody() []ast.Stmt {
 	p.skipNewlines()
 
 	if !p.curTokenIs(lexer.TokenIndent) {
-		p.errors = append(p.errors, fmt.Sprintf("expected token %v, got %v (%s) at line %d col %d", lexer.TokenIndent, p.curToken.Type, p.curToken.Literal, p.curToken.Line, p.curToken.Col))
-		return nil
+		return []ast.Stmt{}
 	}
 	p.nextToken() // consume TokenIndent
 

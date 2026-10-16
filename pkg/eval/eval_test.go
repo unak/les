@@ -3762,4 +3762,31 @@ print len(sl0.t), " ", sl1.join(), " ", sl2.join()
 	}
 }
 
+func TestEmptyBlockExecution(t *testing.T) {
+	code := `
+def noop():
+
+struct Item:
+    val: Int
+
+    def init(val: Int):
+
+    def clear():
+
+item = Item(42)
+r1 = noop()
+r2 = item.clear()
+print item.val, " ", r1, " ", r2
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "42 () ()"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+
 
