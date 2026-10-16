@@ -3613,3 +3613,118 @@ print "done2"
 	}
 }
 
+func TestStructInitAutoBindingAndValidation(t *testing.T) {
+	code := `
+struct Person:
+    name: String
+    age: Int
+    city: String = "Tokyo"
+
+    def init(name, age):
+        if age < 0:
+            error("Age cannot be negative")
+
+p1 = Person("Alice", 30)
+p2 = Person(name: "Bob", age: 25)
+print p1.name, " ", p1.age, " ", p1.city, " | ", p2.name, " ", p2.age, " ", p2.city
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "Alice 30 Tokyo | Bob 25 Tokyo"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// Validation failure check
+	errCode := `
+struct Person:
+    name: String
+    age: Int
+    def init(name, age):
+        if age < 0:
+            exit(1)
+
+Person("Invalid", -5)
+`
+	_, err = runLesCode(errCode)
+	if err == nil {
+		t.Fatalf("expected error for negative age, but succeeded")
+	}
+	var exitErr *ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("expected ExitError with code 1, got %v", err)
+	}
+}
+
+func TestStructInitExplicitMemberAssign(t *testing.T) {
+	code := `
+struct Point:
+    x: Int
+    y: Int
+
+    def init(multiplier: Int, base: Int):
+        self.x = base * multiplier
+        self.y = (base + 1) * multiplier
+
+p = Point(10, 5)
+print p.x, " ", p.y
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "50 60"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestStructInitImmutabilityOutsideInit(t *testing.T) {
+	code := `
+struct Point:
+    x: Int
+    y: Int
+
+    def init(x, y):
+        self.x = x
+        self.y = y
+
+p = Point(1, 2)
+p.x = 100
+`
+	_, err := runLesCode(code)
+	if err == nil {
+		t.Fatalf("expected error when mutating immutable struct field outside init, but succeeded")
+	}
+	if !strings.Contains(err.Error(), "cannot mutate field 'x' of immutable struct 'Point'") {
+		t.Fatalf("expected immutable struct mutation error, got: %v", err)
+	}
+}
+
+func TestStructInitWithCopyUpdate(t *testing.T) {
+	code := `
+struct Point:
+    x: Int
+    y: Int
+
+    def init(x, y):
+        self.x = x * 10
+        self.y = y * 10
+
+p1 = Point(1, 2)
+# Copy-update bypasses init and preserves/overrides fields directly
+p2 = Point(p1, x: 99)
+print p1.x, " ", p1.y, " | ", p2.x, " ", p2.y
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "10 20 | 99 20"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+

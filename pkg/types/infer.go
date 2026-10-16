@@ -592,6 +592,28 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		return nil
 
+	case *ast.MemberAssignStmt:
+		targetT, err := inf.inferExpr(s.Target)
+		if err != nil {
+			return err
+		}
+		st, ok := targetT.(*StructType)
+		if !ok {
+			return fmt.Errorf("cannot assign member '%s' on non-struct type %s", s.Member, targetT)
+		}
+		expectedT, ok := st.Fields[s.Member]
+		if !ok {
+			return fmt.Errorf("struct '%s' has no field '%s'", st.Name, s.Member)
+		}
+		valT, err := inf.inferExpr(s.Value)
+		if err != nil {
+			return err
+		}
+		if !IsAssignableTo(valT, expectedT) {
+			return fmt.Errorf("cannot assign type %s to field '%s' of type %s in struct '%s'", valT, s.Member, expectedT, st.Name)
+		}
+		return nil
+
 	case *ast.StructDef:
 		st := &StructType{
 			Name:       s.Name,
@@ -650,6 +672,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						return err
 					}
 					pType = t
+				} else if m.Name == "init" {
+					if fieldT, ok := st.Fields[p.Name]; ok {
+						pType = fieldT
+					}
 				}
 				paramTypes = append(paramTypes, pType)
 				_ = methodScope.Declare(p.Name, pType)
@@ -953,6 +979,37 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 		}
 		if st, ok := calleeT.(*StructType); ok {
+			isCopyUpdate := false
+			if len(e.Args) > 0 {
+				if _, isNamed := e.Args[0].(*ast.NamedArgExpr); !isNamed {
+					if firstT, err := inf.inferExpr(e.Args[0]); err == nil && firstT.Equals(st) {
+						isCopyUpdate = true
+					}
+				}
+			}
+			if !isCopyUpdate {
+				if initFn, hasInit := st.Methods["init"]; hasInit {
+					if argTuple, ok := initFn.Arg.(*TupleType); ok {
+						if !argTuple.IsVariadic && len(e.Args) != len(argTuple.Elems) {
+							return nil, fmt.Errorf("struct '%s' constructor expects %d arguments, got %d", st.Name, len(argTuple.Elems), len(e.Args))
+						}
+						for i, arg := range e.Args {
+							if _, isNamed := arg.(*ast.NamedArgExpr); isNamed {
+								continue
+							}
+							if i < len(argTuple.Elems) {
+								argT, err := inf.inferExpr(arg)
+								if err != nil {
+									return nil, err
+								}
+								if !IsAssignableTo(argT, argTuple.Elems[i]) {
+									return nil, fmt.Errorf("type mismatch in argument %d of struct '%s' constructor: expected %s, got %s", i+1, st.Name, argTuple.Elems[i], argT)
+								}
+							}
+						}
+					}
+				}
+			}
 			return st, nil
 		}
 		if iface, ok := calleeT.(*InterfaceType); ok && iface.Name == "Error" {

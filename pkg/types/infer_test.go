@@ -1276,4 +1276,41 @@ interface Cloneable:
 	}
 }
 
+func TestStructInitTypeInference(t *testing.T) {
+	validCode := `
+struct Point:
+    x: Int
+    y: Int
+
+    def init(r: Int, theta: Int):
+        self.x = r
+        self.y = theta
+
+p: Point = Point(10, 20)
+`
+	prog := parser.NewParser(lexer.NewLexer(validCode)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	invalidCode := `
+struct Point:
+    x: Int
+    y: Int
+
+    def init(r: Int, theta: Int):
+        self.x = r
+        self.y = theta
+
+p = Point("invalid", 20)
+`
+	progBad := parser.NewParser(lexer.NewLexer(invalidCode)).ParseProgram()
+	infBad := NewInferencer()
+	if err := infBad.InferProgram(progBad); err == nil {
+		t.Fatalf("expected type error for string arg to int constructor, got nil")
+	}
+}
+
+
 

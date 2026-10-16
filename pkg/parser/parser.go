@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"les/pkg/ast"
 	"les/pkg/lexer"
@@ -144,6 +145,10 @@ func (p *Parser) parseStmt() ast.Stmt {
 		// Check for unpacked assignment without paren: h, ...t = expr
 		if p.peekTokenIs(lexer.TokenComma) && p.hasAssignOnCurrentLine() {
 			return p.parseUnpackDeclWithoutParen()
+		}
+		// Check for member assignment: `target.member = val`
+		if p.peekTokenIs(lexer.TokenDot) && p.isMemberAssignOnCurrentLine() {
+			return p.parseMemberAssignStmt()
 		}
 		// Check for assignment: `x = val` or `x: Int = val`
 		if p.peekTokenIs(lexer.TokenAssign) {
@@ -683,6 +688,45 @@ func (p *Parser) parseTuplePattern() (*ast.TuplePattern, string) {
 		Elements: elems,
 		RestName: restName,
 	}, strings.Join(rawParts, "")
+}
+
+func (p *Parser) isMemberAssignOnCurrentLine() bool {
+	rest := strings.TrimSpace(p.l.PeekRestOfLine())
+	if len(rest) == 0 {
+		return false
+	}
+	runes := []rune(rest)
+	if !unicode.IsLetter(runes[0]) && runes[0] != '_' {
+		return false
+	}
+	i := 1
+	for i < len(runes) && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
+		i++
+	}
+	afterIdent := strings.TrimSpace(string(runes[i:]))
+	return strings.HasPrefix(afterIdent, "=") && !strings.HasPrefix(afterIdent, "==") && !strings.HasPrefix(afterIdent, "=>")
+}
+
+func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
+	target := &ast.Identifier{Name: p.curToken.Literal}
+	p.nextToken() // advance to '.'
+	p.nextToken() // consume '.', advance to member ident
+	if !p.curTokenIs(lexer.TokenIdent) {
+		p.errors = append(p.errors, fmt.Sprintf("expected member identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+		return nil
+	}
+	member := p.curToken.Literal
+	if !p.expectPeek(lexer.TokenAssign) {
+		return nil
+	}
+	p.nextToken() // consume '='
+	val := p.parseExpr(PREC_LOWEST)
+	p.consumeStmtEnd()
+	return &ast.MemberAssignStmt{
+		Target: target,
+		Member: member,
+		Value:  val,
+	}
 }
 
 func (p *Parser) hasAssignOnCurrentLine() bool {

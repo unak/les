@@ -1192,4 +1192,80 @@ print "done2\n"
 	}
 }
 
+func TestParseMemberAssignStmt(t *testing.T) {
+	input := `self.x = 100 + y`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Body))
+	}
+	mas, ok := prog.Body[0].(*ast.MemberAssignStmt)
+	if !ok {
+		t.Fatalf("expected MemberAssignStmt, got %T", prog.Body[0])
+	}
+	id, ok := mas.Target.(*ast.Identifier)
+	if !ok || id.Name != "self" {
+		t.Fatalf("expected target 'self', got %+v", mas.Target)
+	}
+	if mas.Member != "x" {
+		t.Fatalf("expected member 'x', got %s", mas.Member)
+	}
+	if _, ok := mas.Value.(*ast.BinaryExpr); !ok {
+		t.Fatalf("expected BinaryExpr for Value, got %T", mas.Value)
+	}
+}
+
+func TestParseStructWithInit(t *testing.T) {
+	input := `
+struct Point:
+    x: Float
+    y: Float
+
+    def init(r: Float, theta: Float):
+        self.x = r
+        self.y = theta
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Body))
+	}
+	sd, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[0])
+	}
+	if sd.Name != "Point" {
+		t.Fatalf("expected Point, got %s", sd.Name)
+	}
+	if len(sd.Fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(sd.Fields))
+	}
+	if len(sd.Methods) != 1 {
+		t.Fatalf("expected 1 method, got %d", len(sd.Methods))
+	}
+	m := sd.Methods[0]
+	if m.Name != "init" {
+		t.Fatalf("expected method init, got %s", m.Name)
+	}
+	if len(m.Params) != 2 {
+		t.Fatalf("expected 2 params in init, got %d", len(m.Params))
+	}
+	if len(m.Body) != 2 {
+		t.Fatalf("expected 2 stmts in init body, got %d", len(m.Body))
+	}
+	for i, stmt := range m.Body {
+		if _, ok := stmt.(*ast.MemberAssignStmt); !ok {
+			t.Fatalf("expected MemberAssignStmt at body[%d], got %T", i, stmt)
+		}
+	}
+}
+
 
