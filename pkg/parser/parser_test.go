@@ -350,8 +350,9 @@ def puts_each(items):
     if len(tail) > 0:
         puts_each(tail)
 
-def puts(*args: Any):
+def puts(*args):
     if len(args) == 0:
+
         print "\n"
     else:
         puts_each(args)
@@ -1302,6 +1303,51 @@ noop()
 		t.Fatalf("expected empty method bodies, got %v and %v", sd.Methods[0].Body, sd.Methods[1].Body)
 	}
 }
+
+func TestParseForceExpr(t *testing.T) {
+	input := `
+x = force 1 + 2
+y = force(3 * 4)
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
+
+	vd1, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[0])
+	}
+	bin, ok := vd1.Value.(*ast.BinaryExpr)
+	if !ok || bin.Op != "+" {
+		t.Fatalf("expected BinaryExpr (+), got %T (%+v)", vd1.Value, vd1.Value)
+	}
+	f1, ok := bin.Left.(*ast.ForceExpr)
+	if !ok {
+		t.Fatalf("expected ForceExpr for left, got %T", bin.Left)
+	}
+	if _, ok := f1.Expr.(*ast.IntLit); !ok {
+		t.Fatalf("expected IntLit in force, got %T", f1.Expr)
+	}
+
+	vd2, ok := prog.Body[1].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", prog.Body[1])
+	}
+	f2, ok := vd2.Value.(*ast.ForceExpr)
+	if !ok {
+		t.Fatalf("expected ForceExpr, got %T", vd2.Value)
+	}
+	if _, ok := f2.Expr.(*ast.BinaryExpr); !ok {
+		t.Fatalf("expected BinaryExpr in force(...), got %T", f2.Expr)
+	}
+}
+
 
 
 

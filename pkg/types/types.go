@@ -19,9 +19,9 @@ const (
 	TypeFloat  PrimType = "Float"
 	TypeString PrimType = "String"
 	TypeBytes  PrimType = "Bytes"
-	TypeBool   PrimType = "Bool"
-	TypeNil    PrimType = "Nil"
-	TypeAny    PrimType = "Any"
+	TypeBool    PrimType = "Bool"
+	TypeNil     PrimType = "Nil"
+	TypeUnknown PrimType = "Unknown"
 )
 
 func (p PrimType) String() string { return string(p) }
@@ -104,7 +104,8 @@ func (d *DictType) Equals(other Type) bool {
 
 // FuncType represents (Arg) -> Ret.
 type FuncType struct {
-	Arg        Type // argument is always a TupleType or Any
+	Arg        Type // argument is always a TupleType or TypeUnknown
+
 	MinArity   int  // Minimum number of required positional arguments
 	MaxArity   int  // Maximum number of positional arguments (-1 if variadic)
 	BlockParam Type // Type of &block parameter (nil if no &block)
@@ -147,8 +148,11 @@ func (f *FuncType) Equals(other Type) bool {
 	if !ok {
 		return false
 	}
-	return f.Arg.Equals(of.Arg) && f.Ret.Equals(of.Ret)
+	argEq := f.Arg == TypeUnknown || of.Arg == TypeUnknown || f.Arg.Equals(of.Arg)
+	retEq := f.Ret == TypeUnknown || of.Ret == TypeUnknown || f.Ret.Equals(of.Ret)
+	return argEq && retEq
 }
+
 
 // TypeVar represents uninstantiated type variable for inference.
 type TypeVar struct {
@@ -181,8 +185,8 @@ func NewUnionType(members ...Type) Type {
 	// Deduplicate
 	var unique []Type
 	for _, m := range flat {
-		if m == TypeAny {
-			return TypeAny
+		if m == TypeUnknown {
+			return TypeUnknown
 		}
 		exists := false
 		for _, u := range unique {
@@ -237,7 +241,7 @@ func (u *UnionType) Equals(other Type) bool {
 
 // IsAssignableTo checks if source type can be assigned to target type (handling subtyping and unions).
 func IsAssignableTo(src, target Type) bool {
-	if target == TypeAny {
+	if src == TypeUnknown || target == TypeUnknown {
 		return true
 	}
 	if target.Equals(src) {
@@ -294,8 +298,8 @@ func IsAssignableTo(src, target Type) bool {
 	// If both are DictType
 	if dTarget, ok := target.(*DictType); ok {
 		if dSrc, ok := src.(*DictType); ok {
-			keyOK := dSrc.Key == TypeAny || IsAssignableTo(dSrc.Key, dTarget.Key)
-			valOK := dSrc.Value == TypeAny || IsAssignableTo(dSrc.Value, dTarget.Value)
+			keyOK := dSrc.Key == TypeUnknown || IsAssignableTo(dSrc.Key, dTarget.Key)
+			valOK := dSrc.Value == TypeUnknown || IsAssignableTo(dSrc.Value, dTarget.Value)
 			return keyOK && valOK
 		}
 		return false
@@ -307,7 +311,7 @@ func IsAssignableTo(src, target Type) bool {
 			if tTarget.IsVariadic {
 				lastIdx := len(tTarget.Elems) - 1
 				for i, el := range tSrc.Elems {
-					var expected Type = TypeAny
+					var expected Type = TypeUnknown
 					if lastIdx >= 0 {
 						if i < len(tTarget.Elems) {
 							expected = tTarget.Elems[i]
@@ -421,6 +425,47 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 				Ret: TypeString,
 			}, true
 		}
+	}
+	if mName == "Type" {
+		switch t.(type) {
+		case PrimType, *TupleType, *DictType, *FuncType, *TypeVar, *UnionType:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			}, true
+		}
+	}
+
+	if mName == "Len" {
+		switch t {
+		case TypeString, TypeBytes:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeInt,
+			}, true
+		}
+		switch t.(type) {
+		case *TupleType, *DictType:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeInt,
+			}, true
+		}
+	}
+	if u, ok := t.(*UnionType); ok && len(u.Members) > 0 {
+		var commonSig *FuncType
+		for _, m := range u.Members {
+			sig, ok := LookupBuiltinTypeMethod(m, mName)
+			if !ok {
+				return nil, false
+			}
+			if commonSig == nil {
+				commonSig = sig
+			} else if !commonSig.Equals(sig) {
+				return nil, false
+			}
+		}
+		return commonSig, true
 	}
 	if mName == "Ord" && t == TypeString {
 		return &FuncType{
@@ -548,6 +593,13 @@ func (s *StructType) LookupMember(name string) (Type, error) {
 		}
 
 		currentLevel = nextLevel
+	}
+
+	if name == "Type" {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeString,
+		}, nil
 	}
 
 	return nil, fmt.Errorf("type %s has no field or method '%s'", s.Name, name)

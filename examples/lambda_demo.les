@@ -6,15 +6,15 @@
 def puts_each(items):
     (head, ...tail) = items
     print head
-    if head is String && len(head) > 0 && head[-1] == "\n":
+    if head is String && head.Len() > 0 && head[-1] == "\n":
         ()
     else:
         print "\n"
-    if len(tail) > 0:
+    if tail.Len() > 0:
         puts_each(tail)
 
-def puts(*args: Any):
-    if len(args) == 0:
+def puts(*args):
+    if args.Len() == 0:
         print "\n"
     else:
         puts_each(args)
@@ -53,7 +53,7 @@ puts "apply_block with do block =", block_result
 def each_int(items: (Int, ...), fn: (Int) -> ()): ():
     (head, ...tail) = items
     fn(head)
-    if len(tail) > 0:
+    if tail.Len() > 0:
         each_int(tail, fn)
 
 puts "each_int do block:"

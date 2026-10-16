@@ -36,6 +36,7 @@ const (
 	TokenInterface
 	TokenFor
 	TokenContinue
+	TokenForce
 
 	// Punctuation
 	TokenAssign      // =

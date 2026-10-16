@@ -1010,8 +1010,14 @@ func (p *Parser) canStartArgument() bool {
 			return false
 		}
 		return true
+	case lexer.TokenLParen:
+		// If there is whitespace between identifier and '(', it's a call argument: print (42).Type(), not a standard f(...) call
+		if p.peekToken.Line == p.curToken.Line && p.peekToken.Col > p.curToken.Col+len(p.curToken.Literal) {
+			return true
+		}
+		return false
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil,
-		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch:
+		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch, lexer.TokenForce:
 		return true
 	default:
 		return false
@@ -1075,6 +1081,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.nextToken()
 		right := p.parseExpr(PREC_UNARY)
 		return &ast.UnaryExpr{Op: op, Expr: right}
+	case lexer.TokenForce:
+		p.nextToken()
+		right := p.parseExpr(PREC_UNARY)
+		return &ast.ForceExpr{Expr: right}
 	case lexer.TokenLParen:
 		return p.parseGroupOrTuple()
 	case lexer.TokenLBracket:
