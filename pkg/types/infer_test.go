@@ -1403,6 +1403,66 @@ d = 123.String(16)
 	}
 }
 
+func TestFuncTypeBlockParamString(t *testing.T) {
+	ft1 := &FuncType{
+		Arg: &TupleType{Elems: []Type{}},
+		BlockParam: &FuncType{
+			Arg: &TupleType{Elems: []Type{TypeString}},
+			Ret: &TupleType{Elems: []Type{}},
+		},
+		Ret: &TupleType{Elems: []Type{}},
+	}
+	expected1 := "((String) -> ()) -> ()"
+	if ft1.String() != expected1 {
+		t.Fatalf("expected %q, got %q", expected1, ft1.String())
+	}
+
+	ft2 := &FuncType{
+		Arg: &TupleType{Elems: []Type{TypeInt}},
+		BlockParam: &FuncType{
+			Arg: &TupleType{Elems: []Type{TypeInt}},
+			Ret: TypeString,
+		},
+		Ret: &TupleType{Elems: []Type{TypeString}, IsVariadic: true},
+	}
+	expected2 := "(Int, (Int) -> String) -> (String, ...)"
+	if ft2.String() != expected2 {
+		t.Fatalf("expected %q, got %q", expected2, ft2.String())
+	}
+}
+
+func TestCustomInitReturnType(t *testing.T) {
+	code := `
+struct StringList:
+    t: (String, ...)
+
+    def init(*t: String):
+        ()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	stVal, ok := inf.scope.Lookup("StringList")
+	if !ok {
+		t.Fatalf("expected StringList in scope")
+	}
+	st, ok := stVal.(*StructType)
+	if !ok {
+		t.Fatalf("expected StructType, got %T", stVal)
+	}
+	initFn, ok := st.Methods["init"]
+	if !ok {
+		t.Fatalf("expected init method on StringList")
+	}
+	if !initFn.Ret.Equals(st) {
+		t.Fatalf("expected init return type to be %s, got %s", st.Name, initFn.Ret)
+	}
+}
+
+
 
 
 

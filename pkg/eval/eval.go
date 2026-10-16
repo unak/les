@@ -436,7 +436,15 @@ func typeNameWithDepth(val Value, depth int) string {
 	case *StructInstance:
 		return v.Def.Name
 	case *StructDefValue:
-		return "Type"
+		if v.StructType != nil {
+			if st, ok := v.StructType.(*types.StructType); ok {
+				if initFn, ok := st.Methods["init"]; ok {
+					return initFn.String()
+				}
+			}
+		}
+		return "() -> " + v.Name
+
 	case *Closure:
 		if v.FuncType != nil {
 			if t, ok := v.FuncType.(*types.FuncType); ok {

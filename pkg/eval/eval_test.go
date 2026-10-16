@@ -3971,4 +3971,33 @@ print topAdd is Function
 	if edgeOut != expectedEdge {
 		t.Fatalf("expected %q, got %q", expectedEdge, edgeOut)
 	}
+
+	// Test StructDef constructor reflection and &block method reflection
+	structReflectCode := `
+struct StringList:
+    t: (String, ...)
+
+    def init(*t: String):
+        ()
+
+    def Each(&block: (String) -> ()) -> ():
+        ()
+
+    def Map(prefix: String, &block: (String) -> String) -> (String, ...):
+        ()
+
+sl = StringList("a", "b")
+print StringList.Type(), "|"
+print sl.Each.Type(), "|"
+print sl.Map.Type()
+`
+	structReflectOut, err := runLesCode(structReflectCode)
+	if err != nil {
+		t.Fatalf("unexpected eval error in structReflectCode: %v", err)
+	}
+	expectedStructReflect := "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (String) -> String) -> (String, ...)"
+	if structReflectOut != expectedStructReflect {
+		t.Fatalf("expected %q, got %q", expectedStructReflect, structReflectOut)
+	}
 }
+

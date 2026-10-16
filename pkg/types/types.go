@@ -140,7 +140,24 @@ func (f *FuncType) MaxArgs() int {
 }
 
 func (f *FuncType) String() string {
-	return fmt.Sprintf("%s -> %s", f.Arg.String(), f.Ret.String())
+	argStr := f.Arg.String()
+	if f.BlockParam != nil {
+		bpStr := f.BlockParam.String()
+		if tup, ok := f.Arg.(*TupleType); ok {
+			var parts []string
+			for _, el := range tup.Elems {
+				parts = append(parts, el.String())
+			}
+			if tup.IsVariadic {
+				parts = append(parts, "...")
+			}
+			parts = append(parts, bpStr)
+			argStr = "(" + strings.Join(parts, ", ") + ")"
+		} else {
+			argStr = fmt.Sprintf("(%s, %s)", f.Arg.String(), bpStr)
+		}
+	}
+	return fmt.Sprintf("%s -> %s", argStr, f.Ret.String())
 }
 
 func (f *FuncType) Equals(other Type) bool {
@@ -150,8 +167,17 @@ func (f *FuncType) Equals(other Type) bool {
 	}
 	argEq := f.Arg == TypeUnknown || of.Arg == TypeUnknown || f.Arg.Equals(of.Arg)
 	retEq := f.Ret == TypeUnknown || of.Ret == TypeUnknown || f.Ret.Equals(of.Ret)
-	return argEq && retEq
+	blockEq := true
+	if f.BlockParam != nil || of.BlockParam != nil {
+		if f.BlockParam == nil || of.BlockParam == nil {
+			blockEq = false
+		} else if f.BlockParam != TypeUnknown && of.BlockParam != TypeUnknown {
+			blockEq = f.BlockParam.Equals(of.BlockParam)
+		}
+	}
+	return argEq && retEq && blockEq
 }
+
 
 
 // TypeVar represents uninstantiated type variable for inference.
