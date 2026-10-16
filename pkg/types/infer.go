@@ -1704,9 +1704,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		return TypeBool, nil
 	case "Nil", "nil":
 		return TypeNil, nil
-	case "Any", "Unknown":
-		return nil, fmt.Errorf("unknown type '%s'", annot)
 	case "Tuple":
+
 		return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 	case "Dict":
 		return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
