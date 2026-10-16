@@ -1218,7 +1218,26 @@ func TestUnknownTypeAnnotationError(t *testing.T) {
 			code:        `x: Unknown = 1`,
 			expectedErr: "unknown type 'Unknown'",
 		},
+		{
+			name: "prohibit Any in match case",
+			code: `
+match 1:
+    case Any:
+        1
+`,
+			expectedErr: "unknown type 'Any'",
+		},
+		{
+			name: "prohibit Unknown in match case",
+			code: `
+match 1:
+    case Unknown:
+        1
+`,
+			expectedErr: "unknown type 'Unknown'",
+		},
 	}
+
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

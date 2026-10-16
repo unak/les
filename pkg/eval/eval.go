@@ -2506,21 +2506,21 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				return false
 			}
 		case *BuiltinFunc:
-			// For ToString, 0 params
-			if mName == "ToString" {
-				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String" && sig.ReturnType != "Any") {
+			if mName == "ToString" || mName == "Type" {
+				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 					return false
 				}
-			} else if mName == "Ord" {
-				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int" && sig.ReturnType != "Any") {
+			} else if mName == "Len" || mName == "Ord" {
+				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
 					return false
 				}
 			} else if mName == "Chr" {
-				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String" && sig.ReturnType != "Any") {
+				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 					return false
 				}
 			}
 		default:
+
 			return false
 		}
 	}

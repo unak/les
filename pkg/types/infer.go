@@ -1426,7 +1426,15 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
 					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
 				}
+			} else {
+				pat := strings.TrimSpace(c.Pattern)
+				if pat != "" && pat != "_" && pat != "true" && pat != "false" {
+					if _, err := inf.parseTypeAnnot(pat); err != nil {
+						return nil, err
+					}
+				}
 			}
+
 			prevScope := inf.scope
 			inf.scope = caseScope
 

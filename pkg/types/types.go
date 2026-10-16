@@ -147,8 +147,11 @@ func (f *FuncType) Equals(other Type) bool {
 	if !ok {
 		return false
 	}
-	return f.Arg.Equals(of.Arg) && f.Ret.Equals(of.Ret)
+	argEq := f.Arg == TypeUnknown || of.Arg == TypeUnknown || f.Arg.Equals(of.Arg)
+	retEq := f.Ret == TypeUnknown || of.Ret == TypeUnknown || f.Ret.Equals(of.Ret)
+	return argEq && retEq
 }
+
 
 // TypeVar represents uninstantiated type variable for inference.
 type TypeVar struct {
@@ -423,11 +426,15 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		}
 	}
 	if mName == "Type" {
-		return &FuncType{
-			Arg: &TupleType{Elems: []Type{}},
-			Ret: TypeString,
-		}, true
+		switch t.(type) {
+		case PrimType, *TupleType, *DictType, *FuncType, *TypeVar, *UnionType:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			}, true
+		}
 	}
+
 	if mName == "Len" {
 		switch t {
 		case TypeString, TypeBytes:
