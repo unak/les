@@ -1346,6 +1346,47 @@ sl = StringList(123)
 	}
 }
 
+func TestStringIntAndIntStringTypes(t *testing.T) {
+	code := `
+a = "123".Int()
+b = "123".Int(16)
+c = 123.String()
+d = 123.String(16)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+	if tA, ok := inf.scope.Lookup("a"); !ok || tA != TypeInt {
+		t.Fatalf("expected a to be Int, got %v", tA)
+	}
+	if tB, ok := inf.scope.Lookup("b"); !ok || tB != TypeInt {
+		t.Fatalf("expected b to be Int, got %v", tB)
+	}
+	if tC, ok := inf.scope.Lookup("c"); !ok || tC != TypeString {
+		t.Fatalf("expected c to be String, got %v", tC)
+	}
+	if tD, ok := inf.scope.Lookup("d"); !ok || tD != TypeString {
+		t.Fatalf("expected d to be String, got %v", tD)
+	}
+
+	badCode1 := `"123".Int("invalid")`
+	progBad1 := parser.NewParser(lexer.NewLexer(badCode1)).ParseProgram()
+	infBad1 := NewInferencer()
+	if err := infBad1.InferProgram(progBad1); err == nil {
+		t.Fatalf("expected type error for non-int radix, got nil")
+	}
+
+	badCode2 := `"123".Int(10, 20)`
+	progBad2 := parser.NewParser(lexer.NewLexer(badCode2)).ParseProgram()
+	infBad2 := NewInferencer()
+	if err := infBad2.InferProgram(progBad2); err == nil {
+		t.Fatalf("expected type error for 2 arguments to Int(), got nil")
+	}
+}
+
+
 
 
 
