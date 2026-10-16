@@ -1522,18 +1522,54 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenPipeGreater:
 		// left |> right => right(left)
 		prec := p.curPrecedence()
-		if p.peekTokenIs(lexer.TokenPlus) || p.peekTokenIs(lexer.TokenMinus) {
-			// Unary operator on RHS of pipe: left |> - desugars to -(left)
-			// Only when standalone (e.g. "42 |> -" or "42 |> - |> print")
-			rest := strings.TrimSpace(p.l.PeekRestOfLine())
-			if rest == "" || strings.HasPrefix(rest, "|>") || strings.HasPrefix(rest, ")") || strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, ";") {
-				p.nextToken() // advance to '+' or '-'
-				op := p.curToken.Literal
-				return &ast.UnaryExpr{
-					Op:   op,
-					Expr: left,
+		if isOperatorMethodToken(p.peekToken.Type) {
+			// Check if standalone unary operator on RHS of pipe: left |> - desugars to -(left)
+			if p.peekTokenIs(lexer.TokenPlus) || p.peekTokenIs(lexer.TokenMinus) {
+				rest := strings.TrimSpace(p.l.PeekRestOfLine())
+				if rest == "" || strings.HasPrefix(rest, "|>") || strings.HasPrefix(rest, ")") || strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, ";") {
+					p.nextToken() // advance to '+' or '-'
+					op := p.curToken.Literal
+					return &ast.UnaryExpr{
+						Op:   op,
+						Expr: left,
+					}
 				}
 			}
+			p.nextToken() // advance to operator token
+			opName := p.parseOperatorMethodName()
+			if opName != "" && p.peekTokenIs(lexer.TokenLParen) {
+				p.nextToken() // advance to '('
+				args := p.parseCallArguments()
+				if opName == "[]" {
+					if len(args) == 1 {
+						return &ast.IndexExpr{
+							Target: left,
+							Index:  args[0],
+						}
+					}
+				}
+				if len(args) == 1 {
+					return &ast.BinaryExpr{
+						Op:    opName,
+						Left:  left,
+						Right: args[0],
+					}
+				}
+				// General call on operator method if multiple args
+				callArgs := make([]ast.Expr, 0, len(args)+1)
+				callArgs = append(callArgs, left)
+				callArgs = append(callArgs, args...)
+				return &ast.CallExpr{
+					Callee: &ast.MemberAccessExpr{
+						Target: left,
+						Member: opName,
+					},
+					Args: args,
+				}
+			}
+			// Not a call on operator, error or fallback
+			p.errors = append(p.errors, fmt.Sprintf("unexpected operator %s on RHS of pipe", opName))
+			return nil
 		}
 		p.nextToken()
 		right := p.parseExpr(prec)

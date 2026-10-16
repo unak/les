@@ -4125,13 +4125,15 @@ print "|"
 print ((1, 2).[].Type())
 print "|"
 print (10 |> - |> (|x|: x + 5))
+print "|"
+print (42 |> -(5))
 `
 	out, err := runLesCode(code)
 	if err != nil {
 		t.Fatalf("unexpected eval error in TestOperatorMethodsAndEqualComparableInterfaces: %v", err)
 	}
 
-	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Unknown|-5"
+	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Unknown|-5|37"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
