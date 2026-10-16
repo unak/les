@@ -1312,5 +1312,40 @@ p = Point("invalid", 20)
 	}
 }
 
+func TestStructInitVariadic(t *testing.T) {
+	code := `
+struct StringList:
+    t: (String, ...)
+
+    def init(*t: String):
+        ;
+
+sl0 = StringList()
+sl1 = StringList("a")
+sl2 = StringList("a", "b")
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	badCode := `
+struct StringList:
+    t: (String, ...)
+
+    def init(*t: String):
+        ;
+
+sl = StringList(123)
+`
+	progBad := parser.NewParser(lexer.NewLexer(badCode)).ParseProgram()
+	infBad := NewInferencer()
+	if err := infBad.InferProgram(progBad); err == nil {
+		t.Fatalf("expected type error for int arg to variadic string constructor, got nil")
+	}
+}
+
+
 
 

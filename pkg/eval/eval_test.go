@@ -3728,3 +3728,38 @@ print p1.x, " ", p1.y, " | ", p2.x, " ", p2.y
 	}
 }
 
+func TestStructInitVariadic(t *testing.T) {
+	code := `
+struct StringList:
+    t: (String, ...)
+
+    def init(*t: String):
+        ;
+
+    def join():
+        res = ""
+        i = 0
+        for i < len(t):
+            if i > 0:
+                res = res + ","
+            res = res + t[i]
+            i = i + 1
+        res
+
+sl0 = StringList()
+sl1 = StringList("foo")
+sl2 = StringList("foo", "bar")
+
+print len(sl0.t), " ", sl1.join(), " ", sl2.join()
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := "0 foo foo,bar"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+

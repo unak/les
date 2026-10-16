@@ -1519,7 +1519,14 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			for p := posIdx; p < len(posArgs); p++ {
 				rest = append(rest, NewThunk(posArgs[p], env))
 			}
-			argValues[i] = &TupleValue{Elements: rest}
+			tup := &TupleValue{Elements: rest}
+			argValues[i] = tup
+			for _, fName := range sDef.FieldOrder {
+				if fName == param.Name {
+					fields[param.Name] = tup
+					break
+				}
+			}
 			break
 		}
 

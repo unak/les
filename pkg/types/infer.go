@@ -660,7 +660,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				_ = methodScope.Declare(fName, fType)
 			}
 
-			paramTypes := make([]Type, 0, len(m.Params))
+			isVariadic := false
+			callerParamTypes := make([]Type, 0, len(m.Params))
 			for _, p := range m.Params {
 				if p.Name == "self" {
 					continue
@@ -674,11 +675,28 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					pType = t
 				} else if m.Name == "init" {
 					if fieldT, ok := st.Fields[p.Name]; ok {
-						pType = fieldT
+						if p.IsVariadic {
+							if tup, isTup := fieldT.(*TupleType); isTup && len(tup.Elems) > 0 {
+								pType = tup.Elems[0]
+							} else {
+								pType = fieldT
+							}
+						} else {
+							pType = fieldT
+						}
 					}
 				}
-				paramTypes = append(paramTypes, pType)
-				_ = methodScope.Declare(p.Name, pType)
+
+				if p.IsVariadic {
+					isVariadic = true
+					callerParamTypes = append(callerParamTypes, pType)
+					emptyTuple := &TupleType{Elems: []Type{}}
+					streamTuple := &TupleType{Elems: []Type{pType}, IsVariadic: true}
+					_ = methodScope.Declare(p.Name, NewUnionType(emptyTuple, streamTuple))
+				} else {
+					callerParamTypes = append(callerParamTypes, pType)
+					_ = methodScope.Declare(p.Name, pType)
+				}
 			}
 
 			prevScope := inf.scope
@@ -712,7 +730,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 
 			mType := &FuncType{
-				Arg: &TupleType{Elems: paramTypes},
+				Arg: &TupleType{
+					Elems:      callerParamTypes,
+					IsVariadic: isVariadic,
+				},
 				Ret: retType,
 			}
 			st.Methods[m.Name] = mType
@@ -993,17 +1014,28 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						if !argTuple.IsVariadic && len(e.Args) != len(argTuple.Elems) {
 							return nil, fmt.Errorf("struct '%s' constructor expects %d arguments, got %d", st.Name, len(argTuple.Elems), len(e.Args))
 						}
+						if argTuple.IsVariadic && len(argTuple.Elems) > 0 && len(e.Args) < len(argTuple.Elems)-1 {
+							return nil, fmt.Errorf("struct '%s' constructor expects at least %d arguments, got %d", st.Name, len(argTuple.Elems)-1, len(e.Args))
+						}
 						for i, arg := range e.Args {
 							if _, isNamed := arg.(*ast.NamedArgExpr); isNamed {
 								continue
 							}
-							if i < len(argTuple.Elems) {
+							var expectedParamT Type
+							if i < len(argTuple.Elems)-1 {
+								expectedParamT = argTuple.Elems[i]
+							} else if argTuple.IsVariadic && len(argTuple.Elems) > 0 {
+								expectedParamT = argTuple.Elems[len(argTuple.Elems)-1]
+							} else if i < len(argTuple.Elems) {
+								expectedParamT = argTuple.Elems[i]
+							}
+							if expectedParamT != nil {
 								argT, err := inf.inferExpr(arg)
 								if err != nil {
 									return nil, err
 								}
-								if !IsAssignableTo(argT, argTuple.Elems[i]) {
-									return nil, fmt.Errorf("type mismatch in argument %d of struct '%s' constructor: expected %s, got %s", i+1, st.Name, argTuple.Elems[i], argT)
+								if !IsAssignableTo(argT, expectedParamT) {
+									return nil, fmt.Errorf("type mismatch in argument %d of struct '%s' constructor: expected %s, got %s", i+1, st.Name, expectedParamT, argT)
 								}
 							}
 						}
