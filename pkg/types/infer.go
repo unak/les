@@ -829,6 +829,40 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			st.Methods[m.Name] = mType
 		}
 
+		if _, hasInit := st.Methods["init"]; !hasInit {
+			embeddedSet := make(map[string]bool)
+			for _, emb := range st.Embedded {
+				embeddedSet[emb.Name] = true
+			}
+			var initParamTypes []Type
+			minArity := 0
+			for _, fName := range st.FieldOrder {
+				if embeddedSet[fName] {
+					continue
+				}
+				initParamTypes = append(initParamTypes, st.Fields[fName])
+				// Check if field has default value
+				hasDefault := false
+				for _, f := range s.Fields {
+					if f.Name == fName && f.DefaultValue != nil {
+						hasDefault = true
+						break
+					}
+				}
+				if !hasDefault {
+					minArity++
+				}
+			}
+			st.Methods["init"] = &FuncType{
+				Arg: &TupleType{
+					Elems: initParamTypes,
+				},
+				MinArity: minArity,
+				MaxArity: len(initParamTypes),
+				Ret:      st,
+			}
+		}
+
 		return nil
 
 	case *ast.InterfaceDef:
@@ -1106,16 +1140,45 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if !isCopyUpdate {
 				if initFn, hasInit := st.Methods["init"]; hasInit {
 					if argTuple, ok := initFn.Arg.(*TupleType); ok {
-						if !argTuple.IsVariadic && len(e.Args) != len(argTuple.Elems) {
-							return nil, fmt.Errorf("struct '%s' constructor expects %d arguments, got %d", st.Name, len(argTuple.Elems), len(e.Args))
-						}
-						if argTuple.IsVariadic && len(argTuple.Elems) > 0 && len(e.Args) < len(argTuple.Elems)-1 {
-							return nil, fmt.Errorf("struct '%s' constructor expects at least %d arguments, got %d", st.Name, len(argTuple.Elems)-1, len(e.Args))
-						}
-						for i, arg := range e.Args {
-							if _, isNamed := arg.(*ast.NamedArgExpr); isNamed {
-								continue
+						var posArgs []ast.Expr
+						hasNamed := false
+						namedNames := make(map[string]bool)
+						for _, arg := range e.Args {
+							if named, isNamed := arg.(*ast.NamedArgExpr); isNamed {
+								hasNamed = true
+								namedNames[named.Name] = true
+								// Validate named argument type if field exists
+								if expectedFieldT, hasField := st.Fields[named.Name]; hasField {
+									valT, err := inf.inferExpr(named.Value)
+									if err != nil {
+										return nil, err
+									}
+									if !IsAssignableTo(valT, expectedFieldT) {
+										return nil, fmt.Errorf("type mismatch for field '%s' in struct '%s': expected %s, got %s", named.Name, st.Name, expectedFieldT, valT)
+									}
+								}
+							} else {
+								posArgs = append(posArgs, arg)
 							}
+						}
+
+						minArgs := initFn.MinArgs()
+						maxArgs := initFn.MaxArgs()
+						if !hasNamed {
+							if len(posArgs) < minArgs {
+								return nil, fmt.Errorf("struct '%s' constructor expects at least %d arguments, got %d", st.Name, minArgs, len(posArgs))
+							}
+							if maxArgs != -1 && len(posArgs) > maxArgs {
+								return nil, fmt.Errorf("struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
+							}
+						} else {
+							// When named arguments are present, positional arguments must not exceed maxArgs
+							if maxArgs != -1 && len(posArgs) > maxArgs {
+								return nil, fmt.Errorf("struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
+							}
+						}
+
+						for i, arg := range posArgs {
 							var expectedParamT Type
 							if i < len(argTuple.Elems)-1 {
 								expectedParamT = argTuple.Elems[i]

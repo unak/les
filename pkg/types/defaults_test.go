@@ -83,3 +83,32 @@ exit(0)
 		t.Fatalf("expected arity error for exit(1, 2), got nil")
 	}
 }
+
+func TestStructConstructorDefaultsInfer(t *testing.T) {
+	code := `
+struct Config:
+    host: String
+    port: Int = 8080
+
+c1 = Config("localhost")
+c2 = Config("remote", 9000)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	badArity := `
+struct Config:
+    host: String
+    port: Int = 8080
+
+c = Config()
+`
+	progBad := parser.NewParser(lexer.NewLexer(badArity)).ParseProgram()
+	if err := NewInferencer().InferProgram(progBad); err == nil {
+		t.Fatalf("expected struct constructor arity error, got nil")
+	}
+}
+
