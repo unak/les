@@ -104,13 +104,14 @@ func (d *DictType) Equals(other Type) bool {
 
 // FuncType represents (Arg) -> Ret.
 type FuncType struct {
-	Arg        Type // argument is always a TupleType or TypeUnknown
-
-	MinArity   int  // Minimum number of required positional arguments
-	MaxArity   int  // Maximum number of positional arguments (-1 if variadic)
-	BlockParam Type // Type of &block parameter (nil if no &block)
-	BlockOpt   bool // true if &block is optional (= nil)
-	Ret        Type
+	Arg           Type        // argument is always a TupleType or TypeUnknown
+	OverloadUnion string      // if set, custom string representation for overloaded methods
+	Overloads     []*FuncType // if overloaded, individual arity-specific signatures
+	MinArity      int         // Minimum number of required positional arguments
+	MaxArity      int         // Maximum number of positional arguments (-1 if variadic)
+	BlockParam    Type        // Type of &block parameter (nil if no &block)
+	BlockOpt      bool        // true if &block is optional (= nil)
+	Ret           Type
 }
 
 func (f *FuncType) MinArgs() int {
@@ -140,6 +141,9 @@ func (f *FuncType) MaxArgs() int {
 }
 
 func (f *FuncType) String() string {
+	if f.OverloadUnion != "" {
+		return f.OverloadUnion
+	}
 	argStr := f.Arg.String()
 	if f.BlockParam != nil {
 		bpStr := f.BlockParam.String()
@@ -450,7 +454,16 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok {
 				return false
 			}
-			if !targetSig.Equals(fnT) {
+			matched := targetSig.Equals(fnT)
+			if !matched && len(fnT.Overloads) > 0 {
+				for _, ov := range fnT.Overloads {
+					if targetSig.Equals(ov) {
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
 				return false
 			}
 		}
@@ -466,6 +479,17 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 		srcSig, ok := LookupBuiltinTypeMethod(src, mName)
 		if !ok {
 			return false
+		}
+		if (target.Name == "Equal" || target.Name == "Comparable") && (mName == "==" || mName == "<") {
+			// For Equal/Comparable, builtin method must accept 1 argument and return Bool
+			if srcSig.Ret != TypeBool {
+				return false
+			}
+			tup, ok := srcSig.Arg.(*TupleType)
+			if !ok || len(tup.Elems) != 1 {
+				return false
+			}
+			continue
 		}
 		if !targetSig.Equals(srcSig) {
 			return false
@@ -571,6 +595,130 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			MaxArity: 1,
 			Ret:      TypeString,
 		}, true
+	}
+
+	// Built-in operator methods
+	switch mName {
+	case "==":
+		switch t {
+		case TypeInt, TypeFloat, TypeString, TypeBytes, TypeBool, TypeNil:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{t}},
+				Ret: TypeBool,
+			}, true
+		}
+		switch t.(type) {
+		case *TupleType, *DictType:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{t}},
+				Ret: TypeBool,
+			}, true
+		}
+	case "<", "<=", ">", ">=":
+		switch t {
+		case TypeInt, TypeFloat, TypeString:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{t}},
+				Ret: TypeBool,
+			}, true
+		case TypeBytes:
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
+				Ret: TypeBool,
+			}, true
+		}
+	case "+":
+		if t == TypeInt {
+			return &FuncType{
+				Arg:           &TupleType{Elems: []Type{TypeInt}},
+				OverloadUnion: "() -> Int | (Int) -> Int",
+				MinArity:      0,
+				MaxArity:      1,
+				Ret:           TypeInt,
+			}, true
+		}
+		if t == TypeFloat {
+			return &FuncType{
+				Arg:           &TupleType{Elems: []Type{TypeFloat}},
+				OverloadUnion: "() -> Float | (Float) -> Float",
+				MinArity:      0,
+				MaxArity:      1,
+				Ret:           TypeFloat,
+			}, true
+		}
+		if t == TypeString {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeString}},
+				Ret: TypeString,
+			}, true
+		}
+		if t == TypeBytes {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeBytes}},
+				Ret: TypeBytes,
+			}, true
+		}
+	case "-":
+		if t == TypeInt {
+			return &FuncType{
+				Arg:           &TupleType{Elems: []Type{TypeInt}},
+				OverloadUnion: "() -> Int | (Int) -> Int",
+				MinArity:      0,
+				MaxArity:      1,
+				Ret:           TypeInt,
+			}, true
+		}
+		if t == TypeFloat {
+			return &FuncType{
+				Arg:           &TupleType{Elems: []Type{TypeFloat}},
+				OverloadUnion: "() -> Float | (Float) -> Float",
+				MinArity:      0,
+				MaxArity:      1,
+				Ret:           TypeFloat,
+			}, true
+		}
+	case "*", "/", "%":
+		if t == TypeInt {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: TypeInt,
+			}, true
+		}
+		if t == TypeFloat && (mName == "*" || mName == "/") {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeFloat}},
+				Ret: TypeFloat,
+			}, true
+		}
+	case "[]":
+		if t == TypeString {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: TypeString,
+			}, true
+		}
+		if t == TypeBytes {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: TypeInt,
+			}, true
+		}
+		if tt, ok := t.(*TupleType); ok {
+			var elemT Type = TypeUnknown
+			if len(tt.Elems) > 0 {
+				elemT = tt.Elems[0]
+			}
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: elemT,
+			}, true
+		}
+		if dt, ok := t.(*DictType); ok {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{dt.Key}},
+				Ret: dt.Value,
+			}, true
+		}
 	}
 	return nil, false
 }

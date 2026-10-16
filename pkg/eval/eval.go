@@ -329,6 +329,33 @@ func (ev *Evaluator) registerBuiltins() {
 			},
 		},
 	})
+
+	// Built-in Equal interface definition: ==(other): Bool
+	ev.builtinsEnv.Set("Equal", &InterfaceDefValue{
+		Name: "Equal",
+		Methods: map[string]ast.MethodSig{
+			"==": {
+				Name:   "==",
+				Params: []ast.FuncParam{{Name: "other"}},
+			},
+		},
+	})
+
+	// Built-in Comparable interface definition: ==(other): Bool, <(other): Bool
+	ev.builtinsEnv.Set("Comparable", &InterfaceDefValue{
+		Name:     "Comparable",
+		Embedded: []string{"Equal"},
+		Methods: map[string]ast.MethodSig{
+			"==": {
+				Name:   "==",
+				Params: []ast.FuncParam{{Name: "other"}},
+			},
+			"<": {
+				Name:   "<",
+				Params: []ast.FuncParam{{Name: "other"}},
+			},
+		},
+	})
 }
 
 func (ev *Evaluator) SetArgs(args []string) {
@@ -664,6 +691,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			FieldDefaults: make(map[string]ast.Expr),
 			EmbeddedNames: make([]string, 0),
 			Methods:       make(map[string]*ast.FuncDef),
+			AllMethods:    make(map[string][]*ast.FuncDef),
 			Env:           env,
 		}
 
@@ -681,6 +709,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 		for _, m := range s.Methods {
 			sDef.Methods[m.Name] = m
+			sDef.AllMethods[m.Name] = append(sDef.AllMethods[m.Name], m)
 		}
 
 		if env != nil && env.Inferencer != nil {
@@ -1126,6 +1155,21 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		targetVal := Force(NewThunk(e.Target, env))
 		idxVal := Force(NewThunk(e.Index, env))
 
+		if si, ok := targetVal.(*StructInstance); ok {
+			if fn, err := si.LookupMethod("[]", 1); err == nil {
+				return fn.Env.invokeClosure(fn, []Value{idxVal})
+			}
+			if m, err := si.LookupMember("[]"); err == nil {
+				forced := Force(m)
+				if fn, ok := forced.(*Closure); ok {
+					return fn.Env.invokeClosure(fn, []Value{idxVal})
+				}
+				if bf, ok := forced.(*BuiltinFunc); ok {
+					return bf.Fn([]Value{idxVal})
+				}
+			}
+		}
+
 		switch t := targetVal.(type) {
 		case *TupleValue:
 			i, ok := idxVal.(IntValue)
@@ -1217,6 +1261,20 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.UnaryExpr:
 		val := Force(NewThunk(e.Expr, env))
+		if si, ok := val.(*StructInstance); ok {
+			if fn, err := si.LookupMethod(e.Op, 0); err == nil {
+				return fn.Env.invokeClosure(fn, []Value{})
+			}
+			if m, err := si.LookupMember(e.Op); err == nil {
+				forced := Force(m)
+				if fn, ok := forced.(*Closure); ok {
+					return fn.Env.invokeClosure(fn, []Value{})
+				}
+				if bf, ok := forced.(*BuiltinFunc); ok {
+					return bf.Fn([]Value{})
+				}
+			}
+		}
 		switch e.Op {
 		case "+":
 			if iv, ok := val.(IntValue); ok {
@@ -1705,6 +1763,59 @@ func evalBinary(op string, left, right Value) (Value, error) {
 		}
 	}
 
+	// != is always desugared to !(x == y)
+	if op == "!=" {
+		eqVal, err := evalBinary("==", left, right)
+		if err != nil {
+			return nil, err
+		}
+		if bVal, ok := eqVal.(BoolValue); ok {
+			return !bVal, nil
+		}
+		return nil, fmt.Errorf("== operator must return Bool, got %v", eqVal)
+	}
+
+	// Custom operator methods on StructInstance
+	if si, ok := left.(*StructInstance); ok {
+		if fn, err := si.LookupMethod(op, 1); err == nil {
+			return fn.Env.invokeClosure(fn, []Value{right})
+		}
+		if m, err := si.LookupMember(op); err == nil {
+			forced := Force(m)
+			if fn, ok := forced.(*Closure); ok {
+				return fn.Env.invokeClosure(fn, []Value{right})
+			}
+			if bf, ok := forced.(*BuiltinFunc); ok {
+				return bf.Fn([]Value{right})
+			}
+		}
+		// Relational comparison fallback using < and == (Comparable)
+		if _, hasLt := si.LookupMethod("<", 1); hasLt == nil {
+			switch op {
+			case "<=":
+				// left <= right <=> (left < right) || (left == right)
+				ltVal, errLt := evalBinary("<", left, right)
+				if errLt == nil {
+					if b, ok := ltVal.(BoolValue); ok && bool(b) {
+						return BoolValue(true), nil
+					}
+					eqVal, errEq := evalBinary("==", left, right)
+					if errEq == nil {
+						if b, ok := eqVal.(BoolValue); ok {
+							return b, nil
+						}
+					}
+				}
+			case ">":
+				// left > right <=> right < left
+				return evalBinary("<", right, left)
+			case ">=":
+				// left >= right <=> right <= left
+				return evalBinary("<=", right, left)
+			}
+		}
+	}
+
 	// Numeric operations
 	if li, ok := left.(IntValue); ok {
 		if ri, ok := right.(IntValue); ok {
@@ -1748,6 +1859,14 @@ func evalBinary(op string, left, right Value) (Value, error) {
 				return BoolValue(ls == rs), nil
 			case "!=":
 				return BoolValue(ls != rs), nil
+			case "<":
+				return BoolValue(ls < rs), nil
+			case "<=":
+				return BoolValue(ls <= rs), nil
+			case ">":
+				return BoolValue(ls > rs), nil
+			case ">=":
+				return BoolValue(ls >= rs), nil
 			}
 		}
 	}
@@ -2059,6 +2178,255 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			return bf, nil
 		}
 	}
+
+	typeOfVal := func(v Value) types.Type {
+		switch v.(type) {
+		case IntValue:
+			return types.TypeInt
+		case FloatValue:
+			return types.TypeFloat
+		case StringValue:
+			return types.TypeString
+		case BytesValue:
+			return types.TypeBytes
+		case BoolValue:
+			return types.TypeBool
+		case NilValue:
+			return types.TypeNil
+		case *TupleValue:
+			return &types.TupleType{Elems: []types.Type{}}
+		case *DictValue:
+			return &types.DictType{Key: types.TypeUnknown, Value: types.TypeUnknown}
+		default:
+			return types.TypeUnknown
+		}
+	}
+
+	// Operator methods on built-in types
+	switch member {
+	case "==":
+		switch val.(type) {
+		case IntValue, FloatValue, StringValue, BytesValue, BoolValue, NilValue, *TupleValue, *DictValue:
+			bf := &BuiltinFunc{
+				Name: "==",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("== takes 1 argument, got %d", len(args))
+					}
+					return evalBinary("==", val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "=="); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+
+	case "<", "<=", ">", ">=":
+		switch val.(type) {
+		case IntValue, FloatValue, StringValue, BytesValue:
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					}
+					return evalBinary(member, val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), member); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+
+	case "+", "-":
+		switch val.(type) {
+		case IntValue, FloatValue:
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) == 0 {
+						if member == "+" {
+							return val, nil
+						}
+						if iv, ok := val.(IntValue); ok {
+							return -iv, nil
+						}
+						if fv, ok := val.(FloatValue); ok {
+							return -fv, nil
+						}
+					} else if len(args) == 1 {
+						return evalBinary(member, val, Force(args[0]))
+					}
+					return nil, fmt.Errorf("%s takes 0 or 1 argument, got %d", member, len(args))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), member); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case StringValue, BytesValue:
+			if member == "+" {
+				bf := &BuiltinFunc{
+					Name: "+",
+					Fn: func(args []Value) (Value, error) {
+						if len(args) != 1 {
+							return nil, fmt.Errorf("+ takes 1 argument, got %d", len(args))
+						}
+						return evalBinary("+", val, Force(args[0]))
+					},
+				}
+				if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "+"); ok {
+					bf.FuncType = sig
+				}
+				return bf, nil
+			}
+		}
+
+	case "*", "/", "%":
+		switch val.(type) {
+		case IntValue:
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					}
+					return evalBinary(member, val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, member); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case FloatValue:
+			if member == "*" || member == "/" {
+				bf := &BuiltinFunc{
+					Name: member,
+					Fn: func(args []Value) (Value, error) {
+						if len(args) != 1 {
+							return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+						}
+						return evalBinary(member, val, Force(args[0]))
+					},
+				}
+				if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, member); ok {
+					bf.FuncType = sig
+				}
+				return bf, nil
+			}
+		}
+
+	case "[]":
+		switch t := val.(type) {
+		case StringValue:
+			bf := &BuiltinFunc{
+				Name: "[]",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("[] takes 1 argument, got %d", len(args))
+					}
+					idxVal := Force(args[0])
+					i, ok := idxVal.(IntValue)
+					if !ok {
+						return nil, fmt.Errorf("string index must be Int, got %v", idxVal)
+					}
+					runes := []rune(string(t))
+					idx := int(i)
+					if idx < 0 {
+						idx = len(runes) + idx
+					}
+					if idx < 0 || idx >= len(runes) {
+						return nil, fmt.Errorf("string index out of bounds: %d (len %d)", int(i), len(runes))
+					}
+					return StringValue(string(runes[idx])), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "[]"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+
+		case BytesValue:
+			bf := &BuiltinFunc{
+				Name: "[]",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("[] takes 1 argument, got %d", len(args))
+					}
+					idxVal := Force(args[0])
+					i, ok := idxVal.(IntValue)
+					if !ok {
+						return nil, fmt.Errorf("bytes index must be Int, got %v", idxVal)
+					}
+					data := []byte(t)
+					idx := int(i)
+					if idx < 0 {
+						idx = len(data) + idx
+					}
+					if idx < 0 || idx >= len(data) {
+						return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", int(i), len(data))
+					}
+					return IntValue(data[idx]), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeBytes, "[]"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+
+		case *TupleValue:
+			bf := &BuiltinFunc{
+				Name: "[]",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("[] takes 1 argument, got %d", len(args))
+					}
+					idxVal := Force(args[0])
+					i, ok := idxVal.(IntValue)
+					if !ok {
+						return nil, fmt.Errorf("tuple index must be Int, got %v", idxVal)
+					}
+					idx := int(i)
+					if idx < 0 {
+						idx = len(t.Elements) + idx
+					}
+					if idx < 0 || idx >= len(t.Elements) {
+						return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", int(i), len(t.Elements))
+					}
+					return Force(t.Elements[idx]), nil
+				},
+			}
+			bf.FuncType = &types.FuncType{
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+				Ret: types.TypeUnknown,
+			}
+			return bf, nil
+
+		case *DictValue:
+			bf := &BuiltinFunc{
+				Name: "[]",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("[] takes 1 argument, got %d", len(args))
+					}
+					idxVal := Force(args[0])
+					dk := MakeDictKey(idxVal)
+					if v, ok := t.Entries[dk]; ok {
+						return Force(v), nil
+					}
+					return nil, fmt.Errorf("key not found in dict: %s", idxVal.String())
+				},
+			}
+			bf.FuncType = &types.FuncType{
+				Arg: &types.TupleType{Elems: []types.Type{types.TypeUnknown}},
+				Ret: types.TypeUnknown,
+			}
+			return bf, nil
+		}
+	}
+
 	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)
 }
 
@@ -2507,6 +2875,10 @@ func splitTopLevelCommas(s string) []string {
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
 	// Check all direct methods required by the interface
 	for mName, sig := range iface.Methods {
+		expectedCount := len(sig.Params)
+		if sig.BlockParam != nil {
+			expectedCount++
+		}
 		var memberVal Value
 		var err error
 		if si, ok := val.(*StructInstance); ok {
@@ -2538,17 +2910,33 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				return false
 			}
 		case *BuiltinFunc:
-			if mName == "ToString" || mName == "Type" {
-				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
-					return false
+			if si, ok := val.(*StructInstance); ok {
+				if mName == "Type" {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+						return false
+					}
+				} else {
+					if _, err := si.LookupMethod(mName, expectedCount); err != nil {
+						return false
+					}
 				}
-			} else if mName == "Len" || mName == "Ord" {
-				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
-					return false
-				}
-			} else if mName == "Chr" {
-				if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
-					return false
+			} else {
+				if mName == "ToString" || mName == "Type" {
+					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+						return false
+					}
+				} else if mName == "Len" || mName == "Ord" {
+					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
+						return false
+					}
+				} else if mName == "Chr" {
+					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+						return false
+					}
+				} else if iface.Name == "Equal" || iface.Name == "Comparable" {
+					if len(sig.Params) != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
+						return false
+					}
 				}
 			}
 		default:

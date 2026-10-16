@@ -270,6 +270,38 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 				p.nextToken() // consume ident
 				p.consumeStmtEnd()
 			}
+		} else if isOperatorMethodToken(p.curToken.Type) && p.peekTokenIs(lexer.TokenLParen) {
+			// Operator method without 'def': e.g. +(other: Vec2): Vec2
+			opName := p.parseOperatorMethodName()
+			if opName != "" && p.expectPeek(lexer.TokenLParen) {
+				params, blockParam := p.parseFuncParams()
+				returnType := ""
+				if p.peekTokenIs(lexer.TokenArrow) {
+					p.nextToken()
+					p.nextToken()
+					returnType = p.parseTypeAnnotString()
+					if p.peekTokenIs(lexer.TokenColon) {
+						p.nextToken()
+					}
+				} else if p.peekTokenIs(lexer.TokenColon) {
+					p.nextToken()
+					if !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenIndent) && !p.peekTokenIs(lexer.TokenEOF) {
+						p.nextToken()
+						returnType = p.parseTypeAnnotString()
+						if p.peekTokenIs(lexer.TokenColon) {
+							p.nextToken()
+						}
+					}
+				}
+				body := p.parseBlockBody()
+				methods = append(methods, &ast.FuncDef{
+					Name:       opName,
+					Params:     params,
+					BlockParam: blockParam,
+					ReturnType: strings.TrimSpace(returnType),
+					Body:       body,
+				})
+			}
 		} else {
 			p.nextToken()
 		}
@@ -344,6 +376,27 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 				p.nextToken() // consume ident
 				p.consumeStmtEnd()
 			}
+		} else if isOperatorMethodToken(p.curToken.Type) {
+			opName := p.parseOperatorMethodName()
+			if opName != "" && p.expectPeek(lexer.TokenLParen) {
+				params, blockParam := p.parseFuncParams()
+				retType := "()"
+				if p.curTokenIs(lexer.TokenColon) {
+					p.nextToken() // consume ':'
+					retType = p.parseTypeAnnotString()
+				} else if p.peekTokenIs(lexer.TokenColon) {
+					p.nextToken() // advance to ':'
+					p.nextToken() // consume ':'
+					retType = p.parseTypeAnnotString()
+				}
+				methods = append(methods, ast.MethodSig{
+					Name:       opName,
+					Params:     params,
+					BlockParam: blockParam,
+					ReturnType: strings.TrimSpace(retType),
+				})
+				p.consumeStmtEnd()
+			}
 		} else {
 			p.nextToken()
 		}
@@ -364,11 +417,15 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 func (p *Parser) parseFuncDef() *ast.FuncDef {
 	// def name(params): body
 	p.nextToken() // consume 'def'
-	if !p.curTokenIs(lexer.TokenIdent) {
+	var name string
+	if p.curTokenIs(lexer.TokenIdent) {
+		name = p.curToken.Literal
+	} else if isOperatorMethodToken(p.curToken.Type) {
+		name = p.parseOperatorMethodName()
+	} else {
 		p.errors = append(p.errors, "expected function name after def")
 		return nil
 	}
-	name := p.curToken.Literal
 
 	if !p.expectPeek(lexer.TokenLParen) {
 		return nil
@@ -1359,11 +1416,15 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	switch p.curToken.Type {
 	case lexer.TokenDot:
 		p.nextToken() // consume '.'
-		if !p.curTokenIs(lexer.TokenIdent) {
+		var member string
+		if p.curTokenIs(lexer.TokenIdent) {
+			member = p.curToken.Literal
+		} else if isOperatorMethodToken(p.curToken.Type) {
+			member = p.parseOperatorMethodName()
+		} else {
 			p.errors = append(p.errors, fmt.Sprintf("expected identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
 			return nil
 		}
-		member := p.curToken.Literal
 		return &ast.MemberAccessExpr{
 			Target: left,
 			Member: member,
@@ -1461,6 +1522,47 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenPipeGreater:
 		// left |> right => right(left)
 		prec := p.curPrecedence()
+		if isOperatorMethodToken(p.peekToken.Type) {
+			p.nextToken() // advance to operator token
+			opName := p.parseOperatorMethodName()
+			if !p.peekTokenIs(lexer.TokenLParen) {
+				// Standalone operator on RHS of pipe: left |> - desugars to -(left)
+				if opName == "+" || opName == "-" {
+					return &ast.UnaryExpr{
+						Op:   opName,
+						Expr: left,
+					}
+				}
+				p.errors = append(p.errors, fmt.Sprintf("unexpected operator %s on RHS of pipe", opName))
+				return nil
+			}
+			// Operator call on RHS of pipe: left |> op(args...)
+			p.nextToken() // advance to '('
+			args := p.parseCallArguments()
+			if opName == "[]" {
+				if len(args) == 1 {
+					return &ast.IndexExpr{
+						Target: left,
+						Index:  args[0],
+					}
+				}
+			}
+			if len(args) == 1 {
+				return &ast.BinaryExpr{
+					Op:    opName,
+					Left:  left,
+					Right: args[0],
+				}
+			}
+			// General call on operator method if other arity (e.g. 0 args: left |> -() )
+			return &ast.CallExpr{
+				Callee: &ast.MemberAccessExpr{
+					Target: left,
+					Member: opName,
+				},
+				Args: args,
+			}
+		}
 		p.nextToken()
 		right := p.parseExpr(prec)
 		if call, isCall := right.(*ast.CallExpr); isCall {
@@ -1691,3 +1793,30 @@ func isValidDictAnnotationContent(inner string) bool {
 	return keyStr != "" && valStr != ""
 }
 
+func isOperatorMethodToken(t lexer.TokenType) bool {
+	switch t {
+	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
+		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenLBracket:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) parseOperatorMethodName() string {
+	switch p.curToken.Type {
+	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
+		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
+		op := p.curToken.Literal
+		return op
+	case lexer.TokenLBracket:
+		if p.peekTokenIs(lexer.TokenRBracket) {
+			p.nextToken() // consume ']'
+			return "[]"
+		}
+		return ""
+	default:
+		return ""
+	}
+}

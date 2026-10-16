@@ -4002,10 +4002,139 @@ print sl is List
 	if err != nil {
 		t.Fatalf("unexpected eval error in structReflectCode: %v", err)
 	}
-	expectedStructReflect := "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (Int) -> String) -> (String, ...)"
-	_ = expectedStructReflect
-	expectedStructReflect = "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (String) -> String) -> (String, ...)|true|true|true|true"
+	expectedStructReflect := "(String, ...) -> StringList|((String) -> ()) -> ()|(String, (String) -> String) -> (String, ...)|true|true|true|true"
 	if structReflectOut != expectedStructReflect {
 		t.Fatalf("expected %q, got %q", expectedStructReflect, structReflectOut)
+	}
+}
+
+func TestOperatorMethodsAndEqualComparableInterfaces(t *testing.T) {
+	code := `
+struct Vec2:
+    x: Int
+    y: Int
+
+    def +(other: Vec2):
+        Vec2(x: x + other.x, y: y + other.y)
+
+    def -(other: Vec2):
+        Vec2(x: x - other.x, y: y - other.y)
+
+    def -():
+        Vec2(x: -x, y: -y)
+
+    def +():
+        self
+
+    def ==(other: Vec2):
+        x == other.x && y == other.y
+
+    def <(other: Vec2):
+        x < other.x
+
+    def [](idx: Int):
+        idx == 0 ? x : y
+
+v1 = Vec2(x: 1, y: 2)
+v2 = Vec2(x: 3, y: 4)
+
+v3 = v1 + v2
+print v3.x
+print ", "
+print v3.y
+print "|"
+
+v4 = v2 - v1
+print v4.x
+print ", "
+print v4.y
+print "|"
+
+neg = -v1
+print neg.x
+print ", "
+print neg.y
+print "|"
+
+pos = +v1
+print pos.x
+print ", "
+print pos.y
+print "|"
+
+print (v1 == v2)
+print "|"
+print (v1 != v2)
+print "|"
+print (v1 == Vec2(x: 1, y: 2))
+print "|"
+print (v1 != Vec2(x: 1, y: 2))
+print "|"
+print (v1 < v2)
+print "|"
+print v1[0]
+print ", "
+print v1[1]
+print "|"
+
+# Test dot access on operators
+print ((42).+(10))
+print "|"
+print ((42).-())
+print "|"
+print ((42).+())
+print "|"
+print (("hello").[](1))
+print "|"
+
+# Overload reflection on + and -
+print (42).+.Type()
+print "|"
+print (42).-.Type()
+print "|"
+
+# Pipeline unary
+print 42 |> -
+print "|"
+print (-5) |> +
+print "|"
+
+# Equal & Comparable interfaces
+print (42 is Equal)
+print "|"
+print (42 is Comparable)
+print "|"
+print ("abc" is Equal)
+print "|"
+print ("abc" is Comparable)
+print "|"
+print ((Bytes("abc")) is Comparable)
+print "|"
+print (v1 is Equal)
+print "|"
+print (v1 is Comparable)
+print "|"
+print (v1 <= v2)
+print "|"
+print (v2 > v1)
+print "|"
+print (v2 >= v1)
+print "|"
+print ((|x|: x) is Equal)
+print "|"
+print ((1, 2).[].Type())
+print "|"
+print (10 |> - |> (|x|: x + 5))
+print "|"
+print (42 |> -(5))
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestOperatorMethodsAndEqualComparableInterfaces: %v", err)
+	}
+
+	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Unknown|-5|37"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
 	}
 }
