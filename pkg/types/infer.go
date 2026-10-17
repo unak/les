@@ -1453,9 +1453,13 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		for _, m := range s.Methods {
 			paramTypes := make([]Type, 0, len(m.Params))
 			minArity := 0
+			isVariadic := false
 			for _, p := range m.Params {
 				if p.Name == "self" {
 					continue
+				}
+				if p.IsVariadic {
+					isVariadic = true
 				}
 				var pType Type = TypeUnknown
 				if p.TypeAnnot != "" {
@@ -1473,6 +1477,9 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 			}
 			maxArity := len(paramTypes)
+			if isVariadic {
+				maxArity = -1
+			}
 			var blockT Type
 			blockOpt := false
 			if m.BlockParam != nil {
@@ -1499,7 +1506,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				inf.addWarning(m.Pos(), "Unknown type of return value in method '%s' of interface '%s'", m.Name, s.Name)
 			}
 			mSig := &FuncType{
-				Arg:        &TupleType{Elems: paramTypes},
+				Arg:        &TupleType{Elems: paramTypes, IsVariadic: isVariadic},
 				MinArity:   minArity,
 				MaxArity:   maxArity,
 				BlockParam: blockT,
@@ -1694,7 +1701,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				if fnT, ok := m.(*FuncType); ok {
 					if len(fnT.Overloads) > 0 {
 						for _, ov := range fnT.Overloads {
-							if ov.MinArity <= 1 && ov.MaxArity >= 1 {
+							if ov.MinArity <= 1 && (ov.MaxArity < 0 || ov.MaxArity >= 1) {
 								if pT, ok := getFirstParamType(ov); ok && !IsAssignableTo(rightT, pT) {
 									return nil, inf.nodeErr(e.Right, "type mismatch in operator '%s': expected %s, got %s", e.Op, pT, rightT)
 								}
@@ -1703,7 +1710,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						}
 						return nil, inf.nodeErr(e, "no matching overload for operator '%s' with 1 argument", e.Op)
 					}
-					if fnT.MinArity > 1 || fnT.MaxArity < 1 {
+					if fnT.MinArity > 1 || (fnT.MaxArity >= 0 && fnT.MaxArity < 1) {
 						return nil, inf.nodeErr(e, "operator %s requires 1 argument, but method has arity %d..%d", e.Op, fnT.MinArity, fnT.MaxArity)
 					}
 					if pT, ok := getFirstParamType(fnT); ok && !IsAssignableTo(rightT, pT) {
@@ -1725,7 +1732,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		if it, ok := leftT.(*InterfaceType); ok {
 			if m, ok := it.LookupMethod(e.Op); ok {
-				if m.MinArity > 1 || m.MaxArity < 1 {
+				if m.MinArity > 1 || (m.MaxArity >= 0 && m.MaxArity < 1) {
 					return nil, inf.nodeErr(e, "operator %s requires 1 argument, but interface method has arity %d..%d", e.Op, m.MinArity, m.MaxArity)
 				}
 				if pT, ok := getFirstParamType(m); ok && !IsAssignableTo(rightT, pT) {

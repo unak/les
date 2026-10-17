@@ -1654,6 +1654,22 @@ var esi: ExplicitSelfInt = 42
 			t.Fatalf("expected type error for %q, got nil", bad)
 		}
 	}
+
+	variadicOpCode := `
+struct VarBit:
+    v: Int
+    def &(self, *others: VarBit):
+        VarBit(v: self.v)
+
+vb1 = VarBit(v: 1)
+vb2 = VarBit(v: 2)
+vb3 = vb1 & vb2
+`
+	progVar := parser.NewParser(lexer.NewLexer(variadicOpCode)).ParseProgram()
+	infVar := NewInferencer()
+	if err := infVar.InferProgram(progVar); err != nil {
+		t.Fatalf("unexpected type error for variadic operator method: %v", err)
+	}
 }
 
 
