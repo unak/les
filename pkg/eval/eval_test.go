@@ -4298,15 +4298,30 @@ print (f1 >>> 1).val, " "
 andFn = (12).&
 print andFn(10), " "
 tildeFn = (0).~
-print tildeFn()
+print tildeFn(), " "
+
+# Pipeline into lambda
+pipeLam = 5 |> |v|: v * 2 + 1
+print pipeLam, " "
+
+# Interface check with bitwise operator method
+interface BitwiseNot:
+    ~(): Int
+
+interface BadNot:
+    ~(x: Int): Int
+
+print (42 is BitwiseNot), " "
+print (42 is BadNot)
 `
 	outStruct, err := runLesCode(structCode)
 	if err != nil {
 		t.Fatalf("unexpected eval error for custom struct operators: %v", err)
 	}
-	expectedStruct := "-13 8 14 6 24 6 8 -1"
+	expectedStruct := "-13 8 14 6 24 6 8 -1 11 true false"
 	if outStruct != expectedStruct {
 		t.Fatalf("expected struct:\n%s\ngot:\n%s", expectedStruct, outStruct)
 	}
 }
+
 

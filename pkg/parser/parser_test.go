@@ -1510,6 +1510,48 @@ interface Bitwise:
 	}
 }
 
+func TestParsePipelineIntoLambda(t *testing.T) {
+	input := `
+v1 = x |> |v|: v + 1
+v2 = x |> |v: Int|: v * 2
+v3 = x |> ||: 42
+v4 = x |> | |: 42
+v5 = x |> |(0xff)
+`
+	p := NewParser(lexer.NewLexer(input))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+
+	// v1 = x |> |v|: v + 1 => CallExpr with Lambda callee
+	vd1 := prog.Body[0].(*ast.VarDecl)
+	call1, ok := vd1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for v1, got %T", vd1.Value)
+	}
+	if _, ok := call1.Callee.(*ast.LambdaExpr); !ok {
+		t.Fatalf("expected LambdaExpr callee for v1, got %T", call1.Callee)
+	}
+
+	// v2 = x |> |v: Int|: v * 2 => CallExpr with Lambda callee
+	vd2 := prog.Body[1].(*ast.VarDecl)
+	call2, ok := vd2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for v2, got %T", vd2.Value)
+	}
+	if lam2, ok := call2.Callee.(*ast.LambdaExpr); !ok || len(lam2.Params) != 1 || lam2.Params[0].TypeAnnot != "Int" {
+		t.Fatalf("expected LambdaExpr with Typed param for v2, got %+v", call2.Callee)
+	}
+
+	// v5 = x |> |(0xff) => BinaryExpr with Op "|"
+	vd5 := prog.Body[4].(*ast.VarDecl)
+	bin5, ok := vd5.Value.(*ast.BinaryExpr)
+	if !ok || bin5.Op != "|" {
+		t.Fatalf("expected BinaryExpr (|) for v5, got %T (%+v)", vd5.Value, vd5.Value)
+	}
+}
+
 
 
 

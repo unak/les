@@ -3034,6 +3034,31 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 					}
 				}
 			} else {
+				if ft, ok := fn.FuncType.(*types.FuncType); ok && ft != nil {
+					if ft.OverloadUnion != "" {
+						if ft.MinArity > expectedCount || (ft.MaxArity > 0 && ft.MaxArity < expectedCount) {
+							return false
+						}
+					} else if tup, ok := ft.Arg.(*types.TupleType); ok {
+						if !tup.IsVariadic && len(tup.Elems) != expectedCount {
+							return false
+						}
+						if tup.IsVariadic && expectedCount < len(tup.Elems) {
+							return false
+						}
+					}
+					if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil {
+						if env != nil && env.Inferencer != nil {
+							if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+								if expectedRetT, err := inf.ParseTypeAnnot(sig.ReturnType); err == nil {
+									if !types.IsAssignableTo(ft.Ret, expectedRetT) {
+										return false
+									}
+								}
+							}
+						}
+					}
+				}
 				if mName == "ToString" || mName == "Type" {
 					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false

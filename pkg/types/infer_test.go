@@ -1599,6 +1599,8 @@ b4 = b1 & b2
 		`"a" | "b"`,
 		`true ^ false`,
 		`1 << 1.5`,
+		"struct S:\n    val: Int\n    def &(self, other: S) -> S: S(val: self.val & other.val)\ns = S(val: 1)\nres = s & \"bad\"",
+		"struct S:\n    val: Int\n    def ~(self, extra: Int) -> S: S(val: ~self.val)\ns = S(val: 1)\nres = ~s",
 	}
 	for _, bad := range badCodes {
 		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
@@ -1608,4 +1610,5 @@ b4 = b1 & b2
 		}
 	}
 }
+
 

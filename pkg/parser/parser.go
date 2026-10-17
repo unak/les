@@ -1635,7 +1635,11 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenPipeGreater:
 		// left |> right => right(left)
 		prec := p.curPrecedence()
-		if isOperatorMethodToken(p.peekToken.Type) {
+		isOp := isOperatorMethodToken(p.peekToken.Type)
+		if p.peekToken.Type == lexer.TokenPipe && !strings.HasPrefix(strings.TrimSpace(p.l.PeekRestOfLine()), "(") {
+			isOp = false
+		}
+		if isOp {
 			p.nextToken() // advance to operator token
 			opName := p.parseOperatorMethodName()
 			if !p.peekTokenIs(lexer.TokenLParen) {
