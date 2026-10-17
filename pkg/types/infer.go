@@ -612,14 +612,28 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 			currentValTypes = nil
 
 		case *ast.ExprStmt:
+			if me, isMatch := s.Value.(*ast.MatchExpr); isMatch {
+				met, matchCanFT, err := inf.inferMatchExpr(me)
+				if err != nil {
+					return nil, false, err
+				}
+				if inf.ExprTypes != nil {
+					inf.ExprTypes[me] = met
+				}
+				if !matchCanFT {
+					canFallthrough = false
+					currentValTypes = nil
+				} else if canFallthrough {
+					currentValTypes = []Type{met}
+				}
+				continue
+			}
+
 			et, err := inf.inferExpr(s.Value)
 			if err != nil {
 				return nil, false, err
 			}
 			if isExitCall(s.Value) {
-				canFallthrough = false
-				currentValTypes = nil
-			} else if me, isMatch := s.Value.(*ast.MatchExpr); isMatch && et == TypeUnknown && len(me.Cases) > 0 {
 				canFallthrough = false
 				currentValTypes = nil
 			} else if fnT, ok := isBareCallableAutoInvocation(s.Value, et); ok {
@@ -737,8 +751,11 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 	}
 	prevFuncCtx := inf.funcCtx
 	inf.funcCtx = funcCtx
+	prevBreakCtx := inf.breakCtx
+	inf.breakCtx = nil
 	defer func() {
 		inf.funcCtx = prevFuncCtx
+		inf.breakCtx = prevBreakCtx
 	}()
 
 	cleanScope := inf.scope.Clone()
@@ -2037,63 +2054,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		return TypeBool, nil
 	case *ast.MatchExpr:
-		targetT, err := inf.inferExpr(e.Target)
-		if err != nil {
-			return nil, err
-		}
-		var caseTypes []Type
-		allCasesTerminated := (len(e.Cases) > 0)
-		hasWildcard := false
-
-		for _, c := range e.Cases {
-			caseScope := NewScope(inf.scope)
-			if c.TuplePattern != nil {
-				for _, name := range c.TuplePattern.Elements {
-					if name != "_" {
-						_ = caseScope.Declare(name, TypeUnknown)
-					}
-				}
-				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
-				}
-			} else {
-				pat := strings.TrimSpace(c.Pattern)
-				if pat == "_" {
-					hasWildcard = true
-				} else if pat != "" && pat != "true" && pat != "false" {
-					patT, err := inf.parseTypeAnnot(pat)
-					if err != nil {
-						return nil, err
-					}
-					// If target is an identifier, narrow its type inside this case scope
-					if id, isId := e.Target.(*ast.Identifier); isId {
-						_ = caseScope.Declare(id.Name, patT)
-					}
-				}
-			}
-
-			prevScope := inf.scope
-			inf.scope = caseScope
-
-			ftTypes, canFT, err := inf.inferBlock(c.Body)
-			inf.scope = prevScope
-			if err != nil {
-				return nil, err
-			}
-
-			if canFT {
-				allCasesTerminated = false
-				caseTypes = append(caseTypes, ftTypes...)
-			}
-		}
-
-		if len(caseTypes) == 0 {
-			if allCasesTerminated && (hasWildcard || (targetT != nil && targetT != TypeUnknown)) {
-				return TypeUnknown, nil
-			}
-			return &TupleType{Elems: []Type{}}, nil
-		}
-		return NewUnionType(caseTypes...), nil
+		t, _, err := inf.inferMatchExpr(e)
+		return t, err
 
 	case *ast.LambdaExpr:
 		paramTypes := make([]Type, len(e.Params))
@@ -2543,4 +2505,87 @@ func containsUnknown(t Type) bool {
 		return containsUnknown(v.Arg) || containsUnknown(v.Ret)
 	}
 	return false
+}
+
+func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
+	emptyTuple := &TupleType{Elems: []Type{}}
+	targetT, err := inf.inferExpr(e.Target)
+	if err != nil {
+		return nil, false, err
+	}
+	var caseTypes []Type
+	allCasesTerminated := (len(e.Cases) > 0)
+	hasWildcard := false
+	hasTrue := false
+	hasFalse := false
+	var coveredTypes []Type
+
+	for _, c := range e.Cases {
+		caseScope := NewScope(inf.scope)
+		if c.TuplePattern != nil {
+			for _, name := range c.TuplePattern.Elements {
+				if name != "_" {
+					_ = caseScope.Declare(name, TypeUnknown)
+				}
+			}
+			if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+				_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
+			}
+		} else {
+			pat := strings.TrimSpace(c.Pattern)
+			if pat == "_" {
+				hasWildcard = true
+			} else if pat == "true" {
+				hasTrue = true
+			} else if pat == "false" {
+				hasFalse = true
+			} else if pat != "" {
+				patT, err := inf.parseTypeAnnot(pat)
+				if err != nil {
+					return nil, false, err
+				}
+				coveredTypes = append(coveredTypes, patT)
+				// If target is an identifier, narrow its type inside this case scope
+				if id, isId := e.Target.(*ast.Identifier); isId {
+					_ = caseScope.Declare(id.Name, patT)
+				}
+			}
+		}
+
+		prevScope := inf.scope
+		inf.scope = caseScope
+
+		ftTypes, canFT, err := inf.inferBlock(c.Body)
+		inf.scope = prevScope
+		if err != nil {
+			return nil, false, err
+		}
+
+		if canFT {
+			allCasesTerminated = false
+			caseTypes = append(caseTypes, ftTypes...)
+		}
+	}
+
+	isExhaustive := hasWildcard
+	if !isExhaustive && targetT != nil && targetT != TypeUnknown {
+		if targetT == TypeBool && hasTrue && hasFalse {
+			isExhaustive = true
+		} else if len(coveredTypes) > 0 && IsAssignableTo(targetT, NewUnionType(coveredTypes...)) {
+			isExhaustive = true
+		}
+	}
+
+	if allCasesTerminated && isExhaustive {
+		return TypeUnknown, false, nil
+	}
+
+	if len(caseTypes) == 0 {
+		return emptyTuple, true, nil
+	}
+
+	if !isExhaustive {
+		caseTypes = append(caseTypes, emptyTuple)
+	}
+	return NewUnionType(caseTypes...), true, nil
 }

@@ -495,6 +495,44 @@ def getDynamic(p: (Int, String), i: Int):
 			t.Fatalf("expected ((Int, String), Int) -> Int | String, got %s", dVal.(*FuncType).String())
 		}
 	})
+
+	t.Run("non-exhaustive match in function falls through with empty tuple", func(t *testing.T) {
+		code := `
+def partialMatch(x: Int | String):
+    match x:
+        case Int:
+            return 10
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		pmVal, _ := inf.Scope().Lookup("partialMatch")
+		if pmVal.(*FuncType).String() != "(Int | String) -> Int | ()" {
+			t.Fatalf("expected (Int | String) -> Int | (), got %s", pmVal.(*FuncType).String())
+		}
+	})
+
+	t.Run("nested def inside closure does not inherit closure breakCtx", func(t *testing.T) {
+		code := `
+def outer():
+    fn = ||:
+        def inner(x: Int):
+            return x
+        inner(5)
+    return fn()
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		outVal, _ := inf.Scope().Lookup("outer")
+		if outVal.(*FuncType).String() != "() -> Int" {
+			t.Fatalf("expected () -> Int, got %s", outVal.(*FuncType).String())
+		}
+	})
 }
 
 func containsSubstring(s, substr string) bool {
