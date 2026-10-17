@@ -46,6 +46,21 @@ func (s *Scope) Lookup(name string) (Type, bool) {
 	return nil, false
 }
 
+func (s *Scope) Clone() *Scope {
+	c := &Scope{
+		parent:   s.parent,
+		bindings: make(map[string]Type, len(s.bindings)),
+		declared: make(map[string]bool, len(s.declared)),
+	}
+	for k, v := range s.bindings {
+		c.bindings[k] = v
+	}
+	for k, v := range s.declared {
+		c.declared[k] = v
+	}
+	return c
+}
+
 // TypeWarning represents a warning emitted during type inference.
 type TypeWarning struct {
 	Filename string
@@ -60,6 +75,18 @@ func (w TypeWarning) String() string {
 	return fmt.Sprintf("%d: %s at col %d", w.Pos.Line, w.Message, w.Pos.Col)
 }
 
+type funcReturnCtx struct {
+	fnType      *FuncType
+	returnTypes []Type
+	selfCalled  bool
+}
+
+type breakTargetCtx struct {
+	parent     *breakTargetCtx
+	isLoop     bool
+	breakTypes []Type
+}
+
 // Inferencer performs Hindley-Milner type inference with lexical scope checking.
 type Inferencer struct {
 	nextVarID    int
@@ -71,6 +98,8 @@ type Inferencer struct {
 	filename     string
 	warnUnknown  bool
 	warnings     []TypeWarning
+	funcCtx      *funcReturnCtx
+	breakCtx     *breakTargetCtx
 }
 
 var BuiltinBytesFuncType = &FuncType{
@@ -512,6 +541,323 @@ func (inf *Inferencer) freshVar() *TypeVar {
 	return v
 }
 
+func isBareCallableAutoInvocation(expr ast.Expr, t Type) (*FuncType, bool) {
+	if fnT, ok := t.(*FuncType); ok {
+		switch expr.(type) {
+		case *ast.Identifier, *ast.ModuleAccessExpr:
+			return fnT, true
+		}
+	}
+	return nil, false
+}
+
+func isExitCall(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e.Name == "exit"
+	case *ast.CallExpr:
+		if id, ok := e.Callee.(*ast.Identifier); ok && id.Name == "exit" {
+			return true
+		}
+	}
+	return false
+}
+
+func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, canFallthrough bool, err error) {
+	emptyTuple := &TupleType{Elems: []Type{}}
+	if len(stmts) == 0 {
+		return []Type{emptyTuple}, true, nil
+	}
+
+	canFallthrough = true
+	currentValTypes := []Type{emptyTuple}
+
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *ast.ReturnStmt:
+			var retT Type = emptyTuple
+			if s.Value != nil {
+				t, err := inf.inferExpr(s.Value)
+				if err != nil {
+					return nil, false, err
+				}
+				retT = t
+			}
+			if inf.funcCtx != nil {
+				inf.funcCtx.returnTypes = append(inf.funcCtx.returnTypes, retT)
+			}
+			canFallthrough = false
+			currentValTypes = nil
+
+		case *ast.BreakStmt:
+			var brkT Type = emptyTuple
+			if s.Value != nil {
+				t, err := inf.inferExpr(s.Value)
+				if err != nil {
+					return nil, false, err
+				}
+				brkT = t
+			}
+			if inf.breakCtx != nil {
+				inf.breakCtx.breakTypes = append(inf.breakCtx.breakTypes, brkT)
+			}
+			canFallthrough = false
+			currentValTypes = nil
+
+		case *ast.ContinueStmt:
+			if inf.breakCtx != nil && !inf.breakCtx.isLoop {
+				inf.breakCtx.breakTypes = append(inf.breakCtx.breakTypes, emptyTuple)
+			}
+			canFallthrough = false
+			currentValTypes = nil
+
+		case *ast.ExprStmt:
+			if me, isMatch := s.Value.(*ast.MatchExpr); isMatch {
+				met, matchCanFT, err := inf.inferMatchExpr(me)
+				if err != nil {
+					return nil, false, err
+				}
+				if inf.ExprTypes != nil {
+					inf.ExprTypes[me] = met
+				}
+				if !matchCanFT {
+					canFallthrough = false
+					currentValTypes = nil
+				} else if canFallthrough {
+					currentValTypes = []Type{met}
+				}
+				continue
+			}
+
+			et, err := inf.inferExpr(s.Value)
+			if err != nil {
+				return nil, false, err
+			}
+			if isExitCall(s.Value) {
+				canFallthrough = false
+				currentValTypes = nil
+			} else if fnT, ok := isBareCallableAutoInvocation(s.Value, et); ok {
+				if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
+					inf.funcCtx.selfCalled = true
+				}
+				if canFallthrough {
+					currentValTypes = []Type{fnT.Ret}
+				}
+			} else {
+				if canFallthrough {
+					currentValTypes = []Type{et}
+				}
+			}
+
+		case *ast.IfStmt:
+			if s.Cond != nil {
+				if _, err := inf.inferExpr(s.Cond); err != nil {
+					return nil, false, err
+				}
+			}
+			thenScope := NewScope(inf.scope)
+			prevScope := inf.scope
+			inf.scope = thenScope
+			thenFT, thenCanFT, err := inf.inferBlock(s.ThenBody)
+			inf.scope = prevScope
+			if err != nil {
+				return nil, false, err
+			}
+
+			if len(s.ElseBody) > 0 {
+				elseScope := NewScope(inf.scope)
+				inf.scope = elseScope
+				elseFT, elseCanFT, err := inf.inferBlock(s.ElseBody)
+				inf.scope = prevScope
+				if err != nil {
+					return nil, false, err
+				}
+
+				if canFallthrough {
+					if !thenCanFT && !elseCanFT {
+						canFallthrough = false
+						currentValTypes = nil
+					} else {
+						var branchTypes []Type
+						if thenCanFT {
+							branchTypes = append(branchTypes, thenFT...)
+						}
+						if elseCanFT {
+							branchTypes = append(branchTypes, elseFT...)
+						}
+						canFallthrough = true
+						currentValTypes = branchTypes
+					}
+				}
+			} else {
+				// No else body: when condition is false at runtime, evalStmt returns nil, nil,
+				// so lastVal remains currentValTypes if canFallthrough was true.
+				if canFallthrough && thenCanFT {
+					currentValTypes = append(currentValTypes, thenFT...)
+				}
+			}
+
+		case *ast.ForStmt:
+			if s.Cond != nil {
+				if _, err := inf.inferExpr(s.Cond); err != nil {
+					return nil, false, err
+				}
+			}
+			loopCtx := &breakTargetCtx{
+				parent: inf.breakCtx,
+				isLoop: true,
+			}
+			prevBreakCtx := inf.breakCtx
+			inf.breakCtx = loopCtx
+			_, _, err := inf.inferBlock(s.Body)
+			inf.breakCtx = prevBreakCtx
+			if err != nil {
+				return nil, false, err
+			}
+
+			if canFallthrough {
+				if s.Cond == nil {
+					// Infinite for: loop: only exits if a break occurred
+					if len(loopCtx.breakTypes) == 0 {
+						canFallthrough = false
+						currentValTypes = nil
+					} else {
+						canFallthrough = true
+						currentValTypes = loopCtx.breakTypes
+					}
+				} else {
+					// Conditional for loop: exits normally with () or with break
+					canFallthrough = true
+					currentValTypes = append([]Type{emptyTuple}, loopCtx.breakTypes...)
+				}
+			}
+
+		default:
+			if err := inf.inferStmt(stmt); err != nil {
+				return nil, false, err
+			}
+			// Declarations, assignments, imports, etc. do not update lastVal in evalBlock
+		}
+	}
+
+	return currentValTypes, canFallthrough, nil
+}
+
+func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declaredRetType Type, pos ast.Position, entityName string, isMethod bool, structName string) error {
+	savedWarnIdx := len(inf.warnings)
+
+	funcCtx := &funcReturnCtx{
+		fnType: fnType,
+	}
+	prevFuncCtx := inf.funcCtx
+	inf.funcCtx = funcCtx
+	prevBreakCtx := inf.breakCtx
+	inf.breakCtx = nil
+	defer func() {
+		inf.funcCtx = prevFuncCtx
+		inf.breakCtx = prevBreakCtx
+	}()
+
+	cleanScope := inf.scope.Clone()
+
+	ftTypes, canFT, err := inf.inferBlock(body)
+	if err != nil {
+		return err
+	}
+
+	// 2-pass resolution for self-recursion when declaredRetType is unspecified
+	if declaredRetType == TypeUnknown && funcCtx.selfCalled {
+		var candidateTypes []Type
+		for _, t := range funcCtx.returnTypes {
+			if t != TypeUnknown {
+				candidateTypes = append(candidateTypes, t)
+			}
+		}
+		if canFT {
+			for _, t := range ftTypes {
+				if t != TypeUnknown {
+					candidateTypes = append(candidateTypes, t)
+				}
+			}
+		}
+
+		// Prefer completely known types (not containing any nested Unknown)
+		var knownTypes []Type
+		for _, t := range candidateTypes {
+			if !containsUnknown(t) {
+				knownTypes = append(knownTypes, t)
+			}
+		}
+		if len(knownTypes) == 0 {
+			knownTypes = candidateTypes
+		}
+
+		if len(knownTypes) > 0 {
+			tentativeRet := NewUnionType(knownTypes...)
+			fnType.Ret = tentativeRet
+			inf.warnings = inf.warnings[:savedWarnIdx]
+
+			funcCtx.returnTypes = nil
+			funcCtx.selfCalled = false
+			inf.scope = cleanScope
+			ftTypes, canFT, err = inf.inferBlock(body)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	var allCollected []Type
+	allCollected = append(allCollected, funcCtx.returnTypes...)
+	if canFT {
+		allCollected = append(allCollected, ftTypes...)
+	}
+
+	var unifiedType Type = TypeUnknown
+	if len(allCollected) > 0 {
+		unifiedType = NewUnionType(allCollected...)
+	} else if canFT {
+		unifiedType = &TupleType{Elems: []Type{}}
+	}
+
+	if declaredRetType != TypeUnknown {
+		if !IsAssignableTo(unifiedType, declaredRetType) {
+			if isMethod {
+				return inf.posErr(pos, "return type mismatch in method '%s' of struct '%s': expected %s, got %s", entityName, structName, declaredRetType, unifiedType)
+			}
+			return inf.posErr(pos, "return type mismatch in function '%s': expected %s, got %s", entityName, declaredRetType, unifiedType)
+		}
+	} else if unifiedType != TypeUnknown {
+		fnType.Ret = unifiedType
+	} else {
+		if isMethod {
+			inf.addWarning(pos, "Unknown type of return value in method '%s' of struct '%s'", entityName, structName)
+		} else {
+			inf.addWarning(pos, "Unknown type of return value in function '%s'", entityName)
+		}
+	}
+
+	return nil
+}
+
+func (inf *Inferencer) posErr(pos ast.Position, format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	if strings.Contains(msg, " at col ") {
+		return fmt.Errorf("%s", msg)
+	}
+	fn := inf.filename
+	if pos.Line > 0 {
+		if fn != "" {
+			return fmt.Errorf("%s:%d: %s at col %d", fn, pos.Line, msg, pos.Col)
+		}
+		return fmt.Errorf("%d: %s at col %d", pos.Line, msg, pos.Col)
+	}
+	if fn != "" {
+		return fmt.Errorf("%s: %s", fn, msg)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 func (inf *Inferencer) InferProgram(prog *ast.Program) error {
 	if prog.Filename != "" {
 		inf.filename = prog.Filename
@@ -698,34 +1044,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		prevScope := inf.scope
 		inf.scope = childScope
-		var lastT Type = TypeUnknown
-		for _, bStmt := range s.Body {
-			if es, ok := bStmt.(*ast.ExprStmt); ok {
-				if et, err := inf.inferExpr(es.Value); err == nil {
-					lastT = et
-				}
-			} else if rs, ok := bStmt.(*ast.ReturnStmt); ok {
-				if rs.Value != nil {
-					if et, err := inf.inferExpr(rs.Value); err == nil {
-						lastT = et
-					}
-				}
-			}
-			if err := inf.inferStmt(bStmt); err != nil {
-				inf.scope = prevScope
-				return err
-			}
-		}
+		err := inf.inferFuncBody(s.Body, fnType, declaredRetType, s.Pos(), s.Name, false, "")
 		inf.scope = prevScope
-
-		if s.ReturnType != "" {
-			if !IsAssignableTo(lastT, declaredRetType) {
-				return inf.nodeErr(s, "return type mismatch in function '%s': expected %s, got %s", s.Name, declaredRetType, lastT)
-			}
-		} else if lastT != TypeUnknown {
-			fnType.Ret = lastT
-		} else {
-			inf.addWarning(s.Pos(), "Unknown type of return value in function '%s'", s.Name)
+		if err != nil {
+			return err
 		}
 		return nil
 
@@ -856,7 +1178,16 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
-		// Process methods
+		// Process methods in two passes:
+		// Pass A: Build and register method signatures on st.Methods so self-calls and forward calls work
+		type methodWorkItem struct {
+			methodDef        *ast.FuncDef
+			methodType       *FuncType
+			methodScope      *Scope
+			declaredRetType  Type
+		}
+		var methodItems []*methodWorkItem
+
 		for _, m := range s.Methods {
 			methodScope := NewScope(inf.scope)
 			_ = methodScope.Declare("self", st)
@@ -892,6 +1223,16 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 				if pType == TypeUnknown {
 					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of struct '%s'", p.Name, m.Name, s.Name)
+				}
+
+				if p.DefaultValue != nil {
+					defT, err := inf.inferExpr(p.DefaultValue)
+					if err != nil {
+						return err
+					}
+					if pType != TypeUnknown && !IsAssignableTo(defT, pType) {
+						return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, pType, defT)
+					}
 				}
 
 				if p.IsVariadic {
@@ -933,46 +1274,28 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					inf.addWarning(m.BlockParam.Pos(), "Unknown type of block parameter '&%s' in method '%s' of struct '%s'", m.BlockParam.Name, m.Name, s.Name)
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
+				if m.BlockParam.DefaultValue != nil {
+					defT, err := inf.inferExpr(m.BlockParam.DefaultValue)
+					if err != nil {
+						return err
+					}
+					if blockT != TypeUnknown && !IsAssignableTo(defT, blockT) {
+						return inf.nodeErr(m.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", m.BlockParam.Name, blockT, defT)
+					}
+				}
 				_ = methodScope.Declare(m.BlockParam.Name, blockT)
 			}
 
-			prevScope := inf.scope
-			inf.scope = methodScope
-			var lastExprType Type = TypeUnknown
-			for _, bStmt := range m.Body {
-				if err := inf.inferStmt(bStmt); err != nil {
-					inf.scope = prevScope
-					return inf.nodeErr(bStmt, "%s", err.Error())
-				}
-				if es, ok := bStmt.(*ast.ExprStmt); ok {
-					if et, err := inf.inferExpr(es.Value); err == nil {
-						lastExprType = et
-					}
-				} else if rs, ok := bStmt.(*ast.ReturnStmt); ok {
-					if rs.Value != nil {
-						if et, err := inf.inferExpr(rs.Value); err == nil {
-							lastExprType = et
-						}
-					}
-				}
-			}
-			inf.scope = prevScope
-
-			var retType Type = TypeUnknown
+			var declaredRetType Type = TypeUnknown
 			if m.ReturnType != "" {
 				t, err := inf.parseTypeAnnot(m.ReturnType)
 				if err != nil {
 					return inf.nodeErr(m, "%s", err.Error())
 				}
-				retType = t
+				declaredRetType = t
 			} else if m.Name == "init" {
-				retType = st
-			} else if lastExprType != nil && lastExprType != TypeUnknown {
-				retType = lastExprType
-			} else {
-				inf.addWarning(m.Pos(), "Unknown type of return value in method '%s' of struct '%s'", m.Name, s.Name)
+				declaredRetType = st
 			}
-
 
 			mType := &FuncType{
 				Arg: &TupleType{
@@ -983,8 +1306,16 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				MaxArity:   maxArity,
 				BlockParam: blockT,
 				BlockOpt:   blockOpt,
-				Ret:        retType,
+				Ret:        declaredRetType,
 			}
+
+			methodItems = append(methodItems, &methodWorkItem{
+				methodDef:       m,
+				methodType:      mType,
+				methodScope:     methodScope,
+				declaredRetType: declaredRetType,
+			})
+
 			if existing, ok := st.Methods[m.Name]; ok && (m.Name == "+" || m.Name == "-") {
 				var unaryFT, binaryFT *FuncType
 				if mType.MaxArity == 0 && existing.MinArity >= 1 {
@@ -1012,6 +1343,39 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 			} else {
 				st.Methods[m.Name] = mType
+			}
+		}
+
+		// Pass B: Infer method bodies using inferFuncBody
+		for _, item := range methodItems {
+			m := item.methodDef
+			prevScope := inf.scope
+			inf.scope = item.methodScope
+			checkDeclaredRet := item.declaredRetType
+			if m.Name == "init" {
+				checkDeclaredRet = TypeUnknown
+			}
+			err := inf.inferFuncBody(m.Body, item.methodType, checkDeclaredRet, m.Pos(), m.Name, true, s.Name)
+			inf.scope = prevScope
+			if err != nil {
+				return err
+			}
+			if m.Name == "init" {
+				item.methodType.Ret = st
+			}
+		}
+
+		// Rebuild overloaded operator method types (+ / -) now that method bodies have inferred Ret
+		for _, opName := range []string{"+", "-"} {
+			if existing, ok := st.Methods[opName]; ok && len(existing.Overloads) == 2 {
+				unaryFT := existing.Overloads[0]
+				binaryFT := existing.Overloads[1]
+				ret := binaryFT.Ret
+				if !unaryFT.Ret.Equals(binaryFT.Ret) {
+					ret = NewUnionType(unaryFT.Ret, binaryFT.Ret)
+				}
+				existing.Ret = ret
+				existing.OverloadUnion = fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String())
 			}
 		}
 
@@ -1264,6 +1628,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		switch e.Op {
 		case "+", "-":
+			if t == TypeUnknown {
+				return TypeUnknown, nil
+			}
 			if t == TypeFloat {
 				return TypeFloat, nil
 			}
@@ -1331,6 +1698,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		switch e.Op {
 		case "+":
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				return TypeUnknown, nil
+			}
 			if leftT == TypeBytes && rightT == TypeBytes {
 				return TypeBytes, nil
 			}
@@ -1345,6 +1715,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return TypeInt, nil
 		case "-", "*", "/", "%":
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				return TypeUnknown, nil
+			}
 			if leftT == TypeBytes || rightT == TypeBytes {
 				return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
 			}
@@ -1464,6 +1837,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return iface, nil
 		}
 		if fnT, ok := calleeT.(*FuncType); ok {
+			if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
+				inf.funcCtx.selfCalled = true
+			}
 			args := e.Args
 			if fnT.BlockParam != nil {
 				if e.Block != nil {
@@ -1615,6 +1991,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		if _, err := inf.inferExpr(e.Index); err != nil {
+			return nil, err
+		}
 		if st, ok := targetT.(*StructType); ok {
 			if m, err := st.LookupMember("[]"); err == nil {
 				if fnT, ok := m.(*FuncType); ok {
@@ -1629,7 +2008,23 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		if tt, ok := targetT.(*TupleType); ok {
 			if len(tt.Elems) > 0 {
-				return tt.Elems[0], nil
+				if !tt.IsVariadic {
+					if intLit, ok := e.Index.(*ast.IntLit); ok {
+						idx := int(intLit.Value)
+						if idx >= 0 && idx < len(tt.Elems) {
+							return tt.Elems[idx], nil
+						}
+					} else if uExpr, ok := e.Index.(*ast.UnaryExpr); ok && uExpr.Op == "-" {
+						if intLit, ok := uExpr.Expr.(*ast.IntLit); ok {
+							idx := len(tt.Elems) - int(intLit.Value)
+							if idx >= 0 && idx < len(tt.Elems) {
+								return tt.Elems[idx], nil
+							}
+						}
+					}
+					return NewUnionType(tt.Elems...), nil
+				}
+				return NewUnionType(tt.Elems...), nil
 			}
 		} else if dt, ok := targetT.(*DictType); ok {
 			return dt.Value, nil
@@ -1659,64 +2054,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		return TypeBool, nil
 	case *ast.MatchExpr:
-		_, err := inf.inferExpr(e.Target)
-		if err != nil {
-			return nil, err
-		}
-		var caseTypes []Type
-		for _, c := range e.Cases {
-			caseScope := NewScope(inf.scope)
-			if c.TuplePattern != nil {
-				for _, name := range c.TuplePattern.Elements {
-					if name != "_" {
-						_ = caseScope.Declare(name, TypeUnknown)
-					}
-				}
-				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
-				}
-			} else {
-				pat := strings.TrimSpace(c.Pattern)
-				if pat != "" && pat != "_" && pat != "true" && pat != "false" {
-					if _, err := inf.parseTypeAnnot(pat); err != nil {
-						return nil, err
-					}
-				}
-			}
+		t, _, err := inf.inferMatchExpr(e)
+		return t, err
 
-			prevScope := inf.scope
-			inf.scope = caseScope
-
-			var lastT Type = TypeUnknown
-			for _, stmt := range c.Body {
-				if es, ok := stmt.(*ast.ExprStmt); ok {
-					t, err := inf.inferExpr(es.Value)
-					if err != nil {
-						inf.scope = prevScope
-						return nil, err
-					}
-					lastT = t
-				} else if rs, ok := stmt.(*ast.ReturnStmt); ok {
-					t, err := inf.inferExpr(rs.Value)
-					if err != nil {
-						inf.scope = prevScope
-						return nil, err
-					}
-					lastT = t
-				} else {
-					if err := inf.inferStmt(stmt); err != nil {
-						inf.scope = prevScope
-						return nil, err
-					}
-				}
-			}
-			inf.scope = prevScope
-			caseTypes = append(caseTypes, lastT)
-		}
-		if len(caseTypes) == 0 {
-			return TypeUnknown, nil
-		}
-		return NewUnionType(caseTypes...), nil
 	case *ast.LambdaExpr:
 		paramTypes := make([]Type, len(e.Params))
 		callerParamTypes := make([]Type, len(e.Params))
@@ -1765,39 +2105,38 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			_ = childScope.Declare(p.Name, paramTypes[i])
 		}
 
+		closureCtx := &breakTargetCtx{
+			parent: inf.breakCtx,
+			isLoop: false,
+		}
+		prevBreakCtx := inf.breakCtx
+		inf.breakCtx = closureCtx
+
 		prevScope := inf.scope
 		inf.scope = childScope
-		var lastT Type = TypeUnknown
-		for _, stmt := range e.Body {
-			if es, ok := stmt.(*ast.ExprStmt); ok {
-				t, err := inf.inferExpr(es.Value)
-				if err != nil {
-					inf.scope = prevScope
-					return nil, err
-				}
-				lastT = t
-			} else if rs, ok := stmt.(*ast.ReturnStmt); ok {
-				t, err := inf.inferExpr(rs.Value)
-				if err != nil {
-					inf.scope = prevScope
-					return nil, err
-				}
-				lastT = t
-			} else if bs, ok := stmt.(*ast.BreakStmt); ok {
-				t, err := inf.inferExpr(bs.Value)
-				if err != nil {
-					inf.scope = prevScope
-					return nil, err
-				}
-				lastT = t
-			} else {
-				if err := inf.inferStmt(stmt); err != nil {
-					inf.scope = prevScope
-					return nil, err
-				}
-			}
-		}
+
+		ftTypes, canFT, err := inf.inferBlock(e.Body)
+
 		inf.scope = prevScope
+		inf.breakCtx = prevBreakCtx
+
+		if err != nil {
+			return nil, err
+		}
+
+		var allRetTypes []Type
+		allRetTypes = append(allRetTypes, closureCtx.breakTypes...)
+		if canFT {
+			allRetTypes = append(allRetTypes, ftTypes...)
+		}
+
+		var retT Type = TypeUnknown
+		if len(allRetTypes) > 0 {
+			retT = NewUnionType(allRetTypes...)
+		} else if canFT {
+			retT = &TupleType{Elems: []Type{}}
+		}
+
 		return &FuncType{
 			Arg: &TupleType{
 				Elems:      callerParamTypes,
@@ -1805,7 +2144,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			},
 			MinArity: minArity,
 			MaxArity: maxArity,
-			Ret:      lastT,
+			Ret:      retT,
 		}, nil
 	case *ast.BlockLiteral:
 		return inf.inferExpr(&ast.LambdaExpr{
@@ -2141,4 +2480,112 @@ func isEmptyCollection(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+func containsUnknown(t Type) bool {
+	if t == nil || t == TypeUnknown {
+		return true
+	}
+	switch v := t.(type) {
+	case *TupleType:
+		for _, el := range v.Elems {
+			if containsUnknown(el) {
+				return true
+			}
+		}
+	case *DictType:
+		return containsUnknown(v.Key) || containsUnknown(v.Value)
+	case *UnionType:
+		for _, m := range v.Members {
+			if containsUnknown(m) {
+				return true
+			}
+		}
+	case *FuncType:
+		return containsUnknown(v.Arg) || containsUnknown(v.Ret)
+	}
+	return false
+}
+
+func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
+	emptyTuple := &TupleType{Elems: []Type{}}
+	targetT, err := inf.inferExpr(e.Target)
+	if err != nil {
+		return nil, false, err
+	}
+	var caseTypes []Type
+	allCasesTerminated := (len(e.Cases) > 0)
+	hasWildcard := false
+	hasTrue := false
+	hasFalse := false
+	var coveredTypes []Type
+
+	for _, c := range e.Cases {
+		caseScope := NewScope(inf.scope)
+		if c.TuplePattern != nil {
+			for _, name := range c.TuplePattern.Elements {
+				if name != "_" {
+					_ = caseScope.Declare(name, TypeUnknown)
+				}
+			}
+			if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+				_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
+			}
+		} else {
+			pat := strings.TrimSpace(c.Pattern)
+			if pat == "_" {
+				hasWildcard = true
+			} else if pat == "true" {
+				hasTrue = true
+			} else if pat == "false" {
+				hasFalse = true
+			} else if pat != "" {
+				patT, err := inf.parseTypeAnnot(pat)
+				if err != nil {
+					return nil, false, err
+				}
+				coveredTypes = append(coveredTypes, patT)
+				// If target is an identifier, narrow its type inside this case scope
+				if id, isId := e.Target.(*ast.Identifier); isId {
+					_ = caseScope.Declare(id.Name, patT)
+				}
+			}
+		}
+
+		prevScope := inf.scope
+		inf.scope = caseScope
+
+		ftTypes, canFT, err := inf.inferBlock(c.Body)
+		inf.scope = prevScope
+		if err != nil {
+			return nil, false, err
+		}
+
+		if canFT {
+			allCasesTerminated = false
+			caseTypes = append(caseTypes, ftTypes...)
+		}
+	}
+
+	isExhaustive := hasWildcard
+	if !isExhaustive && targetT != nil && targetT != TypeUnknown {
+		if targetT == TypeBool && hasTrue && hasFalse {
+			isExhaustive = true
+		} else if len(coveredTypes) > 0 && IsAssignableTo(targetT, NewUnionType(coveredTypes...)) {
+			isExhaustive = true
+		}
+	}
+
+	if allCasesTerminated && isExhaustive {
+		return TypeUnknown, false, nil
+	}
+
+	if len(caseTypes) == 0 {
+		return emptyTuple, true, nil
+	}
+
+	if !isExhaustive {
+		caseTypes = append(caseTypes, emptyTuple)
+	}
+	return NewUnionType(caseTypes...), true, nil
 }
