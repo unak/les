@@ -1451,9 +1451,12 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		// Next, process direct methods on interface
 		for _, m := range s.Methods {
-			paramTypes := make([]Type, len(m.Params))
+			paramTypes := make([]Type, 0, len(m.Params))
 			minArity := 0
-			for i, p := range m.Params {
+			for _, p := range m.Params {
+				if p.Name == "self" {
+					continue
+				}
 				var pType Type = TypeUnknown
 				if p.TypeAnnot != "" {
 					t, err := inf.parseTypeAnnot(p.TypeAnnot)
@@ -1464,12 +1467,12 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				} else {
 					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of interface '%s'", p.Name, m.Name, s.Name)
 				}
-				paramTypes[i] = pType
+				paramTypes = append(paramTypes, pType)
 				if p.DefaultValue == nil && !p.IsVariadic {
 					minArity++
 				}
 			}
-			maxArity := len(m.Params)
+			maxArity := len(paramTypes)
 			var blockT Type
 			blockOpt := false
 			if m.BlockParam != nil {

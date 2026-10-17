@@ -4322,6 +4322,30 @@ print (42 is BadNot)
 	if outStruct != expectedStruct {
 		t.Fatalf("expected struct:\n%s\ngot:\n%s", expectedStruct, outStruct)
 	}
+	// Interface with explicit self and builtin operator arity matching
+	extraCode := `
+interface Negatable:
+    -(): Int
+
+interface Adder:
+    +(other: Int): Int
+
+interface ExplicitSelfBitwise:
+    ~(self): Int
+    &(self, other: Int): Int
+
+print (10 is Negatable), " "
+print (10 is Adder), " "
+print (10 is ExplicitSelfBitwise)
+`
+	outExtra, err := runLesCode(extraCode)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expectedExtra := "true true true"
+	if outExtra != expectedExtra {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expectedExtra, outExtra)
+	}
 }
 
 

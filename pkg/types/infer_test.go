@@ -1609,6 +1609,39 @@ b4 = b1 & b2
 			t.Fatalf("expected type error for %q, got nil", bad)
 		}
 	}
+	// Interface with explicit self and builtin operator method interfaces
+	testIfaceCode := `
+interface Negatable:
+    -(): Int
+
+struct S:
+    val: Int
+    def ~(self):
+        S(val: ~self.val)
+    def &(self, other: S):
+        S(val: self.val & other.val)
+
+interface ExplicitSelf:
+    ~(self): S
+    &(self, other: S): S
+
+interface ExplicitSelfInt:
+    ~(self): Int
+    &(self, other: Int): Int
+
+interface Adder:
+    +(other: Int): Int
+
+var neg: Negatable = 42
+var add: Adder = 42
+var es: ExplicitSelf = S(val: 10)
+var esi: ExplicitSelfInt = 42
+`
+	progIface := parser.NewParser(lexer.NewLexer(testIfaceCode)).ParseProgram()
+	infIface := NewInferencer()
+	if err := infIface.InferProgram(progIface); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
 }
 
 

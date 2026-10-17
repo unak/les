@@ -2988,7 +2988,12 @@ func splitTopLevelCommas(s string) []string {
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
 	// Check all direct methods required by the interface
 	for mName, sig := range iface.Methods {
-		expectedCount := len(sig.Params)
+		expectedCount := 0
+		for _, p := range sig.Params {
+			if p.Name != "self" {
+				expectedCount++
+			}
+		}
 		if sig.BlockParam != nil {
 			expectedCount++
 		}
@@ -3015,10 +3020,6 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 			if fn.BlockParam != nil {
 				nonSelfCount++
 			}
-			expectedCount := len(sig.Params)
-			if sig.BlockParam != nil {
-				expectedCount++
-			}
 			if nonSelfCount != expectedCount {
 				return false
 			}
@@ -3035,17 +3036,10 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 			} else {
 				if ft, ok := fn.FuncType.(*types.FuncType); ok && ft != nil {
-					if ft.OverloadUnion != "" {
-						if ft.MinArity > expectedCount || (ft.MaxArity > 0 && ft.MaxArity < expectedCount) {
-							return false
-						}
-					} else if tup, ok := ft.Arg.(*types.TupleType); ok {
-						if !tup.IsVariadic && len(tup.Elems) != expectedCount {
-							return false
-						}
-						if tup.IsVariadic && expectedCount < len(tup.Elems) {
-							return false
-						}
+					minA := ft.MinArgs()
+					maxA := ft.MaxArgs()
+					if expectedCount < minA || (maxA >= 0 && expectedCount > maxA) {
+						return false
 					}
 					if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil {
 						if env != nil && env.Inferencer != nil {

@@ -491,7 +491,26 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			}
 			continue
 		}
-		if !targetSig.Equals(srcSig) {
+		matched := targetSig.Equals(srcSig)
+		if !matched && len(srcSig.Overloads) > 0 {
+			for _, ov := range srcSig.Overloads {
+				if targetSig.Equals(ov) {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched && (srcSig.MinArity > 0 || srcSig.MaxArity > 0) {
+			if targetTup, ok := targetSig.Arg.(*TupleType); ok {
+				targetCount := len(targetTup.Elems)
+				if targetCount >= srcSig.MinArgs() && (srcSig.MaxArgs() < 0 || targetCount <= srcSig.MaxArgs()) {
+					if targetSig.Ret == TypeUnknown || srcSig.Ret == TypeUnknown || targetSig.Ret.Equals(srcSig.Ret) {
+						matched = true
+					}
+				}
+			}
+		}
+		if !matched {
 			return false
 		}
 	}
@@ -632,18 +651,26 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			return &FuncType{
 				Arg:           &TupleType{Elems: []Type{TypeInt}},
 				OverloadUnion: "() -> Int | (Int) -> Int",
-				MinArity:      0,
-				MaxArity:      1,
-				Ret:           TypeInt,
+				Overloads: []*FuncType{
+					{Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+					{Arg: &TupleType{Elems: []Type{TypeInt}}, Ret: TypeInt},
+				},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeInt,
 			}, true
 		}
 		if t == TypeFloat {
 			return &FuncType{
 				Arg:           &TupleType{Elems: []Type{TypeFloat}},
 				OverloadUnion: "() -> Float | (Float) -> Float",
-				MinArity:      0,
-				MaxArity:      1,
-				Ret:           TypeFloat,
+				Overloads: []*FuncType{
+					{Arg: &TupleType{Elems: []Type{}}, Ret: TypeFloat},
+					{Arg: &TupleType{Elems: []Type{TypeFloat}}, Ret: TypeFloat},
+				},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeFloat,
 			}, true
 		}
 		if t == TypeString {
@@ -663,18 +690,26 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			return &FuncType{
 				Arg:           &TupleType{Elems: []Type{TypeInt}},
 				OverloadUnion: "() -> Int | (Int) -> Int",
-				MinArity:      0,
-				MaxArity:      1,
-				Ret:           TypeInt,
+				Overloads: []*FuncType{
+					{Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+					{Arg: &TupleType{Elems: []Type{TypeInt}}, Ret: TypeInt},
+				},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeInt,
 			}, true
 		}
 		if t == TypeFloat {
 			return &FuncType{
 				Arg:           &TupleType{Elems: []Type{TypeFloat}},
 				OverloadUnion: "() -> Float | (Float) -> Float",
-				MinArity:      0,
-				MaxArity:      1,
-				Ret:           TypeFloat,
+				Overloads: []*FuncType{
+					{Arg: &TupleType{Elems: []Type{}}, Ret: TypeFloat},
+					{Arg: &TupleType{Elems: []Type{TypeFloat}}, Ret: TypeFloat},
+				},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeFloat,
 			}, true
 		}
 	case "*", "/", "%":
