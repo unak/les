@@ -54,6 +54,7 @@ func runPipeline(codeBytes []byte, filename string, baseDir string, scriptArgs [
 	// 1. Lexer & Parser
 	l := lexer.NewLexer(string(codeBytes))
 	p := parser.NewParser(l)
+	p.SetFilename(filename)
 	prog := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		for _, parseErr := range p.Errors() {

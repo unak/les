@@ -180,3 +180,51 @@ func TestRunREPLPlaceholder(t *testing.T) {
 		t.Fatalf("expected REPL not yet implemented error, got %v", err)
 	}
 }
+
+func TestErrorReportingFormat(t *testing.T) {
+	// Syntax error
+	l := lexer.NewLexer("x = 10 + ;")
+	p := parser.NewParser(l)
+	p.SetFilename("test.les")
+	p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		t.Fatalf("expected syntax errors")
+	}
+	expectedSyntax := "test.les:1: unexpected token ';' at col 10"
+	if p.Errors()[0] != expectedSyntax {
+		t.Fatalf("expected syntax error %q, got %q", expectedSyntax, p.Errors()[0])
+	}
+
+	// Type error
+	lType := lexer.NewLexer("x: Int = \"str\";")
+	pType := parser.NewParser(lType)
+	pType.SetFilename("type_test.les")
+	progType := pType.ParseProgram()
+	inf := types.NewInferencer()
+	typeErr := inf.InferProgram(progType)
+	if typeErr == nil {
+		t.Fatalf("expected type error")
+	}
+	expectedType := "type_test.les:1: type mismatch for variable 'x': expected Int, got String at col 1"
+	if typeErr.Error() != expectedType {
+		t.Fatalf("expected type error %q, got %q", expectedType, typeErr.Error())
+	}
+
+	// Runtime error
+	lRun := lexer.NewLexer("x = 10\nprint((x)[0])")
+	pRun := parser.NewParser(lRun)
+	pRun.SetFilename("run_test.les")
+	progRun := pRun.ParseProgram()
+	ev := eval.NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	_, runErr := ev.EvalProgram(progRun)
+	if runErr == nil {
+		t.Fatalf("expected runtime error")
+	}
+	expectedRun := "run_test.les:2: cannot index non-tuple/non-string/non-bytes/non-dict value: 10 at col 10"
+	if runErr.Error() != expectedRun {
+		t.Fatalf("expected runtime error %q, got %q", expectedRun, runErr.Error())
+	}
+}
+

@@ -577,6 +577,27 @@ func PeekEvaluated(v Value) (Value, bool) {
 	}
 }
 
+// FormatRuntimeError attaches file and position information to a runtime error if not already formatted.
+func FormatRuntimeError(filename string, pos ast.Position, err error) error {
+	if err == nil {
+		return nil
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, " at col ") {
+		return err
+	}
+	if pos.Line > 0 {
+		if filename != "" {
+			return fmt.Errorf("%s:%d: %v at col %d", filename, pos.Line, err, pos.Col)
+		}
+		return fmt.Errorf("%d: %v at col %d", pos.Line, err, pos.Col)
+	}
+	if filename != "" {
+		return fmt.Errorf("%s: %v", filename, err)
+	}
+	return err
+}
+
 // Force drives evaluation of Thunk until a concrete non-Thunk value is reached.
 func Force(v Value) Value {
 	for {
@@ -602,7 +623,16 @@ func Force(v Value) Value {
 			val = &TupleValue{Elements: []Value{}}
 		}
 		if err != nil {
-			panic(fmt.Sprintf("runtime error in thunk: %v", err))
+			pos := ast.Position{}
+			if thunk.Expr != nil {
+				pos = thunk.Expr.Pos()
+			}
+			fn := ""
+			if thunk.Env != nil {
+				fn = thunk.Env.Filename
+			}
+			formatted := FormatRuntimeError(fn, pos, err)
+			panic(fmt.Sprintf("runtime error in thunk: %v", formatted))
 		}
 		thunk.Value = val // do not force lazily wrapped container elements
 		thunk.Evaluated = true
@@ -628,6 +658,7 @@ type Environment struct {
 	EnclosingFuncID    uint64                                  // 0 means top-level
 	ActiveClosureID    uint64                                  // 0 means not directly inside a closure call
 	ActiveLoopID       uint64                                  // 0 means not inside a loop
+	Filename           string                                  // source file name for error reporting
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -643,14 +674,17 @@ func NewEnvironment(parent *Environment) *Environment {
 		env.EnclosingFuncID = parent.EnclosingFuncID
 		env.ActiveClosureID = parent.ActiveClosureID
 		env.ActiveLoopID = parent.ActiveLoopID
+		env.Filename = parent.Filename
 	}
 	return env
 }
 
 // ReturnSignal carries the returned value and the target function call ID.
 type ReturnSignal struct {
-	FuncID uint64
-	Value  Value
+	FuncID   uint64
+	Value    Value
+	Pos      ast.Position
+	Filename string
 }
 
 // BreakSignal carries the break value and the target closure/loop call ID.
@@ -658,12 +692,16 @@ type BreakSignal struct {
 	ClosureID uint64
 	LoopID    uint64
 	Value     Value
+	Pos       ast.Position
+	Filename  string
 }
 
 // ContinueSignal signals skipping to the next iteration of the loop.
 type ContinueSignal struct {
 	ClosureID uint64
 	LoopID    uint64
+	Pos       ast.Position
+	Filename  string
 }
 
 func (env *Environment) Get(name string) (Value, bool) {

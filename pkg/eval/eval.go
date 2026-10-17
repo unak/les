@@ -368,10 +368,16 @@ func (ev *Evaluator) SetArgs(args []string) {
 
 func (ev *Evaluator) SetProgramName(name string) {
 	ev.builtinsEnv.Set("ProgramName", StringValue(name))
+	if ev.builtinsEnv.Filename == "" {
+		ev.builtinsEnv.Filename = name
+	}
 }
 
 func (ev *Evaluator) SetScriptName(name string) {
 	ev.globalEnv.Set("scriptName", StringValue(name))
+	if ev.globalEnv.Filename == "" {
+		ev.globalEnv.Filename = name
+	}
 }
 
 // ExitError indicates that exit() was called to terminate execution.
@@ -492,6 +498,14 @@ func typeNameWithDepth(val Value, depth int) string {
 }
 
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
+	if prog != nil && prog.Filename != "" {
+		if ev.globalEnv != nil {
+			ev.globalEnv.Filename = prog.Filename
+		}
+		if ev.builtinsEnv != nil {
+			ev.builtinsEnv.Filename = prog.Filename
+		}
+	}
 	if ev.inferencer == nil {
 		inf := types.NewInferencer()
 		if ev.fileModuleLoader != nil {
@@ -516,16 +530,21 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 				return
 			}
 			ev.globalEnv.ResetBufioWritersOnError()
-			if _, ok := r.(*ReturnSignal); ok {
-				err = fmt.Errorf("return outside of function")
+			if retSig, ok := r.(*ReturnSignal); ok {
+				err = FormatRuntimeError(retSig.Filename, retSig.Pos, fmt.Errorf("return outside of function"))
 				return
 			}
-			if _, ok := r.(*BreakSignal); ok {
-				err = fmt.Errorf("break outside of closure")
+			if brkSig, ok := r.(*BreakSignal); ok {
+				err = FormatRuntimeError(brkSig.Filename, brkSig.Pos, fmt.Errorf("break outside of closure"))
 				return
 			}
 			// Runtime error (panic): A3: do NOT flush on runtime error
-			err = fmt.Errorf("%v", r)
+			rawMsg := fmt.Sprintf("%v", r)
+			const thunkPrefix = "runtime error in thunk: "
+			if strings.HasPrefix(rawMsg, thunkPrefix) {
+				rawMsg = strings.TrimPrefix(rawMsg, thunkPrefix)
+			}
+			err = fmt.Errorf("%s", rawMsg)
 			return
 		}
 		// Normal completion without panic/exit
@@ -543,7 +562,7 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	for _, stmt := range prog.Body {
 		v, e := ev.globalEnv.evalStmt(stmt)
 		if e != nil {
-			return nil, e
+			return nil, FormatRuntimeError(ev.globalEnv.Filename, stmt.Pos(), e)
 		}
 		if v != nil {
 			lastVal = v
@@ -808,8 +827,10 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		}
 
 		panic(&ReturnSignal{
-			FuncID: env.EnclosingFuncID,
-			Value:  retVal,
+			FuncID:   env.EnclosingFuncID,
+			Value:    retVal,
+			Pos:      s.Pos(),
+			Filename: env.Filename,
 		})
 
 	case *ast.BreakStmt:
@@ -824,30 +845,38 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 		if env.ActiveLoopID != 0 {
 			panic(&BreakSignal{
-				LoopID: env.ActiveLoopID,
-				Value:  brkVal,
+				LoopID:   env.ActiveLoopID,
+				Value:    brkVal,
+				Pos:      s.Pos(),
+				Filename: env.Filename,
 			})
 		}
 		if env.ActiveClosureID != 0 {
 			panic(&BreakSignal{
 				ClosureID: env.ActiveClosureID,
 				Value:     brkVal,
+				Pos:       s.Pos(),
+				Filename:  env.Filename,
 			})
 		}
-		return nil, fmt.Errorf("break outside of closure or loop")
+		return nil, FormatRuntimeError(env.Filename, s.Pos(), fmt.Errorf("break outside of closure or loop"))
 
 	case *ast.ContinueStmt:
 		if env.ActiveLoopID != 0 {
 			panic(&ContinueSignal{
-				LoopID: env.ActiveLoopID,
+				LoopID:   env.ActiveLoopID,
+				Pos:      s.Pos(),
+				Filename: env.Filename,
 			})
 		}
 		if env.ActiveClosureID != 0 {
 			panic(&ContinueSignal{
 				ClosureID: env.ActiveClosureID,
+				Pos:       s.Pos(),
+				Filename:  env.Filename,
 			})
 		}
-		return nil, fmt.Errorf("continue outside of loop")
+		return nil, FormatRuntimeError(env.Filename, s.Pos(), fmt.Errorf("continue outside of loop"))
 
 	case *ast.ForStmt:
 		return env.evalForStmt(s)
@@ -935,7 +964,7 @@ func (env *Environment) evalBlock(body []ast.Stmt) (Value, error) {
 	for _, stmt := range body {
 		v, err := env.evalStmt(stmt)
 		if err != nil {
-			return nil, err
+			return nil, FormatRuntimeError(env.Filename, stmt.Pos(), err)
 		}
 		if v != nil {
 			lastVal = v

@@ -60,6 +60,7 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleType, error) {
 	// Lex & Parse
 	l := lexer.NewLexer(string(contentBytes))
 	p := parser.NewParser(l)
+	p.SetFilename(targetFile)
 	prog := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("syntax error in module '%s': %s", modPath, strings.Join(p.Errors(), "; "))

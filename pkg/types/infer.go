@@ -54,6 +54,7 @@ type Inferencer struct {
 	moduleLoader func(path string) (*ModuleType, error)
 	ExprTypes    map[ast.Expr]Type
 	StmtTypes    map[ast.Stmt]Type
+	filename     string
 }
 
 var BuiltinBytesFuncType = &FuncType{
@@ -441,6 +442,33 @@ func (inf *Inferencer) Scope() *Scope {
 	return inf.scope
 }
 
+func (inf *Inferencer) SetFilename(filename string) {
+	inf.filename = filename
+}
+
+func (inf *Inferencer) nodeErr(node ast.Node, format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	// Avoid double-formatting if message already begins with location
+	if strings.Contains(msg, " at col ") {
+		return fmt.Errorf("%s", msg)
+	}
+	fn := inf.filename
+	pos := ast.Position{}
+	if node != nil {
+		pos = node.Pos()
+	}
+	if pos.Line > 0 {
+		if fn != "" {
+			return fmt.Errorf("%s:%d: %s at col %d", fn, pos.Line, msg, pos.Col)
+		}
+		return fmt.Errorf("%d: %s at col %d", pos.Line, msg, pos.Col)
+	}
+	if fn != "" {
+		return fmt.Errorf("%s: %s", fn, msg)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 func (inf *Inferencer) freshVar() *TypeVar {
 	v := &TypeVar{ID: inf.nextVarID}
 	inf.nextVarID++
@@ -448,9 +476,12 @@ func (inf *Inferencer) freshVar() *TypeVar {
 }
 
 func (inf *Inferencer) InferProgram(prog *ast.Program) error {
+	if prog.Filename != "" {
+		inf.filename = prog.Filename
+	}
 	for _, stmt := range prog.Body {
 		if err := inf.inferStmt(stmt); err != nil {
-			return err
+			return inf.nodeErr(stmt, "%s", err.Error())
 		}
 	}
 	return nil
@@ -470,13 +501,13 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				return err
 			}
 			if !IsAssignableTo(valType, expected) {
-				return fmt.Errorf("type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
+				return inf.nodeErr(s, "type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
 			}
 			targetType = expected
 		}
 		// Enforce same-scope duplicate declaration prohibition
 		if err := inf.scope.Declare(s.Name, targetType); err != nil {
-			return err
+			return inf.nodeErr(s, "%s", err.Error())
 		}
 		return nil
 
@@ -538,7 +569,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				if elemType != TypeUnknown && !IsAssignableTo(defT, elemType) {
-					return fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
+					return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
 				}
 			} else if !p.IsVariadic {
 				minArity++
@@ -576,7 +607,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				if blockT != TypeUnknown && !IsAssignableTo(defT, blockT) {
-					return fmt.Errorf("type mismatch in default value for block parameter '&%s': expected %s, got %s", s.BlockParam.Name, blockT, defT)
+					return inf.nodeErr(s.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", s.BlockParam.Name, blockT, defT)
 				}
 			}
 		}
@@ -606,19 +637,19 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		// Function declaration in current scope
 		if err := inf.scope.Declare(s.Name, fnType); err != nil {
-			return err
+			return inf.nodeErr(s, "%s", err.Error())
 		}
 
 		// Create child scope for function parameters and body (shadowing allowed)
 		childScope := NewScope(inf.scope)
 		for i, p := range s.Params {
 			if err := childScope.Declare(p.Name, paramTypes[i]); err != nil {
-				return fmt.Errorf("duplicate parameter '%s' in function '%s'", p.Name, s.Name)
+				return inf.nodeErr(s, "duplicate parameter '%s' in function '%s'", p.Name, s.Name)
 			}
 		}
 		if s.BlockParam != nil {
 			if err := childScope.Declare(s.BlockParam.Name, blockT); err != nil {
-				return fmt.Errorf("duplicate parameter '&%s' in function '%s'", s.BlockParam.Name, s.Name)
+				return inf.nodeErr(s, "duplicate parameter '&%s' in function '%s'", s.BlockParam.Name, s.Name)
 			}
 		}
 
@@ -646,7 +677,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		if s.ReturnType != "" {
 			if !IsAssignableTo(lastT, declaredRetType) {
-				return fmt.Errorf("return type mismatch in function '%s': expected %s, got %s", s.Name, declaredRetType, lastT)
+				return inf.nodeErr(s, "return type mismatch in function '%s': expected %s, got %s", s.Name, declaredRetType, lastT)
 			}
 		} else if lastT != TypeUnknown {
 			fnType.Ret = lastT
@@ -724,18 +755,18 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		st, ok := targetT.(*StructType)
 		if !ok {
-			return fmt.Errorf("cannot assign member '%s' on non-struct type %s", s.Member, targetT)
+			return inf.nodeErr(s, "cannot assign member '%s' on non-struct type %s", s.Member, targetT)
 		}
 		expectedT, ok := st.Fields[s.Member]
 		if !ok {
-			return fmt.Errorf("struct '%s' has no field '%s'", st.Name, s.Member)
+			return inf.nodeErr(s, "struct '%s' has no field '%s'", st.Name, s.Member)
 		}
 		valT, err := inf.inferExpr(s.Value)
 		if err != nil {
 			return err
 		}
 		if !IsAssignableTo(valT, expectedT) {
-			return fmt.Errorf("cannot assign type %s to field '%s' of type %s in struct '%s'", valT, s.Member, expectedT, st.Name)
+			return inf.nodeErr(s, "cannot assign type %s to field '%s' of type %s in struct '%s'", valT, s.Member, expectedT, st.Name)
 		}
 		return nil
 
@@ -753,7 +784,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		// Declare struct type in current scope so methods/self can reference it
 		if err := inf.scope.Declare(s.Name, st); err != nil {
-			return err
+			return inf.nodeErr(s, "%s", err.Error())
 		}
 
 		// Process fields
@@ -761,11 +792,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if f.IsEmbedded {
 				embType, ok := inf.scope.Lookup(f.TypeAnnot)
 				if !ok {
-					return fmt.Errorf("undefined embedded struct '%s' in struct '%s'", f.TypeAnnot, s.Name)
+					return inf.nodeErr(s, "undefined embedded struct '%s' in struct '%s'", f.TypeAnnot, s.Name)
 				}
 				embStruct, ok := embType.(*StructType)
 				if !ok {
-					return fmt.Errorf("cannot embed non-struct type '%s' in struct '%s'", f.TypeAnnot, s.Name)
+					return inf.nodeErr(s, "cannot embed non-struct type '%s' in struct '%s'", f.TypeAnnot, s.Name)
 				}
 				st.Embedded = append(st.Embedded, embStruct)
 				st.Fields[f.Name] = embStruct
@@ -859,7 +890,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			inf.scope = methodScope
 			var lastExprType Type = TypeUnknown
 			for _, bStmt := range m.Body {
-				_ = inf.inferStmt(bStmt)
+				if err := inf.inferStmt(bStmt); err != nil {
+					inf.scope = prevScope
+					return inf.nodeErr(bStmt, "%s", err.Error())
+				}
 				if es, ok := bStmt.(*ast.ExprStmt); ok {
 					if et, err := inf.inferExpr(es.Value); err == nil {
 						lastExprType = et
@@ -878,7 +912,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if m.ReturnType != "" {
 				t, err := inf.parseTypeAnnot(m.ReturnType)
 				if err != nil {
-					return err
+					return inf.nodeErr(m, "%s", err.Error())
 				}
 				retType = t
 			} else if m.Name == "init" {
@@ -976,18 +1010,18 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		for _, embName := range s.Embedded {
 			embType, ok := inf.scope.Lookup(embName)
 			if !ok {
-				return fmt.Errorf("undefined embedded interface '%s' in interface '%s'", embName, s.Name)
+				return inf.nodeErr(s, "undefined embedded interface '%s' in interface '%s'", embName, s.Name)
 			}
 			embIface, ok := embType.(*InterfaceType)
 			if !ok {
-				return fmt.Errorf("cannot embed non-interface type '%s' in interface '%s'", embName, s.Name)
+				return inf.nodeErr(s, "cannot embed non-interface type '%s' in interface '%s'", embName, s.Name)
 			}
 			iface.Embedded = append(iface.Embedded, embIface)
 
 			for mName, mSig := range embIface.Methods {
 				if existingSig, exists := iface.Methods[mName]; exists {
 					if !existingSig.Equals(mSig) {
-						return fmt.Errorf("conflicting method signatures for '%s' in embedded interface '%s' of '%s'", mName, embName, s.Name)
+						return inf.nodeErr(s, "conflicting method signatures for '%s' in embedded interface '%s' of '%s'", mName, embName, s.Name)
 					}
 				} else {
 					iface.Methods[mName] = mSig
@@ -996,7 +1030,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		if err := inf.scope.Declare(s.Name, iface); err != nil {
-			return err
+			return inf.nodeErr(s, "%s", err.Error())
 		}
 
 		// Next, process direct methods on interface
@@ -1050,7 +1084,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 			if existingSig, exists := iface.Methods[m.Name]; exists {
 				if !existingSig.Equals(mSig) {
-					return fmt.Errorf("method '%s' in interface '%s' conflicts with embedded method signature", m.Name, s.Name)
+					return inf.nodeErr(s, "method '%s' in interface '%s' conflicts with embedded method signature", m.Name, s.Name)
 				}
 			}
 			iface.Methods[m.Name] = mSig
@@ -1243,7 +1277,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return TypeBytes, nil
 			}
 			if leftT == TypeBytes || rightT == TypeBytes {
-				return nil, fmt.Errorf("cannot add %s and %s", leftT, rightT)
+				return nil, inf.nodeErr(e, "cannot add %s and %s", leftT, rightT)
 			}
 			if leftT == TypeString || rightT == TypeString {
 				return TypeString, nil
@@ -1254,7 +1288,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeInt, nil
 		case "-", "*", "/", "%":
 			if leftT == TypeBytes || rightT == TypeBytes {
-				return nil, fmt.Errorf("cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
+				return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
 			}
 			if leftT == TypeFloat || rightT == TypeFloat {
 				return TypeFloat, nil
@@ -1315,7 +1349,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 										return nil, err
 									}
 									if !IsAssignableTo(valT, expectedFieldT) {
-										return nil, fmt.Errorf("type mismatch for field '%s' in struct '%s': expected %s, got %s", named.Name, st.Name, expectedFieldT, valT)
+										return nil, inf.nodeErr(named.Value, "type mismatch for field '%s' in struct '%s': expected %s, got %s", named.Name, st.Name, expectedFieldT, valT)
 									}
 								}
 							} else {
@@ -1327,15 +1361,15 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						maxArgs := initFn.MaxArgs()
 						if !hasNamed {
 							if len(posArgs) < minArgs {
-								return nil, fmt.Errorf("struct '%s' constructor expects at least %d arguments, got %d", st.Name, minArgs, len(posArgs))
+								return nil, inf.nodeErr(e, "struct '%s' constructor expects at least %d arguments, got %d", st.Name, minArgs, len(posArgs))
 							}
 							if maxArgs != -1 && len(posArgs) > maxArgs {
-								return nil, fmt.Errorf("struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
+								return nil, inf.nodeErr(e, "struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
 							}
 						} else {
 							// When named arguments are present, positional arguments must not exceed maxArgs
 							if maxArgs != -1 && len(posArgs) > maxArgs {
-								return nil, fmt.Errorf("struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
+								return nil, inf.nodeErr(e, "struct '%s' constructor expects at most %d arguments, got %d", st.Name, maxArgs, len(posArgs))
 							}
 						}
 
@@ -1354,7 +1388,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 									return nil, err
 								}
 								if !IsAssignableTo(argT, expectedParamT) {
-									return nil, fmt.Errorf("type mismatch in argument %d of struct '%s' constructor: expected %s, got %s", i+1, st.Name, expectedParamT, argT)
+									return nil, inf.nodeErr(arg, "type mismatch in argument %d of struct '%s' constructor: expected %s, got %s", i+1, st.Name, expectedParamT, argT)
 								}
 							}
 						}
@@ -1380,10 +1414,10 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						return nil, err
 					}
 					if fnT.BlockParam != TypeUnknown && !IsAssignableTo(bT, fnT.BlockParam) {
-						return nil, fmt.Errorf("type mismatch for block argument: expected %s, got %s", fnT.BlockParam, bT)
+						return nil, inf.nodeErr(e.Block, "type mismatch for block argument: expected %s, got %s", fnT.BlockParam, bT)
 					}
 				} else if !fnT.BlockOpt {
-					return nil, fmt.Errorf("function requires a block argument (&block)")
+					return nil, inf.nodeErr(e, "function requires a block argument (&block)")
 				}
 			} else {
 				if e.Block != nil {
@@ -1395,10 +1429,10 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				minArgs := fnT.MinArgs()
 				maxArgs := fnT.MaxArgs()
 				if len(args) < minArgs {
-					return nil, fmt.Errorf("function expects at least %d arguments, got %d", minArgs, len(args))
+					return nil, inf.nodeErr(e, "function expects at least %d arguments, got %d", minArgs, len(args))
 				}
 				if maxArgs != -1 && len(args) > maxArgs {
-					return nil, fmt.Errorf("function expects at most %d arguments, got %d", maxArgs, len(args))
+					return nil, inf.nodeErr(e, "function expects at most %d arguments, got %d", maxArgs, len(args))
 				}
 				for i, argExpr := range args {
 					argT, err := inf.inferExpr(argExpr)
@@ -1408,12 +1442,12 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if i < len(argTuple.Elems) {
 						expectedParamT := argTuple.Elems[i]
 						if !IsAssignableTo(argT, expectedParamT) {
-							return nil, fmt.Errorf("type mismatch in argument %d: expected %s, got %s", i+1, expectedParamT, argT)
+							return nil, inf.nodeErr(argExpr, "type mismatch in argument %d: expected %s, got %s", i+1, expectedParamT, argT)
 						}
 					} else if argTuple.IsVariadic && len(argTuple.Elems) > 0 {
 						expectedParamT := argTuple.Elems[len(argTuple.Elems)-1]
 						if !IsAssignableTo(argT, expectedParamT) {
-							return nil, fmt.Errorf("type mismatch in variadic argument %d: expected %s, got %s", i+1, expectedParamT, argT)
+							return nil, inf.nodeErr(argExpr, "type mismatch in variadic argument %d: expected %s, got %s", i+1, expectedParamT, argT)
 						}
 					}
 				}
@@ -1446,7 +1480,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 							}
 							if expectedParamT != nil && !IsAssignableTo(argT, expectedParamT) {
 								typesMatch = false
-								lastMismatch = fmt.Errorf("type mismatch in argument %d: expected %s, got %s", i+1, expectedParamT, argT)
+								lastMismatch = inf.nodeErr(args[i], "type mismatch in argument %d: expected %s, got %s", i+1, expectedParamT, argT)
 								break
 							}
 						}
@@ -1460,7 +1494,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if lastMismatch != nil {
 						return nil, lastMismatch
 					}
-					return nil, fmt.Errorf("no matching signature for function call with %d arguments", len(args))
+					return nil, inf.nodeErr(e, "no matching signature for function call with %d arguments", len(args))
 				}
 			} else {
 				for _, argExpr := range args {
@@ -1494,7 +1528,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if mSig, ok := it.LookupMethod(e.Member); ok {
 				return mSig, nil
 			}
-			return nil, fmt.Errorf("interface %s has no method '%s'", it.Name, e.Member)
+			return nil, inf.nodeErr(e, "interface %s has no method '%s'", it.Name, e.Member)
 		}
 		if targetT == TypeUnknown {
 			return TypeUnknown, nil
@@ -1502,7 +1536,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if bSig, ok := LookupBuiltinTypeMethod(targetT, e.Member); ok {
 			return bSig, nil
 		}
-		return nil, fmt.Errorf("cannot access member '%s' on non-struct/interface type %s", e.Member, targetT)
+		return nil, inf.nodeErr(e, "cannot access member '%s' on non-struct/interface type %s", e.Member, targetT)
 	case *ast.NamedArgExpr:
 		return inf.inferExpr(e.Value)
 	case *ast.IndexExpr:
@@ -1539,7 +1573,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if t, ok := mod.Exports[e.Member]; ok {
 				return t, nil
 			}
-			return nil, fmt.Errorf("undefined member '%s' in module '%s'", e.Member, e.Module)
+			return nil, inf.nodeErr(e, "undefined member '%s' in module '%s'", e.Member, e.Module)
 		}
 		return TypeUnknown, nil
 	case *ast.IsExpr:
@@ -1632,7 +1666,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					return nil, err
 				}
 				if elemType != TypeUnknown && !IsAssignableTo(defT, elemType) {
-					return nil, fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
+					return nil, inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
 				}
 			} else if !p.IsVariadic {
 				minArity++

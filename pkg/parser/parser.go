@@ -35,6 +35,7 @@ type Parser struct {
 	curToken            lexer.Token
 	peekToken           lexer.Token
 	errors              []string
+	filename            string
 	inParenOmissionCall bool
 	atStatementStart    bool
 	inClosureDepth      int
@@ -45,6 +46,28 @@ func NewParser(l *lexer.Lexer) *Parser {
 	p.nextToken()
 	p.nextToken()
 	return p
+}
+
+func (p *Parser) SetFilename(filename string) {
+	p.filename = filename
+}
+
+func (p *Parser) curPos() ast.Position {
+	return ast.Position{Line: p.curToken.Line, Col: p.curToken.Col}
+}
+
+func (p *Parser) peekPos() ast.Position {
+	return ast.Position{Line: p.peekToken.Line, Col: p.peekToken.Col}
+}
+
+func (p *Parser) addError(line, col int, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	fn := p.filename
+	if fn == "" {
+		p.errors = append(p.errors, fmt.Sprintf("%d: %s at col %d", line, msg, col))
+	} else {
+		p.errors = append(p.errors, fmt.Sprintf("%s:%d: %s at col %d", fn, line, msg, col))
+	}
 }
 
 func (p *Parser) nextToken() {
@@ -65,7 +88,7 @@ func (p *Parser) expectPeek(t lexer.TokenType) bool {
 		p.nextToken()
 		return true
 	}
-	p.errors = append(p.errors, fmt.Sprintf("expected next token %v, got %v (%s) at line %d col %d", t, p.peekToken.Type, p.peekToken.Literal, p.peekToken.Line, p.peekToken.Col))
+	p.addError(p.peekToken.Line, p.peekToken.Col, "expected %s, got %s", t.String(), lexer.FormatToken(p.peekToken))
 	return false
 }
 
@@ -76,7 +99,11 @@ func (p *Parser) skipNewlines() {
 }
 
 func (p *Parser) ParseProgram() *ast.Program {
-	prog := &ast.Program{Body: make([]ast.Stmt, 0)}
+	prog := &ast.Program{
+		Position: p.curPos(),
+		Filename: p.filename,
+		Body:     make([]ast.Stmt, 0),
+	}
 	p.skipNewlines()
 
 	// Check optional file-level module declaration
@@ -128,12 +155,12 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseReturnStmt()
 	case lexer.TokenBreak:
 		if p.inClosureDepth <= 0 {
-			p.errors = append(p.errors, fmt.Sprintf("break outside of closure or loop at line %d col %d", p.curToken.Line, p.curToken.Col))
+			p.addError(p.curToken.Line, p.curToken.Col, "break outside of closure or loop")
 		}
 		return p.parseBreakStmt()
 	case lexer.TokenContinue:
 		if p.inClosureDepth <= 0 {
-			p.errors = append(p.errors, fmt.Sprintf("continue outside of loop at line %d col %d", p.curToken.Line, p.curToken.Col))
+			p.addError(p.curToken.Line, p.curToken.Col, "continue outside of loop")
 		}
 		return p.parseContinueStmt()
 	case lexer.TokenLParen:
@@ -165,12 +192,13 @@ func (p *Parser) parseStmt() ast.Stmt {
 }
 
 func (p *Parser) parseImportStmt() *ast.ImportStmt {
+	pos := p.curPos()
 	p.nextToken() // consume 'import'
 	var path string
 	if p.curTokenIs(lexer.TokenIdent) || p.curTokenIs(lexer.TokenString) {
 		path = p.curToken.Literal
 	} else {
-		p.errors = append(p.errors, fmt.Sprintf("expected identifier or string after import, got %v (%s)", p.curToken.Type, p.curToken.Literal))
+		p.addError(p.curToken.Line, p.curToken.Col, "expected identifier or string after import, got %s", lexer.FormatToken(p.curToken))
 		return nil
 	}
 	alias := path
@@ -182,15 +210,17 @@ func (p *Parser) parseImportStmt() *ast.ImportStmt {
 		p.nextToken()
 	}
 	return &ast.ImportStmt{
-		Path:  path,
-		Alias: alias,
+		Position: pos,
+		Path:     path,
+		Alias:    alias,
 	}
 }
 
 func (p *Parser) parseModuleDecl() *ast.ModuleDecl {
+	pos := p.curPos()
 	p.nextToken() // consume 'module'
 	if !p.curTokenIs(lexer.TokenIdent) {
-		p.errors = append(p.errors, fmt.Sprintf("expected identifier after module, got %v (%s)", p.curToken.Type, p.curToken.Literal))
+		p.addError(p.curToken.Line, p.curToken.Col, "expected identifier after module, got %s", lexer.FormatToken(p.curToken))
 		return nil
 	}
 	name := p.curToken.Literal
@@ -200,13 +230,14 @@ func (p *Parser) parseModuleDecl() *ast.ModuleDecl {
 	} else {
 		p.nextToken()
 	}
-	return &ast.ModuleDecl{Name: name}
+	return &ast.ModuleDecl{Position: pos, Name: name}
 }
 
 func (p *Parser) parseStructDef() *ast.StructDef {
+	pos := p.curPos()
 	p.nextToken() // consume 'struct'
 	if !p.curTokenIs(lexer.TokenIdent) {
-		p.errors = append(p.errors, "expected struct name after struct")
+		p.addError(p.curToken.Line, p.curToken.Col, "expected struct name after struct")
 		return nil
 	}
 	name := p.curToken.Literal
@@ -214,7 +245,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 	if p.peekTokenIs(lexer.TokenColon) {
 		p.nextToken() // advance to ':'
 	} else {
-		p.errors = append(p.errors, "expected ':' after struct name")
+		p.addError(p.peekToken.Line, p.peekToken.Col, "expected ':' after struct name")
 		return nil
 	}
 
@@ -222,7 +253,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 	p.skipNewlines()
 
 	if !p.curTokenIs(lexer.TokenIndent) {
-		p.errors = append(p.errors, fmt.Sprintf("expected indent after struct declaration at line %d", p.curToken.Line))
+		p.addError(p.curToken.Line, p.curToken.Col, "expected indent after struct declaration")
 		return nil
 	}
 	p.nextToken() // consume TokenIndent
@@ -238,6 +269,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 				methods = append(methods, m)
 			}
 		} else if p.curTokenIs(lexer.TokenIdent) {
+			fPos := p.curPos()
 			ident := p.curToken.Literal
 			if p.peekTokenIs(lexer.TokenColon) {
 				// field with type: x: Int [= expr]
@@ -254,6 +286,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 					defaultVal = p.parseExpr(PREC_LOWEST)
 				}
 				fields = append(fields, ast.StructField{
+					Position:     fPos,
 					Name:         ident,
 					TypeAnnot:    typeAnnot,
 					DefaultValue: defaultVal,
@@ -263,6 +296,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 			} else {
 				// Embedded struct type: e.g. Person
 				fields = append(fields, ast.StructField{
+					Position:   fPos,
 					Name:       ident,
 					TypeAnnot:  ident,
 					IsEmbedded: true,
@@ -272,6 +306,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 			}
 		} else if isOperatorMethodToken(p.curToken.Type) && p.peekTokenIs(lexer.TokenLParen) {
 			// Operator method without 'def': e.g. +(other: Vec2): Vec2
+			opPos := p.curPos()
 			opName := p.parseOperatorMethodName()
 			if opName != "" && p.expectPeek(lexer.TokenLParen) {
 				params, blockParam := p.parseFuncParams()
@@ -295,6 +330,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 				}
 				body := p.parseBlockBody()
 				methods = append(methods, &ast.FuncDef{
+					Position:   opPos,
 					Name:       opName,
 					Params:     params,
 					BlockParam: blockParam,
@@ -313,16 +349,18 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 	}
 
 	return &ast.StructDef{
-		Name:    name,
-		Fields:  fields,
-		Methods: methods,
+		Position: pos,
+		Name:     name,
+		Fields:   fields,
+		Methods:  methods,
 	}
 }
 
 func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
+	pos := p.curPos()
 	p.nextToken() // consume 'interface'
 	if !p.curTokenIs(lexer.TokenIdent) {
-		p.errors = append(p.errors, "expected interface name after interface")
+		p.addError(p.curToken.Line, p.curToken.Col, "expected interface name after interface")
 		return nil
 	}
 	name := p.curToken.Literal
@@ -330,7 +368,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 	if p.peekTokenIs(lexer.TokenColon) {
 		p.nextToken() // advance to ':'
 	} else {
-		p.errors = append(p.errors, "expected ':' after interface name")
+		p.addError(p.peekToken.Line, p.peekToken.Col, "expected ':' after interface name")
 		return nil
 	}
 
@@ -338,7 +376,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 	p.skipNewlines()
 
 	if !p.curTokenIs(lexer.TokenIndent) {
-		p.errors = append(p.errors, fmt.Sprintf("expected indent after interface declaration at line %d", p.curToken.Line))
+		p.addError(p.curToken.Line, p.curToken.Col, "expected indent after interface declaration")
 		return nil
 	}
 	p.nextToken() // consume TokenIndent
@@ -349,6 +387,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 	p.skipNewlines()
 	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
 		if p.curTokenIs(lexer.TokenIdent) {
+			mPos := p.curPos()
 			ident := p.curToken.Literal
 			if p.peekTokenIs(lexer.TokenLParen) {
 				// Method signature: ident(params...): ReturnType
@@ -364,6 +403,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 					retType = p.parseTypeAnnotString()
 				}
 				methods = append(methods, ast.MethodSig{
+					Position:   mPos,
 					Name:       ident,
 					Params:     params,
 					BlockParam: blockParam,
@@ -377,6 +417,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 				p.consumeStmtEnd()
 			}
 		} else if isOperatorMethodToken(p.curToken.Type) {
+			opPos := p.curPos()
 			opName := p.parseOperatorMethodName()
 			if opName != "" && p.expectPeek(lexer.TokenLParen) {
 				params, blockParam := p.parseFuncParams()
@@ -390,6 +431,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 					retType = p.parseTypeAnnotString()
 				}
 				methods = append(methods, ast.MethodSig{
+					Position:   opPos,
 					Name:       opName,
 					Params:     params,
 					BlockParam: blockParam,
@@ -408,6 +450,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 	}
 
 	return &ast.InterfaceDef{
+		Position: pos,
 		Name:     name,
 		Embedded: embedded,
 		Methods:  methods,
@@ -416,6 +459,7 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 
 func (p *Parser) parseFuncDef() *ast.FuncDef {
 	// def name(params): body
+	pos := p.curPos()
 	p.nextToken() // consume 'def'
 	var name string
 	if p.curTokenIs(lexer.TokenIdent) {
@@ -423,7 +467,7 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	} else if isOperatorMethodToken(p.curToken.Type) {
 		name = p.parseOperatorMethodName()
 	} else {
-		p.errors = append(p.errors, "expected function name after def")
+		p.addError(p.curToken.Line, p.curToken.Col, "expected function name after def")
 		return nil
 	}
 
@@ -456,6 +500,7 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	body := p.parseBlockBody()
 
 	return &ast.FuncDef{
+		Position:   pos,
 		Name:       name,
 		Params:     params,
 		BlockParam: blockParam,
@@ -481,11 +526,12 @@ func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 		if p.curTokenIs(lexer.TokenAmpersand) {
 			p.nextToken() // consume '&'
 			if !p.curTokenIs(lexer.TokenIdent) {
-				p.errors = append(p.errors, fmt.Sprintf("expected identifier after '&' at line %d col %d", p.curToken.Line, p.curToken.Col))
+				p.addError(p.curToken.Line, p.curToken.Col, "expected identifier after '&'")
 				break
 			}
 			bp := &ast.FuncParam{
-				Name: p.curToken.Literal,
+				Position: p.curPos(),
+				Name:     p.curToken.Literal,
 			}
 			if p.peekTokenIs(lexer.TokenColon) {
 				p.nextToken() // advance to ':'
@@ -503,13 +549,14 @@ func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 			if p.peekTokenIs(lexer.TokenComma) {
 				p.nextToken() // consume ','
 				if !p.peekTokenIs(lexer.TokenRParen) {
-					p.errors = append(p.errors, fmt.Sprintf("block parameter &%s must be the last parameter at line %d col %d", bp.Name, p.curToken.Line, p.curToken.Col))
+					p.addError(p.curToken.Line, p.curToken.Col, "block parameter &%s must be the last parameter", bp.Name)
 				}
 			}
 			break
 		}
 
 		// 2. Normal / Variadic param
+		paramPos := p.curPos()
 		isVariadic := false
 		if p.curTokenIs(lexer.TokenStar) {
 			isVariadic = true
@@ -519,6 +566,7 @@ func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 			break
 		}
 		param := ast.FuncParam{
+			Position:   paramPos,
 			Name:       p.curToken.Literal,
 			IsVariadic: isVariadic,
 		}
@@ -529,7 +577,7 @@ func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 		}
 		if p.peekTokenIs(lexer.TokenAssign) {
 			if isVariadic {
-				p.errors = append(p.errors, fmt.Sprintf("variadic parameter *%s cannot have a default value at line %d col %d", param.Name, p.curToken.Line, p.curToken.Col))
+				p.addError(p.curToken.Line, p.curToken.Col, "variadic parameter *%s cannot have a default value", param.Name)
 			}
 			p.nextToken() // advance to '='
 			p.nextToken() // advance to expr start
@@ -537,7 +585,7 @@ func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 			hasDefault = true
 		} else if !isVariadic {
 			if hasDefault {
-				p.errors = append(p.errors, fmt.Sprintf("required parameter '%s' cannot follow default parameter at line %d col %d", param.Name, p.curToken.Line, p.curToken.Col))
+				p.addError(p.curToken.Line, p.curToken.Col, "required parameter '%s' cannot follow default parameter", param.Name)
 			}
 		}
 
@@ -638,6 +686,7 @@ func (p *Parser) parseBlockBody() []ast.Stmt {
 }
 
 func (p *Parser) parseIfStmt() *ast.IfStmt {
+	pos := p.curPos()
 	p.nextToken() // consume 'if'
 	cond := p.parseExpr(PREC_LOWEST)
 
@@ -651,6 +700,7 @@ func (p *Parser) parseIfStmt() *ast.IfStmt {
 	}
 
 	return &ast.IfStmt{
+		Position: pos,
 		Cond:     cond,
 		ThenBody: thenBody,
 		ElseBody: elseBody,
@@ -658,6 +708,7 @@ func (p *Parser) parseIfStmt() *ast.IfStmt {
 }
 
 func (p *Parser) parseForStmt() *ast.ForStmt {
+	pos := p.curPos()
 	p.nextToken() // consume 'for'
 	var cond ast.Expr
 	if !p.curTokenIs(lexer.TokenColon) && !p.peekTokenIs(lexer.TokenColon) {
@@ -669,18 +720,21 @@ func (p *Parser) parseForStmt() *ast.ForStmt {
 	p.inClosureDepth--
 
 	return &ast.ForStmt{
-		Cond: cond,
-		Body: body,
+		Position: pos,
+		Cond:     cond,
+		Body:     body,
 	}
 }
 
 func (p *Parser) parseContinueStmt() *ast.ContinueStmt {
+	pos := p.curPos()
 	p.nextToken() // consume 'continue'
 	p.consumeStmtEnd()
-	return &ast.ContinueStmt{}
+	return &ast.ContinueStmt{Position: pos}
 }
 
 func (p *Parser) parseMatchExpr() *ast.MatchExpr {
+	pos := p.curPos()
 	p.nextToken() // consume 'match'
 	target := p.parseExpr(PREC_LOWEST)
 
@@ -705,6 +759,7 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 
 	for !p.curTokenIs(lexer.TokenDedent) && !p.curTokenIs(lexer.TokenEOF) {
 		if p.curTokenIs(lexer.TokenCase) {
+			cPos := p.curPos()
 			p.nextToken() // consume 'case'
 			var pattern string
 			var tuplePat *ast.TuplePattern
@@ -724,6 +779,7 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			// Parse case body statements
 			body := p.parseBlockBody()
 			cases = append(cases, ast.MatchCase{
+				Position:     cPos,
 				Pattern:      pattern,
 				TuplePattern: tuplePat,
 				Body:         body,
@@ -739,12 +795,14 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 	}
 
 	return &ast.MatchExpr{
-		Target: target,
-		Cases:  cases,
+		Position: pos,
+		Target:   target,
+		Cases:    cases,
 	}
 }
 
 func (p *Parser) parseTuplePattern() (*ast.TuplePattern, string) {
+	pos := p.curPos()
 	p.nextToken() // consume '('
 	var rawParts []string
 	rawParts = append(rawParts, "(")
@@ -794,6 +852,7 @@ func (p *Parser) parseTuplePattern() (*ast.TuplePattern, string) {
 	}
 
 	return &ast.TuplePattern{
+		Position: pos,
 		Elements: elems,
 		RestName: restName,
 	}, strings.Join(rawParts, "")
@@ -817,11 +876,12 @@ func (p *Parser) isMemberAssignOnCurrentLine() bool {
 }
 
 func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
-	target := &ast.Identifier{Name: p.curToken.Literal}
+	pos := p.curPos()
+	target := &ast.Identifier{Position: pos, Name: p.curToken.Literal}
 	p.nextToken() // advance to '.'
 	p.nextToken() // consume '.', advance to member ident
 	if !p.curTokenIs(lexer.TokenIdent) {
-		p.errors = append(p.errors, fmt.Sprintf("expected member identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+		p.addError(p.curToken.Line, p.curToken.Col, "expected member identifier after '.', got %s", lexer.FormatToken(p.curToken))
 		return nil
 	}
 	member := p.curToken.Literal
@@ -832,8 +892,9 @@ func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
 	return &ast.MemberAssignStmt{
-		Target: target,
-		Member: member,
+		Position: pos,
+		Target:   target,
+		Member:   member,
 		Value:  val,
 	}
 }
@@ -854,6 +915,7 @@ func (p *Parser) isUnpackParenDeclStart() bool {
 }
 
 func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {
+	pos := p.curPos()
 	tuplePat, _ := p.parseTuplePattern()
 	if p.peekTokenIs(lexer.TokenAssign) {
 		p.nextToken()
@@ -864,12 +926,14 @@ func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
 	return &ast.UnpackDecl{
-		Pattern: tuplePat,
+		Position: pos,
+		Pattern:  tuplePat,
 		Value:   val,
 	}
 }
 
 func (p *Parser) parseUnpackDeclWithoutParen() *ast.UnpackDecl {
+	pos := p.curPos()
 	var elems []string
 	var restName string
 	for {
@@ -906,7 +970,9 @@ func (p *Parser) parseUnpackDeclWithoutParen() *ast.UnpackDecl {
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
 	return &ast.UnpackDecl{
+		Position: pos,
 		Pattern: &ast.TuplePattern{
+			Position: pos,
 			Elements: elems,
 			RestName: restName,
 		},
@@ -926,12 +992,14 @@ func (p *Parser) consumeStmtEnd() {
 }
 
 func (p *Parser) parseVarDecl(typeAnnot string) *ast.VarDecl {
+	pos := p.curPos()
 	name := p.curToken.Literal
 	p.nextToken() // consume ident
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
 	return &ast.VarDecl{
+		Position:  pos,
 		Name:      name,
 		TypeAnnot: typeAnnot,
 		Value:     val,
@@ -939,6 +1007,7 @@ func (p *Parser) parseVarDecl(typeAnnot string) *ast.VarDecl {
 }
 
 func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
+	pos := p.curPos()
 	name := p.curToken.Literal
 	p.nextToken() // consume ident
 	p.nextToken() // consume ':'
@@ -952,6 +1021,7 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
 	return &ast.VarDecl{
+		Position:  pos,
 		Name:      name,
 		TypeAnnot: typeAnnot,
 		Value:     val,
@@ -959,29 +1029,31 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 }
 
 func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
+	pos := p.curPos()
 	p.nextToken() // consume 'return'
 	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
 		if p.curTokenIs(lexer.TokenSemicolon) {
 			p.nextToken()
 		}
-		return &ast.ReturnStmt{Value: nil}
+		return &ast.ReturnStmt{Position: pos, Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
-	return &ast.ReturnStmt{Value: val}
+	return &ast.ReturnStmt{Position: pos, Value: val}
 }
 
 func (p *Parser) parseBreakStmt() *ast.BreakStmt {
+	pos := p.curPos()
 	p.nextToken() // consume 'break'
 	if p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenDedent) {
 		if p.curTokenIs(lexer.TokenSemicolon) {
 			p.nextToken()
 		}
-		return &ast.BreakStmt{Value: nil}
+		return &ast.BreakStmt{Position: pos, Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
 	p.consumeStmtEnd()
-	return &ast.BreakStmt{Value: val}
+	return &ast.BreakStmt{Position: pos, Value: val}
 }
 
 func exprEndsWithBlock(expr ast.Expr) bool {
@@ -1001,15 +1073,16 @@ func exprEndsWithBlock(expr ast.Expr) bool {
 }
 
 func (p *Parser) parseExprStmt() *ast.ExprStmt {
+	pos := p.curPos()
 	p.atStatementStart = true
 	expr := p.parseExpr(PREC_LOWEST)
 	p.atStatementStart = false
 	if exprEndsWithBlock(expr) {
 		p.skipNewlines()
-		return &ast.ExprStmt{Value: expr}
+		return &ast.ExprStmt{Position: pos, Value: expr}
 	}
 	p.consumeStmtEnd()
-	return &ast.ExprStmt{Value: expr}
+	return &ast.ExprStmt{Position: pos, Value: expr}
 }
 
 
@@ -1097,12 +1170,13 @@ func (p *Parser) parseCallArgumentsWithoutParens() []ast.Expr {
 }
 
 func (p *Parser) parsePrefix() ast.Expr {
+	pos := p.curPos()
 	switch p.curToken.Type {
 	case lexer.TokenIdent:
 		if p.curToken.Literal == "scriptLine" {
-			return &ast.IntLit{Value: int64(p.curToken.Line)}
+			return &ast.IntLit{Position: pos, Value: int64(p.curToken.Line)}
 		}
-		return &ast.Identifier{Name: p.curToken.Literal}
+		return &ast.Identifier{Position: pos, Name: p.curToken.Literal}
 	case lexer.TokenInt:
 		lit := strings.ReplaceAll(p.curToken.Literal, "_", "")
 		var v int64
@@ -1122,26 +1196,26 @@ func (p *Parser) parsePrefix() ast.Expr {
 		} else {
 			v, _ = strconv.ParseInt(lit, 10, 64)
 		}
-		return &ast.IntLit{Value: v}
+		return &ast.IntLit{Position: pos, Value: v}
 	case lexer.TokenFloat:
 		lit := strings.ReplaceAll(p.curToken.Literal, "_", "")
 		v, _ := strconv.ParseFloat(lit, 64)
-		return &ast.FloatLit{Value: v}
+		return &ast.FloatLit{Position: pos, Value: v}
 	case lexer.TokenString:
-		return &ast.StringLit{Value: p.curToken.Literal}
+		return &ast.StringLit{Position: pos, Value: p.curToken.Literal}
 	case lexer.TokenBool:
-		return &ast.BoolLit{Value: p.curToken.Literal == "true"}
+		return &ast.BoolLit{Position: pos, Value: p.curToken.Literal == "true"}
 	case lexer.TokenNil:
-		return &ast.NilLit{}
+		return &ast.NilLit{Position: pos}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot:
 		op := p.curToken.Literal
 		p.nextToken()
 		right := p.parseExpr(PREC_UNARY)
-		return &ast.UnaryExpr{Op: op, Expr: right}
+		return &ast.UnaryExpr{Position: pos, Op: op, Expr: right}
 	case lexer.TokenForce:
 		p.nextToken()
 		right := p.parseExpr(PREC_UNARY)
-		return &ast.ForceExpr{Expr: right}
+		return &ast.ForceExpr{Position: pos, Expr: right}
 	case lexer.TokenLParen:
 		return p.parseGroupOrTuple()
 	case lexer.TokenLBracket:
@@ -1151,7 +1225,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		// @module.Member
 		p.nextToken() // consume '@'
 		if !p.curTokenIs(lexer.TokenIdent) {
-			p.errors = append(p.errors, fmt.Sprintf("expected module identifier after '@', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+			p.addError(p.curToken.Line, p.curToken.Col, "expected module identifier after '@', got %s", lexer.FormatToken(p.curToken))
 			return nil
 		}
 		modName := p.curToken.Literal
@@ -1160,13 +1234,14 @@ func (p *Parser) parsePrefix() ast.Expr {
 		}
 		p.nextToken() // consume '.'
 		if !p.curTokenIs(lexer.TokenIdent) {
-			p.errors = append(p.errors, fmt.Sprintf("expected member identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+			p.addError(p.curToken.Line, p.curToken.Col, "expected member identifier after '.', got %s", lexer.FormatToken(p.curToken))
 			return nil
 		}
 		memberName := p.curToken.Literal
 		return &ast.ModuleAccessExpr{
-			Module: modName,
-			Member: memberName,
+			Position: pos,
+			Module:   modName,
+			Member:   memberName,
 		}
 	case lexer.TokenLBrace:
 		return p.parseDict()
@@ -1175,12 +1250,13 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenPipe, lexer.TokenOr:
 		return p.parseLambdaExpr()
 	default:
-		p.errors = append(p.errors, fmt.Sprintf("unexpected token %v (%s)", p.curToken.Type, p.curToken.Literal))
+		p.addError(p.curToken.Line, p.curToken.Col, "unexpected token %s", lexer.FormatToken(p.curToken))
 		return nil
 	}
 }
 
 func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
+	pos := p.curPos()
 	p.inClosureDepth++
 	defer func() { p.inClosureDepth-- }()
 
@@ -1197,6 +1273,7 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 		} else {
 			// parse parameter list
 			for !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenEOF) {
+				paramPos := p.curPos()
 				isVariadic := false
 				if p.curTokenIs(lexer.TokenStar) {
 					isVariadic = true
@@ -1213,6 +1290,7 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 					typeAnnot = p.parseTypeAnnotString()
 				}
 				params = append(params, ast.FuncParam{
+					Position:   paramPos,
 					Name:       paramName,
 					TypeAnnot:  typeAnnot,
 					IsVariadic: isVariadic,
@@ -1248,8 +1326,9 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 	if p.peekTokenIs(lexer.TokenNewline) {
 		body := p.parseBlockBody()
 		return &ast.LambdaExpr{
-			Params: params,
-			Body:   body,
+			Position: pos,
+			Params:   params,
+			Body:     body,
 		}
 	}
 
@@ -1259,17 +1338,19 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 	}
 	expr := p.parseExpr(PREC_LOWEST)
 	return &ast.LambdaExpr{
-		Params: params,
-		Body:   []ast.Stmt{&ast.ExprStmt{Value: expr}},
-		Expr:   expr,
+		Position: pos,
+		Params:   params,
+		Body:     []ast.Stmt{&ast.ExprStmt{Position: pos, Value: expr}},
+		Expr:     expr,
 	}
 }
 
 func (p *Parser) parseGroupOrTuple() ast.Expr {
+	pos := p.curPos()
 	// ( ) -> empty tuple
 	if p.peekTokenIs(lexer.TokenRParen) {
 		p.nextToken() // consume ')'
-		return &ast.TupleLit{Elements: []ast.Expr{}}
+		return &ast.TupleLit{Position: pos, Elements: []ast.Expr{}}
 	}
 
 	p.nextToken() // advance to first element
@@ -1287,7 +1368,7 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 			elems = append(elems, p.parseExpr(PREC_LOWEST))
 		}
 		p.expectPeek(lexer.TokenRParen)
-		return &ast.TupleLit{Elements: elems}
+		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 
 	p.expectPeek(lexer.TokenRParen)
@@ -1296,10 +1377,11 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 }
 
 func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
+	pos := p.curPos()
 	elems := make([]ast.Expr, 0)
 	if p.peekTokenIs(closing) {
 		p.nextToken()
-		return &ast.TupleLit{Elements: elems}
+		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 	p.nextToken()
 	elems = append(elems, p.parseExpr(PREC_LOWEST))
@@ -1312,25 +1394,27 @@ func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
 		elems = append(elems, p.parseExpr(PREC_LOWEST))
 	}
 	p.expectPeek(closing)
-	return &ast.TupleLit{Elements: elems}
+	return &ast.TupleLit{Position: pos, Elements: elems}
 }
 
 func (p *Parser) parseDict() ast.Expr {
+	pos := p.curPos()
 	entries := make([]ast.DictEntry, 0)
 	if p.peekTokenIs(lexer.TokenRBrace) {
 		p.nextToken()
-		return &ast.DictLit{Entries: entries}
+		return &ast.DictLit{Position: pos, Entries: entries}
 	}
 
 	p.nextToken()
 	for {
+		ePos := p.curPos()
 		key := p.parseExpr(PREC_LOWEST)
 		if !p.expectPeek(lexer.TokenColon) {
 			return nil
 		}
 		p.nextToken()
 		val := p.parseExpr(PREC_LOWEST)
-		entries = append(entries, ast.DictEntry{Key: key, Value: val})
+		entries = append(entries, ast.DictEntry{Position: ePos, Key: key, Value: val})
 
 		if p.peekTokenIs(lexer.TokenComma) {
 			p.nextToken()
@@ -1343,7 +1427,7 @@ func (p *Parser) parseDict() ast.Expr {
 		}
 	}
 	p.expectPeek(lexer.TokenRBrace)
-	return &ast.DictLit{Entries: entries}
+	return &ast.DictLit{Position: pos, Entries: entries}
 }
 
 func (p *Parser) peekPrecedence() int {
@@ -1413,6 +1497,7 @@ func (p *Parser) curPrecedence() int {
 }
 
 func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
+	pos := p.curPos()
 	switch p.curToken.Type {
 	case lexer.TokenDot:
 		p.nextToken() // consume '.'
@@ -1422,12 +1507,13 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		} else if isOperatorMethodToken(p.curToken.Type) {
 			member = p.parseOperatorMethodName()
 		} else {
-			p.errors = append(p.errors, fmt.Sprintf("expected identifier after '.', got %v (%s)", p.curToken.Type, p.curToken.Literal))
+			p.addError(p.curToken.Line, p.curToken.Col, "expected identifier after '.', got %s", lexer.FormatToken(p.curToken))
 			return nil
 		}
 		return &ast.MemberAccessExpr{
-			Target: left,
-			Member: member,
+			Position: pos,
+			Target:   left,
+			Member:   member,
 		}
 	case lexer.TokenQuestion:
 		// cond ? then : else
@@ -1437,9 +1523,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		p.nextToken()
 		elseExpr := p.parseExpr(PREC_TERNARY - 1)
 		return &ast.TernaryExpr{
-			Cond: left,
-			Then: thenExpr,
-			Else: elseExpr,
+			Position: pos,
+			Cond:     left,
+			Then:     thenExpr,
+			Else:     elseExpr,
 		}
 	case lexer.TokenIs:
 		tok := p.curToken
@@ -1482,6 +1569,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		annot := normalizeTypeAnnot(typeParts)
 		p.validateTypeAnnotation(annot, tok.Line, tok.Col)
 		return &ast.IsExpr{
+			Position:  pos,
 			Expr:      left,
 			TypeAnnot: annot,
 		}
@@ -1493,9 +1581,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		p.nextToken()
 		right := p.parseExpr(prec)
 		return &ast.BinaryExpr{
-			Op:    op,
-			Left:  left,
-			Right: right,
+			Position: pos,
+			Op:       op,
+			Left:     left,
+			Right:    right,
 		}
 	case lexer.TokenLParen:
 		// f(a, b)
@@ -1506,9 +1595,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			block = p.parseBlockLiteral()
 		}
 		return &ast.CallExpr{
-			Callee: left,
-			Args:   args,
-			Block:  block,
+			Position: pos,
+			Callee:   left,
+			Args:     args,
+			Block:    block,
 		}
 	case lexer.TokenLBracket:
 		// target[index]
@@ -1516,8 +1606,9 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		idx := p.parseExpr(PREC_LOWEST)
 		p.expectPeek(lexer.TokenRBracket)
 		return &ast.IndexExpr{
-			Target: left,
-			Index:  idx,
+			Position: pos,
+			Target:   left,
+			Index:    idx,
 		}
 	case lexer.TokenPipeGreater:
 		// left |> right => right(left)
@@ -1529,11 +1620,12 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 				// Standalone operator on RHS of pipe: left |> - desugars to -(left)
 				if opName == "+" || opName == "-" {
 					return &ast.UnaryExpr{
-						Op:   opName,
-						Expr: left,
+						Position: pos,
+						Op:       opName,
+						Expr:     left,
 					}
 				}
-				p.errors = append(p.errors, fmt.Sprintf("unexpected operator %s on RHS of pipe", opName))
+				p.addError(p.curToken.Line, p.curToken.Col, "unexpected operator %s on RHS of pipe", opName)
 				return nil
 			}
 			// Operator call on RHS of pipe: left |> op(args...)
@@ -1542,23 +1634,27 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			if opName == "[]" {
 				if len(args) == 1 {
 					return &ast.IndexExpr{
-						Target: left,
-						Index:  args[0],
+						Position: pos,
+						Target:   left,
+						Index:    args[0],
 					}
 				}
 			}
 			if len(args) == 1 {
 				return &ast.BinaryExpr{
-					Op:    opName,
-					Left:  left,
-					Right: args[0],
+					Position: pos,
+					Op:       opName,
+					Left:     left,
+					Right:    args[0],
 				}
 			}
 			// General call on operator method if other arity (e.g. 0 args: left |> -() )
 			return &ast.CallExpr{
+				Position: pos,
 				Callee: &ast.MemberAccessExpr{
-					Target: left,
-					Member: opName,
+					Position: pos,
+					Target:   left,
+					Member:   opName,
 				},
 				Args: args,
 			}
@@ -1570,19 +1666,22 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			newArgs = append(newArgs, left)
 			newArgs = append(newArgs, call.Args...)
 			return &ast.CallExpr{
-				Callee: call.Callee,
-				Args:   newArgs,
-				Block:  call.Block,
+				Position: pos,
+				Callee:   call.Callee,
+				Args:     newArgs,
+				Block:    call.Block,
 			}
 		}
 		return &ast.CallExpr{
-			Callee: right,
-			Args:   []ast.Expr{left},
+			Position: pos,
+			Callee:   right,
+			Args:     []ast.Expr{left},
 		}
 	case lexer.TokenNot:
 		// expr! (postfix force)
 		return &ast.ForceExpr{
-			Expr: left,
+			Position: pos,
+			Expr:     left,
 		}
 	default:
 		return left
@@ -1591,13 +1690,15 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 
 func (p *Parser) parseCallArgumentItem() ast.Expr {
 	if p.curTokenIs(lexer.TokenIdent) && p.peekTokenIs(lexer.TokenColon) {
+		pos := p.curPos()
 		name := p.curToken.Literal
 		p.nextToken() // consume ident
 		p.nextToken() // consume ':'
 		val := p.parseExpr(PREC_LOWEST)
 		return &ast.NamedArgExpr{
-			Name:  name,
-			Value: val,
+			Position: pos,
+			Name:     name,
+			Value:    val,
 		}
 	}
 	return p.parseExpr(PREC_LOWEST)
@@ -1627,6 +1728,7 @@ func (p *Parser) parseCallArguments() []ast.Expr {
 }
 
 func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
+	pos := p.curPos()
 	p.inClosureDepth++
 	defer func() { p.inClosureDepth-- }()
 
@@ -1636,6 +1738,7 @@ func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
 		p.nextToken() // consume '|'
 		p.nextToken()
 		for !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenEOF) {
+			paramPos := p.curPos()
 			isVariadic := false
 			if p.curTokenIs(lexer.TokenStar) {
 				isVariadic = true
@@ -1652,6 +1755,7 @@ func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
 				typeAnnot = p.parseTypeAnnotString()
 			}
 			params = append(params, ast.FuncParam{
+				Position:   paramPos,
 				Name:       paramName,
 				TypeAnnot:  typeAnnot,
 				IsVariadic: isVariadic,
@@ -1677,8 +1781,9 @@ func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
 
 	body := p.parseBlockBody()
 	return &ast.BlockLiteral{
-		Params: params,
-		Body:   body,
+		Position: pos,
+		Params:   params,
+		Body:     body,
 	}
 }
 
@@ -1726,7 +1831,7 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 		return
 	}
 	if strings.Contains(annot, "[") || strings.Contains(annot, "]") {
-		p.errors = append(p.errors, fmt.Sprintf("invalid type annotation '%s': brackets '[' are not supported (use '{Key: Value}' for dictionaries) at line %d col %d", annot, line, col))
+		p.addError(line, col, "invalid type annotation '%s': brackets '[' are not supported (use '{Key: Value}' for dictionaries)", annot)
 		return
 	}
 	runes := []rune(annot)
@@ -1736,20 +1841,20 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 			braceStack = append(braceStack, i)
 		} else if r == '}' {
 			if len(braceStack) == 0 {
-				p.errors = append(p.errors, fmt.Sprintf("unmatched '}' in type annotation '%s' at line %d col %d", annot, line, col))
+				p.addError(line, col, "unmatched '}' in type annotation '%s'", annot)
 				return
 			}
 			startIdx := braceStack[len(braceStack)-1]
 			braceStack = braceStack[:len(braceStack)-1]
 			inner := string(runes[startIdx+1 : i])
 			if !isValidDictAnnotationContent(inner) {
-				p.errors = append(p.errors, fmt.Sprintf("invalid dictionary type annotation in '%s': expected '{Key: Value}' at line %d col %d", annot, line, col))
+				p.addError(line, col, "invalid dictionary type annotation in '%s': expected '{Key: Value}'", annot)
 				return
 			}
 		}
 	}
 	if len(braceStack) > 0 {
-		p.errors = append(p.errors, fmt.Sprintf("unclosed '{' in type annotation '%s' at line %d col %d", annot, line, col))
+		p.addError(line, col, "unclosed '{' in type annotation '%s'", annot)
 		return
 	}
 }
