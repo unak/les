@@ -368,10 +368,16 @@ func (ev *Evaluator) SetArgs(args []string) {
 
 func (ev *Evaluator) SetProgramName(name string) {
 	ev.builtinsEnv.Set("ProgramName", StringValue(name))
+	if ev.builtinsEnv.Filename == "" {
+		ev.builtinsEnv.Filename = name
+	}
 }
 
 func (ev *Evaluator) SetScriptName(name string) {
 	ev.globalEnv.Set("scriptName", StringValue(name))
+	if ev.globalEnv.Filename == "" {
+		ev.globalEnv.Filename = name
+	}
 }
 
 // ExitError indicates that exit() was called to terminate execution.
@@ -492,6 +498,14 @@ func typeNameWithDepth(val Value, depth int) string {
 }
 
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
+	if prog != nil && prog.Filename != "" {
+		if ev.globalEnv != nil {
+			ev.globalEnv.Filename = prog.Filename
+		}
+		if ev.builtinsEnv != nil {
+			ev.builtinsEnv.Filename = prog.Filename
+		}
+	}
 	if ev.inferencer == nil {
 		inf := types.NewInferencer()
 		if ev.fileModuleLoader != nil {
@@ -525,7 +539,12 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 				return
 			}
 			// Runtime error (panic): A3: do NOT flush on runtime error
-			err = fmt.Errorf("%v", r)
+			rawMsg := fmt.Sprintf("%v", r)
+			const thunkPrefix = "runtime error in thunk: "
+			if strings.HasPrefix(rawMsg, thunkPrefix) {
+				rawMsg = strings.TrimPrefix(rawMsg, thunkPrefix)
+			}
+			err = fmt.Errorf("%s", rawMsg)
 			return
 		}
 		// Normal completion without panic/exit
@@ -543,7 +562,7 @@ func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	for _, stmt := range prog.Body {
 		v, e := ev.globalEnv.evalStmt(stmt)
 		if e != nil {
-			return nil, e
+			return nil, FormatRuntimeError(ev.globalEnv.Filename, stmt.Pos(), e)
 		}
 		if v != nil {
 			lastVal = v
