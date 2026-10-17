@@ -309,6 +309,109 @@ struct Service:
 	}
 }
 
+func TestSelfReviewEdgeCases(t *testing.T) {
+	t.Run("struct operator overload return type inference", func(t *testing.T) {
+		code := `
+struct Vec2:
+    x: Int
+    y: Int
+
+    def +():
+        return Vec2(self.x, self.y)
+
+    def +(other: Vec2):
+        return Vec2(self.x + other.x, self.y + other.y)
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		stVal, _ := inf.Scope().Lookup("Vec2")
+		st := stVal.(*StructType)
+		plusMethod := st.Methods["+"]
+		if plusMethod.Ret.String() != "Vec2" {
+			t.Fatalf("expected '+' Ret to be Vec2, got %s", plusMethod.Ret.String())
+		}
+		if plusMethod.OverloadUnion != "() -> Vec2 | (Vec2) -> Vec2" {
+			t.Fatalf("expected OverloadUnion '() -> Vec2 | (Vec2) -> Vec2', got %q", plusMethod.OverloadUnion)
+		}
+	})
+
+	t.Run("dead code after return does not resurrect fallthrough", func(t *testing.T) {
+		code := `
+def f(x: Int):
+    return x
+    if x > 0:
+        "dead"
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		fnVal, _ := inf.Scope().Lookup("f")
+		fnT := fnVal.(*FuncType)
+		if fnT.String() != "(Int) -> Int" {
+			t.Fatalf("expected (Int) -> Int, got %s", fnT.String())
+		}
+	})
+
+	t.Run("top-level lambda with explicit return", func(t *testing.T) {
+		code := `
+f = |x: Int|:
+    return x + 1
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		fVal, _ := inf.Scope().Lookup("f")
+		fnT := fVal.(*FuncType)
+		if fnT.String() != "(Int) -> Int" {
+			t.Fatalf("expected (Int) -> Int, got %s", fnT.String())
+		}
+	})
+
+	t.Run("struct method default parameter validation", func(t *testing.T) {
+		code := `
+struct Calculator:
+    def add(x: Int, step: Int = "not_int"):
+        return x + step
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected error for default parameter type mismatch, got nil")
+		}
+		if !containsSubstring(err.Error(), "type mismatch in default value for parameter 'step'") {
+			t.Fatalf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("2-pass recursion scope isolation with local variable declarations", func(t *testing.T) {
+		code := `
+def recurse(n: Int):
+    if n <= 0:
+        return 1
+    next = recurse(n - 1)
+    return next + 1
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		fnVal, _ := inf.Scope().Lookup("recurse")
+		fnT := fnVal.(*FuncType)
+		if fnT.String() != "(Int) -> Int" {
+			t.Fatalf("expected (Int) -> Int, got %s", fnT.String())
+		}
+	})
+}
+
 func containsSubstring(s, substr string) bool {
 	return len(substr) <= len(s) && (s == substr || len(s) >= len(substr) && len(substr) > 0 && stringContains(s, substr))
 }

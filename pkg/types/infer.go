@@ -46,6 +46,21 @@ func (s *Scope) Lookup(name string) (Type, bool) {
 	return nil, false
 }
 
+func (s *Scope) Clone() *Scope {
+	c := &Scope{
+		parent:   s.parent,
+		bindings: make(map[string]Type, len(s.bindings)),
+		declared: make(map[string]bool, len(s.declared)),
+	}
+	for k, v := range s.bindings {
+		c.bindings[k] = v
+	}
+	for k, v := range s.declared {
+		c.declared[k] = v
+	}
+	return c
+}
+
 // TypeWarning represents a warning emitted during type inference.
 type TypeWarning struct {
 	Filename string
@@ -570,6 +585,8 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 			}
 			if inf.funcCtx != nil {
 				inf.funcCtx.returnTypes = append(inf.funcCtx.returnTypes, retT)
+			} else if inf.breakCtx != nil && !inf.breakCtx.isLoop {
+				inf.breakCtx.breakTypes = append(inf.breakCtx.breakTypes, retT)
 			}
 			canFallthrough = false
 			currentValTypes = nil
@@ -641,27 +658,28 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 					return nil, false, err
 				}
 
-				if !thenCanFT && !elseCanFT {
-					canFallthrough = false
-					currentValTypes = nil
-				} else {
-					var branchTypes []Type
-					if thenCanFT {
-						branchTypes = append(branchTypes, thenFT...)
+				if canFallthrough {
+					if !thenCanFT && !elseCanFT {
+						canFallthrough = false
+						currentValTypes = nil
+					} else {
+						var branchTypes []Type
+						if thenCanFT {
+							branchTypes = append(branchTypes, thenFT...)
+						}
+						if elseCanFT {
+							branchTypes = append(branchTypes, elseFT...)
+						}
+						canFallthrough = true
+						currentValTypes = branchTypes
 					}
-					if elseCanFT {
-						branchTypes = append(branchTypes, elseFT...)
-					}
-					canFallthrough = true
-					currentValTypes = branchTypes
 				}
 			} else {
 				// No else body: when condition is false at runtime, evalStmt returns nil, nil,
-				// so lastVal remains currentValTypes.
-				if thenCanFT {
+				// so lastVal remains currentValTypes if canFallthrough was true.
+				if canFallthrough && thenCanFT {
 					currentValTypes = append(currentValTypes, thenFT...)
 				}
-				// canFallthrough remains true because the false-condition path is unconstrained
 			}
 
 		case *ast.ForStmt:
@@ -682,19 +700,21 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 				return nil, false, err
 			}
 
-			if s.Cond == nil {
-				// Infinite for: loop: only exits if a break occurred
-				if len(loopCtx.breakTypes) == 0 {
-					canFallthrough = false
-					currentValTypes = nil
+			if canFallthrough {
+				if s.Cond == nil {
+					// Infinite for: loop: only exits if a break occurred
+					if len(loopCtx.breakTypes) == 0 {
+						canFallthrough = false
+						currentValTypes = nil
+					} else {
+						canFallthrough = true
+						currentValTypes = loopCtx.breakTypes
+					}
 				} else {
+					// Conditional for loop: exits normally with () or with break
 					canFallthrough = true
-					currentValTypes = loopCtx.breakTypes
+					currentValTypes = append([]Type{emptyTuple}, loopCtx.breakTypes...)
 				}
-			} else {
-				// Conditional for loop: exits normally with () or with break
-				canFallthrough = true
-				currentValTypes = append([]Type{emptyTuple}, loopCtx.breakTypes...)
 			}
 
 		default:
@@ -719,6 +739,8 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 	defer func() {
 		inf.funcCtx = prevFuncCtx
 	}()
+
+	cleanScope := inf.scope.Clone()
 
 	ftTypes, canFT, err := inf.inferBlock(body)
 	if err != nil {
@@ -747,6 +769,7 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 
 			funcCtx.returnTypes = nil
 			funcCtx.selfCalled = false
+			inf.scope = cleanScope
 			ftTypes, canFT, err = inf.inferBlock(body)
 			if err != nil {
 				return err
@@ -1172,6 +1195,16 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of struct '%s'", p.Name, m.Name, s.Name)
 				}
 
+				if p.DefaultValue != nil {
+					defT, err := inf.inferExpr(p.DefaultValue)
+					if err != nil {
+						return err
+					}
+					if pType != TypeUnknown && !IsAssignableTo(defT, pType) {
+						return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, pType, defT)
+					}
+				}
+
 				if p.IsVariadic {
 					isVariadic = true
 					callerParamTypes = append(callerParamTypes, pType)
@@ -1211,6 +1244,15 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					inf.addWarning(m.BlockParam.Pos(), "Unknown type of block parameter '&%s' in method '%s' of struct '%s'", m.BlockParam.Name, m.Name, s.Name)
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
+				if m.BlockParam.DefaultValue != nil {
+					defT, err := inf.inferExpr(m.BlockParam.DefaultValue)
+					if err != nil {
+						return err
+					}
+					if blockT != TypeUnknown && !IsAssignableTo(defT, blockT) {
+						return inf.nodeErr(m.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", m.BlockParam.Name, blockT, defT)
+					}
+				}
 				_ = methodScope.Declare(m.BlockParam.Name, blockT)
 			}
 
@@ -1290,6 +1332,20 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 			if m.Name == "init" {
 				item.methodType.Ret = st
+			}
+		}
+
+		// Rebuild overloaded operator method types (+ / -) now that method bodies have inferred Ret
+		for _, opName := range []string{"+", "-"} {
+			if existing, ok := st.Methods[opName]; ok && len(existing.Overloads) == 2 {
+				unaryFT := existing.Overloads[0]
+				binaryFT := existing.Overloads[1]
+				ret := binaryFT.Ret
+				if !unaryFT.Ret.Equals(binaryFT.Ret) {
+					ret = NewUnionType(unaryFT.Ret, binaryFT.Ret)
+				}
+				existing.Ret = ret
+				existing.OverloadUnion = fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String())
 			}
 		}
 
