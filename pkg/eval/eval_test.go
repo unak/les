@@ -4334,15 +4334,27 @@ interface ExplicitSelfBitwise:
     ~(self): Int
     &(self, other: Int): Int
 
+interface BadStringer:
+    String(x: String): String
+
+interface StrBitAnd:
+    &(other: String): Int
+
+interface MyShow:
+    ToString(self): String
+
 print (10 is Negatable), " "
 print (10 is Adder), " "
-print (10 is ExplicitSelfBitwise)
+print (10 is ExplicitSelfBitwise), " "
+print (10 is BadStringer), " "
+print (10 is StrBitAnd), " "
+print (10 is MyShow)
 `
 	outExtra, err := runLesCode(extraCode)
 	if err != nil {
 		t.Fatalf("unexpected eval error: %v", err)
 	}
-	expectedExtra := "true true true"
+	expectedExtra := "true true true false false true"
 	if outExtra != expectedExtra {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expectedExtra, outExtra)
 	}

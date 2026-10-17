@@ -1642,6 +1642,18 @@ var esi: ExplicitSelfInt = 42
 	if err := infIface.InferProgram(progIface); err != nil {
 		t.Fatalf("unexpected type error: %v", err)
 	}
+
+	badIfaceCodes := []string{
+		"interface BadStringer:\n    String(x: String): String\nvar bs: BadStringer = 42",
+		"interface StrBitAnd:\n    &(other: String): Int\nvar sba: StrBitAnd = 42",
+	}
+	for _, bad := range badIfaceCodes {
+		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		i := NewInferencer()
+		if err := i.InferProgram(p); err == nil {
+			t.Fatalf("expected type error for %q, got nil", bad)
+		}
+	}
 }
 
 

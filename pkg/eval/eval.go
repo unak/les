@@ -3052,21 +3052,43 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 							}
 						}
 					}
+					if env != nil && env.Inferencer != nil {
+						if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+							if srcTup, ok := ft.Arg.(*types.TupleType); ok {
+								paramIdx := 0
+								for _, p := range sig.Params {
+									if p.Name == "self" {
+										continue
+									}
+									if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" {
+										if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
+											if paramIdx < len(srcTup.Elems) {
+												if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {
+													return false
+												}
+											}
+										}
+									}
+									paramIdx++
+								}
+							}
+						}
+					}
 				}
 				if mName == "ToString" || mName == "Type" {
-					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false
 					}
 				} else if mName == "Len" || mName == "Ord" {
-					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
 						return false
 					}
 				} else if mName == "Chr" {
-					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false
 					}
 				} else if iface.Name == "Equal" || iface.Name == "Comparable" {
-					if len(sig.Params) != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
+					if expectedCount != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
 						return false
 					}
 				}

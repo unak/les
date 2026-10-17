@@ -505,7 +505,18 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				targetCount := len(targetTup.Elems)
 				if targetCount >= srcSig.MinArgs() && (srcSig.MaxArgs() < 0 || targetCount <= srcSig.MaxArgs()) {
 					if targetSig.Ret == TypeUnknown || srcSig.Ret == TypeUnknown || targetSig.Ret.Equals(srcSig.Ret) {
-						matched = true
+						argsMatch := true
+						if srcTup, ok := srcSig.Arg.(*TupleType); ok {
+							for i := 0; i < targetCount && i < len(srcTup.Elems); i++ {
+								if targetTup.Elems[i] != TypeUnknown && srcTup.Elems[i] != TypeUnknown && !targetTup.Elems[i].Equals(srcTup.Elems[i]) {
+									argsMatch = false
+									break
+								}
+							}
+						}
+						if argsMatch {
+							matched = true
+						}
 					}
 				}
 			}
