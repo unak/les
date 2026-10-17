@@ -1,7 +1,9 @@
 # Les Language Specification & Plan
 
 ## Overview
-Les (Lazy Evaluation Script) is a statically-typed, aggressively lazy-evaluated scripting language implemented in Go.
+Les (Lazy Evaluation Script) is a scripting language with Python-like syntax, Ruby-style features, and a Go-like type system, featuring static typing and lazy evaluation.
+
+Les is implemented in Go.
 
 ## Build & Installation
 
