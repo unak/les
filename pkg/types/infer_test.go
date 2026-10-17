@@ -1543,3 +1543,133 @@ cmpStr: Comparable = "abc"
 		t.Fatalf("expected elem to be Int, got %v", elemT)
 	}
 }
+
+func TestBitwiseTypeInference(t *testing.T) {
+	code := `
+a = 10
+b = 2
+c = ~a
+d = a & b
+e = a ^ b
+f = a | b
+g = a << b
+h = a >> b
+i = a <<< b
+j = a >>> b
+
+struct Bits:
+    val: Int
+    def ~(self) -> Bits:
+        Bits(val: ~self.val)
+    def &(self, other: Bits) -> Bits:
+        Bits(val: self.val & other.val)
+
+b1 = Bits(val: 1)
+b2 = Bits(val: 2)
+b3 = ~b1
+b4 = b1 & b2
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	for _, v := range []string{"c", "d", "e", "f", "g", "h", "i", "j"} {
+		ty, ok := inf.scope.Lookup(v)
+		if !ok || ty != TypeInt {
+			t.Fatalf("expected %s to be Int, got %v", v, ty)
+		}
+	}
+
+	b3T, ok := inf.scope.Lookup("b3")
+	if !ok || b3T.String() != "Bits" {
+		t.Fatalf("expected b3 to be Bits, got %v", b3T)
+	}
+	b4T, ok := inf.scope.Lookup("b4")
+	if !ok || b4T.String() != "Bits" {
+		t.Fatalf("expected b4 to be Bits, got %v", b4T)
+	}
+
+	// Type errors on non-Int types
+	badCodes := []string{
+		`~"hello"`,
+		`~1.5`,
+		`1.5 & 2`,
+		`"a" | "b"`,
+		`true ^ false`,
+		`1 << 1.5`,
+		"struct S:\n    val: Int\n    def &(self, other: S) -> S: S(val: self.val & other.val)\ns = S(val: 1)\nres = s & \"bad\"",
+		"struct S:\n    val: Int\n    def ~(self, extra: Int) -> S: S(val: ~self.val)\ns = S(val: 1)\nres = ~s",
+	}
+	for _, bad := range badCodes {
+		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		i := NewInferencer()
+		if err := i.InferProgram(p); err == nil {
+			t.Fatalf("expected type error for %q, got nil", bad)
+		}
+	}
+	// Interface with explicit self and builtin operator method interfaces
+	testIfaceCode := `
+interface Negatable:
+    -(): Int
+
+struct S:
+    val: Int
+    def ~(self):
+        S(val: ~self.val)
+    def &(self, other: S):
+        S(val: self.val & other.val)
+
+interface ExplicitSelf:
+    ~(self): S
+    &(self, other: S): S
+
+interface ExplicitSelfInt:
+    ~(self): Int
+    &(self, other: Int): Int
+
+interface Adder:
+    +(other: Int): Int
+
+var neg: Negatable = 42
+var add: Adder = 42
+var es: ExplicitSelf = S(val: 10)
+var esi: ExplicitSelfInt = 42
+`
+	progIface := parser.NewParser(lexer.NewLexer(testIfaceCode)).ParseProgram()
+	infIface := NewInferencer()
+	if err := infIface.InferProgram(progIface); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	badIfaceCodes := []string{
+		"interface BadStringer:\n    String(x: String): String\nvar bs: BadStringer = 42",
+		"interface StrBitAnd:\n    &(other: String): Int\nvar sba: StrBitAnd = 42",
+	}
+	for _, bad := range badIfaceCodes {
+		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		i := NewInferencer()
+		if err := i.InferProgram(p); err == nil {
+			t.Fatalf("expected type error for %q, got nil", bad)
+		}
+	}
+
+	variadicOpCode := `
+struct VarBit:
+    v: Int
+    def &(self, *others: VarBit):
+        VarBit(v: self.v)
+
+vb1 = VarBit(v: 1)
+vb2 = VarBit(v: 2)
+vb3 = vb1 & vb2
+`
+	progVar := parser.NewParser(lexer.NewLexer(variadicOpCode)).ParseProgram()
+	infVar := NewInferencer()
+	if err := infVar.InferProgram(progVar); err != nil {
+		t.Fatalf("unexpected type error for variadic operator method: %v", err)
+	}
+}
+
+

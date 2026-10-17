@@ -351,16 +351,43 @@ Listed from highest to lowest precedence:
 | 1 | `()` | `f(a, b)` | Function / Struct | Function call or struct constructor |
 | 1 | `!` (postfix) | `expr!` | | Explicit demand point (postfix sugar for `force expr`) |
 | 1 | `force` (prefix) | `force expr` | | Explicit demand point (strict evaluation) |
-| 2 | `+`, `-`, `!` | `+x`, `-x`, `!flag` | `Int`/`Float` (`+`, `-`), `Bool` (`!`) | Unary plus, negation, and logical NOT |
-| 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int` | Multiplication, division, modulo |
-| 4 | `+`, `-` | `a + b`, `a - b` | `Int` (`+`, `-`), `String` (`+`) | Addition, subtraction, string concatenation |
-| 5 | `<`, `<=`, `>`, `>=` | `a < b`, `a >= b` | `Int` | Relational comparisons |
-| 6 | `is` | `x is Int`, `p is Reader` | | Dynamic type / interface satisfaction test |
-| 7 | `==`, `!=` | `a == b`, `a != b` | `Int`, `String`, `Bool` | Equality / inequality comparison |
-| 8 | `&&` | `cond1 && cond2` | `Bool` | Short-circuit logical AND |
-| 9 | `\|\|` | `cond1 \|\| cond2` | `Bool` | Short-circuit logical OR |
-| 10 | `? :` | `cond ? a : b` | `Bool` (cond) | Inline ternary conditional |
-| 11 (Lowest) | *(space)* | `print x * 2 + 1` | Callable | Paren-omitted function call (weakest binding) |
+| 2 | `+`, `-`, `!`, `~` | `+x`, `-x`, `!flag`, `~mask` | `Int`/`Float` (`+`, `-`), `Bool` (`!`), `Int` (`~`) | Unary plus, negation, logical NOT, and bitwise NOT |
+| 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int`, `Float` (`*`, `/`) | Multiplication, division, modulo |
+| 4 | `+`, `-` | `a + b`, `a - b` | `Int`, `Float`, `String` (`+`), `Bytes` (`+`) | Addition, subtraction, string/bytes concatenation |
+| 5 | `<<`, `>>`, `<<<`, `>>>` | `x << n`, `x >>> n` | `Int` | Logical shifts (`<<`, `>>`), arithmetic shifts (`<<<`, `>>>`) |
+| 6 | `&` | `a & b` | `Int` | Bitwise AND |
+| 7 | `^` | `a ^ b` | `Int` | Bitwise XOR |
+| 8 | `\|` | `a \| b` | `Int` | Bitwise OR |
+| 9 | `<`, `<=`, `>`, `>=` | `a < b`, `a >= b` | `Int`, `Float`, `String`, `Bytes` | Relational comparisons |
+| 10 | `is` | `x is Int`, `p is Reader` | | Dynamic type / interface satisfaction test |
+| 11 | `==`, `!=` | `a == b`, `a != b` | Any | Equality / inequality comparison |
+| 12 | `&&` | `cond1 && cond2` | `Bool` | Short-circuit logical AND |
+| 13 | `\|\|` | `cond1 \|\| cond2` | `Bool` | Short-circuit logical OR |
+| 14 | `? :` | `cond ? a : b` | `Bool` (cond) | Inline ternary conditional |
+| 15 | `\|>` | `x \|> f` | Any | Pipeline operator |
+| 16 (Lowest) | *(space)* | `print x * 2 + 1` | Callable | Paren-omitted function call (weakest binding) |
+
+#### Bitwise Operators (`~`, `&`, `^`, `|`, `<<`, `>>`, `<<<`, `>>>`)
+Les provides comprehensive bitwise operators operating on 64-bit signed integers (`Int`):
+
+- **Bitwise NOT (`~x`)**: Inverts all bits (one's complement). E.g. `~0 == -1`, `~(-1) == 0`.
+- **Bitwise AND (`a & b`)**: Bitwise AND of two integers.
+- **Bitwise XOR (`a ^ b`)**: Bitwise exclusive OR.
+- **Bitwise OR (`a | b`)**: Bitwise inclusive OR. Syntactically unambiguous: expression bitwise OR is separated from union types (`A | B`) and lambda parameters (`|x|:`).
+- **Logical Shift (`<<`, `>>`)**:
+  - `x << n`: Left shift by `n` bits (zeros shifted in at LSB).
+  - `x >> n`: Logical (unsigned, zero-fill) right shift by `n` bits. MSB bits are filled with zero (e.g. `-1 >> 1 == 0x7fffffffffffffff`).
+- **Arithmetic Shift (`<<<`, `>>>`)**:
+  - `x <<< n`: Arithmetic left shift. The sign bit (bit 63) is excluded from the shift and strictly preserved. Positive/zero values never become negative, and negative values never become positive or zero.
+  - `x >>> n`: Arithmetic (signed, sign-extending) right shift by `n` bits. Preserves sign bit at MSB (e.g. `-8 >>> 1 == -4`, `-1 >>> 1 == -1`).
+- **Shift Count Edge Cases**:
+  - A negative shift count (`n < 0`) raises a runtime error (`negative shift count: n`).
+  - Shift count `n >= 64`: `<<`, `>>` evaluate to `0`; `>>>` evaluates to `0` (if `x >= 0`) or `-1` (if `x < 0`).
+  - For `<<<`: for `n >= 63`, all value bits are cleared, leaving only the preserved sign bit (`0` for `x >= 0`, `math.MinInt64` for `x < 0`).
+- **Operator Overloading & Pipeline Integration**:
+  - Structs and interfaces can define methods for bitwise operators (`def ~()`, `def &(other)`, `def <<<(n)`, etc.).
+  - Built-in `Int` exposes bound operator methods (e.g. `(12).&(10)`).
+  - Seamlessly supported on RHS of the pipeline operator: `x |> ~`, `x |> &(0xff)`, `x |> >>>(2)`.
 
 #### Indexing Details (`[]`)
 - `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
@@ -1061,14 +1088,7 @@ Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
   displayName = user?.Name ?? "Guest"
   ```
 
-### 6. Bitwise Operators
-
-Bitwise operations for integers:
-
-- Binary operations: AND (`&`), XOR (`^`), left shift (`<<`), right shift (`>>`), NOT (`~`).
-- Bitwise OR: Disambiguated or dedicated operator syntax avoiding grammatical collision with union types (`A | B`) and lambda argument delimiters (`|x|:`).
-
-### 7. User-Defined Generics (Type Parameters `[T]`)
+### 6. User-Defined Generics (Type Parameters `[T]`)
 
 Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
 

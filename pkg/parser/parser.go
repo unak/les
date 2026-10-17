@@ -21,9 +21,13 @@ const (
 	PREC_EQUALITY     // == !=
 	PREC_IS           // is
 	PREC_COMPARISON   // < <= > >=
+	PREC_BIT_OR       // |
+	PREC_BIT_XOR      // ^
+	PREC_BIT_AND      // &
+	PREC_SHIFT        // << >> <<< >>>
 	PREC_SUM          // + -
 	PREC_PRODUCT      // * / %
-	PREC_UNARY        // - !
+	PREC_UNARY        // - ! ~
 	PREC_CALL         // f()
 	PREC_INDEX        // []
 	PREC_DOT          // .
@@ -638,7 +642,7 @@ func (p *Parser) parseTypeAnnotString() string {
 			}
 			if p.peekTokenIs(lexer.TokenPipe) {
 				rest := strings.TrimSpace(p.l.PeekRestOfLine())
-				if strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, ",") {
+				if rest == "" || strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, ",") || strings.HasPrefix(rest, "#") || strings.HasPrefix(rest, ";") {
 					break
 				}
 			}
@@ -1207,7 +1211,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.BoolLit{Position: pos, Value: p.curToken.Literal == "true"}
 	case lexer.TokenNil:
 		return &ast.NilLit{Position: pos}
-	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot:
+	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot, lexer.TokenTilde:
 		op := p.curToken.Literal
 		p.nextToken()
 		right := p.parseExpr(PREC_UNARY)
@@ -1446,6 +1450,14 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_IS
 	case lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
 		return PREC_COMPARISON
+	case lexer.TokenPipe:
+		return PREC_BIT_OR
+	case lexer.TokenCaret:
+		return PREC_BIT_XOR
+	case lexer.TokenAmpersand:
+		return PREC_BIT_AND
+	case lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
+		return PREC_SHIFT
 	case lexer.TokenPlus, lexer.TokenMinus:
 		return PREC_SUM
 	case lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent:
@@ -1479,6 +1491,14 @@ func (p *Parser) curPrecedence() int {
 		return PREC_IS
 	case lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
 		return PREC_COMPARISON
+	case lexer.TokenPipe:
+		return PREC_BIT_OR
+	case lexer.TokenCaret:
+		return PREC_BIT_XOR
+	case lexer.TokenAmpersand:
+		return PREC_BIT_AND
+	case lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
+		return PREC_SHIFT
 	case lexer.TokenPlus, lexer.TokenMinus:
 		return PREC_SUM
 	case lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent:
@@ -1575,7 +1595,9 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
-		lexer.TokenAnd, lexer.TokenOr:
+		lexer.TokenAnd, lexer.TokenOr,
+		lexer.TokenPipe, lexer.TokenCaret, lexer.TokenAmpersand,
+		lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
 		op := p.curToken.Literal
 		prec := p.curPrecedence()
 		p.nextToken()
@@ -1613,12 +1635,16 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenPipeGreater:
 		// left |> right => right(left)
 		prec := p.curPrecedence()
-		if isOperatorMethodToken(p.peekToken.Type) {
+		isOp := isOperatorMethodToken(p.peekToken.Type)
+		if p.peekToken.Type == lexer.TokenPipe && !strings.HasPrefix(strings.TrimSpace(p.l.PeekRestOfLine()), "(") {
+			isOp = false
+		}
+		if isOp {
 			p.nextToken() // advance to operator token
 			opName := p.parseOperatorMethodName()
 			if !p.peekTokenIs(lexer.TokenLParen) {
 				// Standalone operator on RHS of pipe: left |> - desugars to -(left)
-				if opName == "+" || opName == "-" {
+				if opName == "+" || opName == "-" || opName == "~" {
 					return &ast.UnaryExpr{
 						Position: pos,
 						Op:       opName,
@@ -1902,6 +1928,8 @@ func isOperatorMethodToken(t lexer.TokenType) bool {
 	switch t {
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenTilde, lexer.TokenAmpersand, lexer.TokenPipe, lexer.TokenCaret,
+		lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift,
 		lexer.TokenLBracket:
 		return true
 	default:
@@ -1912,7 +1940,9 @@ func isOperatorMethodToken(t lexer.TokenType) bool {
 func (p *Parser) parseOperatorMethodName() string {
 	switch p.curToken.Type {
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
-		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte:
+		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenTilde, lexer.TokenAmpersand, lexer.TokenPipe, lexer.TokenCaret,
+		lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
 		op := p.curToken.Literal
 		return op
 	case lexer.TokenLBracket:

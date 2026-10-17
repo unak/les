@@ -1326,6 +1326,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return !bv, nil
 			}
 			return nil, fmt.Errorf("unary ! expects Bool, got %v", val)
+		case "~":
+			if iv, ok := val.(IntValue); ok {
+				return IntValue(^int64(iv)), nil
+			}
+			return nil, fmt.Errorf("unary ~ expects Int, got %v", val)
 		default:
 			return nil, fmt.Errorf("unknown unary operator %s", e.Op)
 		}
@@ -1862,6 +1867,51 @@ func evalBinary(op string, left, right Value) (Value, error) {
 				return li / ri, nil
 			case "%":
 				return li % ri, nil
+			case "&":
+				return IntValue(int64(li) & int64(ri)), nil
+			case "|":
+				return IntValue(int64(li) | int64(ri)), nil
+			case "^":
+				return IntValue(int64(li) ^ int64(ri)), nil
+			case "<<":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				if ri >= 64 {
+					return IntValue(0), nil
+				}
+				return IntValue(int64(uint64(li) << uint64(ri))), nil
+			case ">>":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				if ri >= 64 {
+					return IntValue(0), nil
+				}
+				return IntValue(int64(uint64(li) >> uint64(ri))), nil
+			case "<<<":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				const signMask = uint64(1) << 63
+				const valueMask = ^signMask // 0x7fffffffffffffff
+				sign := uint64(li) & signMask
+				if ri >= 63 {
+					return IntValue(int64(sign)), nil
+				}
+				shifted := (uint64(li) << uint64(ri)) & valueMask
+				return IntValue(int64(sign | shifted)), nil
+			case ">>>":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				if ri >= 64 {
+					if li < 0 {
+						return IntValue(-1), nil
+					}
+					return IntValue(0), nil
+				}
+				return IntValue(int64(li) >> uint64(ri)), nil
 			case "==":
 				return BoolValue(li == ri), nil
 			case "!=":
@@ -2345,6 +2395,40 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				}
 				return bf, nil
 			}
+		}
+
+	case "~":
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "~",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("~ takes 0 arguments, got %d", len(args))
+					}
+					return IntValue(^int64(iv)), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "~"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+
+	case "&", "|", "^", "<<", ">>", "<<<", ">>>":
+		if _, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					}
+					return evalBinary(member, val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, member); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 
 	case "[]":
@@ -2904,7 +2988,12 @@ func splitTopLevelCommas(s string) []string {
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
 	// Check all direct methods required by the interface
 	for mName, sig := range iface.Methods {
-		expectedCount := len(sig.Params)
+		expectedCount := 0
+		for _, p := range sig.Params {
+			if p.Name != "self" {
+				expectedCount++
+			}
+		}
 		if sig.BlockParam != nil {
 			expectedCount++
 		}
@@ -2931,10 +3020,6 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 			if fn.BlockParam != nil {
 				nonSelfCount++
 			}
-			expectedCount := len(sig.Params)
-			if sig.BlockParam != nil {
-				expectedCount++
-			}
 			if nonSelfCount != expectedCount {
 				return false
 			}
@@ -2950,20 +3035,60 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 					}
 				}
 			} else {
+				if ft, ok := fn.FuncType.(*types.FuncType); ok && ft != nil {
+					minA := ft.MinArgs()
+					maxA := ft.MaxArgs()
+					if expectedCount < minA || (maxA >= 0 && expectedCount > maxA) {
+						return false
+					}
+					if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil {
+						if env != nil && env.Inferencer != nil {
+							if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+								if expectedRetT, err := inf.ParseTypeAnnot(sig.ReturnType); err == nil {
+									if !types.IsAssignableTo(ft.Ret, expectedRetT) {
+										return false
+									}
+								}
+							}
+						}
+					}
+					if env != nil && env.Inferencer != nil {
+						if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+							if srcTup, ok := ft.Arg.(*types.TupleType); ok {
+								paramIdx := 0
+								for _, p := range sig.Params {
+									if p.Name == "self" {
+										continue
+									}
+									if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" {
+										if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
+											if paramIdx < len(srcTup.Elems) {
+												if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {
+													return false
+												}
+											}
+										}
+									}
+									paramIdx++
+								}
+							}
+						}
+					}
+				}
 				if mName == "ToString" || mName == "Type" {
-					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false
 					}
 				} else if mName == "Len" || mName == "Ord" {
-					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
 						return false
 					}
 				} else if mName == "Chr" {
-					if len(sig.Params) != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
+					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false
 					}
 				} else if iface.Name == "Equal" || iface.Name == "Comparable" {
-					if len(sig.Params) != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
+					if expectedCount != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
 						return false
 					}
 				}

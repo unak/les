@@ -4205,3 +4205,159 @@ print calc.abs.Type()
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
 }
+
+func TestBitwiseOperatorsEval(t *testing.T) {
+	code := `
+print (~0), " "
+print (~(-1)), " "
+print (~5), " "
+print (12 & 10), " "
+print (12 | 10), " "
+print (12 ^ 10), " "
+print (1 << 3), " "
+print (-1 << 2), " "
+print (16 >> 2), " "
+print (-1 >> 1), " "
+print (1 <<< 3), " "
+print (-1 <<< 1), " "
+print (-2 <<< 1), " "
+print (0x4000_0000_0000_0000 <<< 1), " "
+print (1 <<< 62), " "
+print (1 <<< 63), " "
+print (-1 <<< 62), " "
+print (-1 <<< 63), " "
+print (-8 >>> 1), " "
+print (-1 >>> 1), " "
+print (16 >>> 2), " "
+print (1 << 64), " "
+print (1 >> 64), " "
+print (-1 >> 64), " "
+print (1 >>> 64), " "
+print (-1 >>> 64), " "
+print (1 | 2 ^ 2 & 2 == 1), " "
+print (1 | 2 is Int), " "
+print (0 |> ~), " "
+print (15 |> &(10)), " "
+print (1 |> <<(4)), " "
+print (-8 |> >>>(1))
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestBitwiseOperatorsEval: %v", err)
+	}
+
+	expected := "-1 0 -6 8 14 6 8 -4 4 9223372036854775807 8 -2 -4 0 4611686018427387904 0 -4611686018427387904 -9223372036854775808 -4 -1 4 0 0 0 0 -1 true true -1 10 16 -4"
+	if out != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
+	}
+
+	// Negative shift count runtime errors
+	negShiftCodes := []string{
+		"1 << -1",
+		"1 >> -1",
+		"1 <<< -1",
+		"1 >>> -1",
+	}
+	for _, sc := range negShiftCodes {
+		_, err := runLesCode(sc)
+		if err == nil {
+			t.Fatalf("expected error for negative shift count in %q, got nil", sc)
+		}
+		if !strings.Contains(err.Error(), "negative shift count") {
+			t.Fatalf("expected 'negative shift count' error in %q, got %v", sc, err)
+		}
+	}
+
+	// Custom struct operator methods and method tear-offs
+	structCode := `
+struct Flag:
+    val: Int
+    def ~(self) -> Flag:
+        Flag(val: ~self.val)
+    def &(self, other: Flag) -> Flag:
+        Flag(val: self.val & other.val)
+    def |(self, other: Flag) -> Flag:
+        Flag(val: self.val | other.val)
+    def ^(self, other: Flag) -> Flag:
+        Flag(val: self.val ^ other.val)
+    def <<<(self, n: Int) -> Flag:
+        Flag(val: self.val <<< n)
+    def >>>(self, n: Int) -> Flag:
+        Flag(val: self.val >>> n)
+
+f1 = Flag(val: 12)
+f2 = Flag(val: 10)
+print (~f1).val, " "
+print (f1 & f2).val, " "
+print (f1 | f2).val, " "
+print (f1 ^ f2).val, " "
+print (f1 <<< 1).val, " "
+print (f1 >>> 1).val, " "
+
+# Builtin Int operator method call
+andFn = (12).&
+print andFn(10), " "
+tildeFn = (0).~
+print tildeFn(), " "
+
+# Pipeline into lambda
+pipeLam = 5 |> |v|: v * 2 + 1
+print pipeLam, " "
+
+# Interface check with bitwise operator method
+interface BitwiseNot:
+    ~(): Int
+
+interface BadNot:
+    ~(x: Int): Int
+
+print (42 is BitwiseNot), " "
+print (42 is BadNot)
+`
+	outStruct, err := runLesCode(structCode)
+	if err != nil {
+		t.Fatalf("unexpected eval error for custom struct operators: %v", err)
+	}
+	expectedStruct := "-13 8 14 6 24 6 8 -1 11 true false"
+	if outStruct != expectedStruct {
+		t.Fatalf("expected struct:\n%s\ngot:\n%s", expectedStruct, outStruct)
+	}
+	// Interface with explicit self and builtin operator arity matching
+	extraCode := `
+interface Negatable:
+    -(): Int
+
+interface Adder:
+    +(other: Int): Int
+
+interface ExplicitSelfBitwise:
+    ~(self): Int
+    &(self, other: Int): Int
+
+interface BadStringer:
+    String(x: String): String
+
+interface StrBitAnd:
+    &(other: String): Int
+
+interface MyShow:
+    ToString(self): String
+
+print (10 is Negatable), " "
+print (10 is Adder), " "
+print (10 is ExplicitSelfBitwise), " "
+print (10 is BadStringer), " "
+print (10 is StrBitAnd), " "
+print (10 is MyShow)
+`
+	outExtra, err := runLesCode(extraCode)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expectedExtra := "true true true false false true"
+	if outExtra != expectedExtra {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expectedExtra, outExtra)
+	}
+}
+
+
