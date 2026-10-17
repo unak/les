@@ -77,6 +77,10 @@ func runPipeline(codeBytes []byte, filename string, baseDir string, scriptArgs [
 		return err
 	}
 
+	for _, w := range inferencer.Warnings() {
+		fmt.Fprintf(os.Stderr, "Type Warning: %s\n", w)
+	}
+
 	if typeOnly {
 		return nil
 	}

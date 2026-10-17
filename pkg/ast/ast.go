@@ -456,6 +456,9 @@ type MethodSig struct {
 	ReturnType string
 }
 
+func (f FuncParam) Pos() Position { return f.Position }
+func (m MethodSig) Pos() Position { return m.Position }
+
 // InterfaceDef represents interface definition block: interface Name: ...
 type InterfaceDef struct {
 	Position Position
