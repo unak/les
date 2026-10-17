@@ -1348,6 +1348,168 @@ y = force(3 * 4)
 	}
 }
 
+func TestParseBitwiseOperators(t *testing.T) {
+	input := `
+v1 = ~x
+v2 = a & b
+v3 = a ^ b
+v4 = a | b
+v5 = a << b
+v6 = a >> b
+v7 = a <<< b
+v8 = a >>> b
+prec1 = a | b ^ c & d << e + f
+prec2 = a & b == c
+prec3 = a | b is Int
+check = x is Int | String
+lam = |x, y|: x | y
+val = x |> ~
+call = x |> &(0xff)
+`
+	p := NewParser(lexer.NewLexer(input))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+
+	// v1 = ~x
+	vd1 := prog.Body[0].(*ast.VarDecl)
+	un, ok := vd1.Value.(*ast.UnaryExpr)
+	if !ok || un.Op != "~" {
+		t.Fatalf("expected UnaryExpr (~), got %T (%+v)", vd1.Value, vd1.Value)
+	}
+
+	// check binary operators
+	ops := []string{"&", "^", "|", "<<", ">>", "<<<", ">>>"}
+	for i, op := range ops {
+		vd := prog.Body[i+1].(*ast.VarDecl)
+		bin, ok := vd.Value.(*ast.BinaryExpr)
+		if !ok || bin.Op != op {
+			t.Fatalf("[%d] expected BinaryExpr (%s), got %T (%+v)", i, op, vd.Value, vd.Value)
+		}
+	}
+
+	// prec1: a | (b ^ (c & (d << (e + f))))
+	vdPrec1 := prog.Body[8].(*ast.VarDecl)
+	binPipe, ok := vdPrec1.Value.(*ast.BinaryExpr)
+	if !ok || binPipe.Op != "|" {
+		t.Fatalf("expected top-level | in prec1, got %T (%+v)", vdPrec1.Value, vdPrec1.Value)
+	}
+	binCaret, ok := binPipe.Right.(*ast.BinaryExpr)
+	if !ok || binCaret.Op != "^" {
+		t.Fatalf("expected ^ on RHS of |, got %T (%+v)", binPipe.Right, binPipe.Right)
+	}
+	binAmp, ok := binCaret.Right.(*ast.BinaryExpr)
+	if !ok || binAmp.Op != "&" {
+		t.Fatalf("expected & on RHS of ^, got %T (%+v)", binCaret.Right, binCaret.Right)
+	}
+	binShift, ok := binAmp.Right.(*ast.BinaryExpr)
+	if !ok || binShift.Op != "<<" {
+		t.Fatalf("expected << on RHS of &, got %T (%+v)", binAmp.Right, binAmp.Right)
+	}
+	binPlus, ok := binShift.Right.(*ast.BinaryExpr)
+	if !ok || binPlus.Op != "+" {
+		t.Fatalf("expected + on RHS of <<, got %T (%+v)", binShift.Right, binShift.Right)
+	}
+
+	// prec2: (a & b) == c
+	vdPrec2 := prog.Body[9].(*ast.VarDecl)
+	binEq, ok := vdPrec2.Value.(*ast.BinaryExpr)
+	if !ok || binEq.Op != "==" {
+		t.Fatalf("expected == at top of prec2, got %T (%+v)", vdPrec2.Value, vdPrec2.Value)
+	}
+	if leftAmp, ok := binEq.Left.(*ast.BinaryExpr); !ok || leftAmp.Op != "&" {
+		t.Fatalf("expected & on LHS of ==, got %T", binEq.Left)
+	}
+
+	// prec3: (a | b) is Int
+	vdPrec3 := prog.Body[10].(*ast.VarDecl)
+	isExpr, ok := vdPrec3.Value.(*ast.IsExpr)
+	if !ok {
+		t.Fatalf("expected IsExpr in prec3, got %T", vdPrec3.Value)
+	}
+	if leftPipe, ok := isExpr.Expr.(*ast.BinaryExpr); !ok || leftPipe.Op != "|" {
+		t.Fatalf("expected | on LHS of is, got %T", isExpr.Expr)
+	}
+
+	// check: x is Int | String
+	vdCheck := prog.Body[11].(*ast.VarDecl)
+	isCheck, ok := vdCheck.Value.(*ast.IsExpr)
+	if !ok || isCheck.TypeAnnot != "Int | String" {
+		t.Fatalf("expected IsExpr with 'Int | String', got %+v", vdCheck.Value)
+	}
+
+	// lam: |x, y|: x | y
+	vdLam := prog.Body[12].(*ast.VarDecl)
+	lamExpr, ok := vdLam.Value.(*ast.LambdaExpr)
+	if !ok || len(lamExpr.Params) != 2 {
+		t.Fatalf("expected LambdaExpr with 2 params, got %+v", vdLam.Value)
+	}
+	lamBin, ok := lamExpr.Expr.(*ast.BinaryExpr)
+	if !ok || lamBin.Op != "|" {
+		t.Fatalf("expected | body in lambda, got %+v", lamExpr.Expr)
+	}
+
+	// val: x |> ~
+	vdPipeTilde := prog.Body[13].(*ast.VarDecl)
+	pipeUn, ok := vdPipeTilde.Value.(*ast.UnaryExpr)
+	if !ok || pipeUn.Op != "~" {
+		t.Fatalf("expected UnaryExpr (~) from |> ~, got %+v", vdPipeTilde.Value)
+	}
+
+	// call: x |> &(0xff) desugars to x & 0xff
+	vdPipeCall := prog.Body[14].(*ast.VarDecl)
+	pipeCallBin, ok := vdPipeCall.Value.(*ast.BinaryExpr)
+	if !ok || pipeCallBin.Op != "&" {
+		t.Fatalf("expected BinaryExpr (&) from |> &(0xff), got %+v", vdPipeCall.Value)
+	}
+}
+
+func TestParseBitwiseOperatorMethods(t *testing.T) {
+	input := `
+struct Flags:
+    mask: Int
+    def ~(self) -> Flags:
+        Flags(mask: ~self.mask)
+    def &(self, other: Flags) -> Flags:
+        Flags(mask: self.mask & other.mask)
+    def <<<(self, n: Int) -> Flags:
+        Flags(mask: self.mask <<< n)
+
+interface Bitwise:
+    ~(self): Bitwise
+    &(self, other: Bitwise): Bitwise
+    <<<(self, n: Int): Bitwise
+`
+	p := NewParser(lexer.NewLexer(input))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+
+	st, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[0])
+	}
+	if len(st.Methods) != 3 {
+		t.Fatalf("expected 3 methods, got %d", len(st.Methods))
+	}
+	if st.Methods[0].Name != "~" || st.Methods[1].Name != "&" || st.Methods[2].Name != "<<<" {
+		t.Fatalf("unexpected method names: %s, %s, %s", st.Methods[0].Name, st.Methods[1].Name, st.Methods[2].Name)
+	}
+
+	it, ok := prog.Body[1].(*ast.InterfaceDef)
+	if !ok {
+		t.Fatalf("expected InterfaceDef, got %T", prog.Body[1])
+	}
+	if len(it.Methods) != 3 {
+		t.Fatalf("expected 3 interface methods, got %d", len(it.Methods))
+	}
+	if it.Methods[0].Name != "~" || it.Methods[1].Name != "&" || it.Methods[2].Name != "<<<" {
+		t.Fatalf("unexpected method names: %s, %s, %s", it.Methods[0].Name, it.Methods[1].Name, it.Methods[2].Name)
+	}
+}
+
 
 
 

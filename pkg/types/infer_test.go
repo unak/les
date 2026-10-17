@@ -1543,3 +1543,69 @@ cmpStr: Comparable = "abc"
 		t.Fatalf("expected elem to be Int, got %v", elemT)
 	}
 }
+
+func TestBitwiseTypeInference(t *testing.T) {
+	code := `
+a = 10
+b = 2
+c = ~a
+d = a & b
+e = a ^ b
+f = a | b
+g = a << b
+h = a >> b
+i = a <<< b
+j = a >>> b
+
+struct Bits:
+    val: Int
+    def ~(self) -> Bits:
+        Bits(val: ~self.val)
+    def &(self, other: Bits) -> Bits:
+        Bits(val: self.val & other.val)
+
+b1 = Bits(val: 1)
+b2 = Bits(val: 2)
+b3 = ~b1
+b4 = b1 & b2
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+
+	for _, v := range []string{"c", "d", "e", "f", "g", "h", "i", "j"} {
+		ty, ok := inf.scope.Lookup(v)
+		if !ok || ty != TypeInt {
+			t.Fatalf("expected %s to be Int, got %v", v, ty)
+		}
+	}
+
+	b3T, ok := inf.scope.Lookup("b3")
+	if !ok || b3T.String() != "Bits" {
+		t.Fatalf("expected b3 to be Bits, got %v", b3T)
+	}
+	b4T, ok := inf.scope.Lookup("b4")
+	if !ok || b4T.String() != "Bits" {
+		t.Fatalf("expected b4 to be Bits, got %v", b4T)
+	}
+
+	// Type errors on non-Int types
+	badCodes := []string{
+		`~"hello"`,
+		`~1.5`,
+		`1.5 & 2`,
+		`"a" | "b"`,
+		`true ^ false`,
+		`1 << 1.5`,
+	}
+	for _, bad := range badCodes {
+		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		i := NewInferencer()
+		if err := i.InferProgram(p); err == nil {
+			t.Fatalf("expected type error for %q, got nil", bad)
+		}
+	}
+}
+

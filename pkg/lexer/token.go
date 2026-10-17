@@ -69,9 +69,15 @@ const (
 	TokenGt      // >
 	TokenGte     // >=
 	TokenNot       // !
-	TokenAnd       // &&
-	TokenOr        // ||
-	TokenAmpersand // &
+	TokenAnd         // &&
+	TokenOr          // ||
+	TokenAmpersand   // &
+	TokenTilde       // ~
+	TokenCaret       // ^
+	TokenLShift      // <<
+	TokenRShift      // >>
+	TokenArithLShift // <<<
+	TokenArithRShift // >>>
 )
 
 // Token holds token information.
@@ -200,6 +206,18 @@ func (t TokenType) String() string {
 		return "'||'"
 	case TokenAmpersand:
 		return "'&'"
+	case TokenTilde:
+		return "'~'"
+	case TokenCaret:
+		return "'^'"
+	case TokenLShift:
+		return "'<<'"
+	case TokenRShift:
+		return "'>>'"
+	case TokenArithLShift:
+		return "'<<<'"
+	case TokenArithRShift:
+		return "'>>>'"
 	default:
 		return "unknown"
 	}

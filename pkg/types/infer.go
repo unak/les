@@ -1637,6 +1637,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeInt, nil
 		case "!":
 			return TypeBool, nil
+		case "~":
+			if t == TypeUnknown {
+				return TypeUnknown, nil
+			}
+			if t == TypeInt {
+				return TypeInt, nil
+			}
+			return nil, inf.nodeErr(e, "cannot perform ~ operation on %s", t)
 		default:
 			return TypeUnknown, nil
 		}
@@ -1729,6 +1737,20 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeBool, nil
 		case "&&", "||":
 			return TypeBool, nil
+		case "&", "|", "^", "<<", ">>", "<<<", ">>>":
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				if leftT != TypeUnknown && leftT != TypeInt {
+					return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
+				}
+				if rightT != TypeUnknown && rightT != TypeInt {
+					return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
+				}
+				return TypeUnknown, nil
+			}
+			if leftT == TypeInt && rightT == TypeInt {
+				return TypeInt, nil
+			}
+			return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
 		default:
 			return TypeUnknown, nil
 		}

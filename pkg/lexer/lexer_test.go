@@ -212,3 +212,36 @@ func TestLexerInvalidNumericLiterals(t *testing.T) {
 		})
 	}
 }
+
+func TestLexerBitwiseOperators(t *testing.T) {
+	input := `~ & ^ | << >> <<< >>> < > <= >= && || |>`
+	l := NewLexer(input)
+	expected := []struct {
+		tokType TokenType
+		literal string
+	}{
+		{TokenTilde, "~"},
+		{TokenAmpersand, "&"},
+		{TokenCaret, "^"},
+		{TokenPipe, "|"},
+		{TokenLShift, "<<"},
+		{TokenRShift, ">>"},
+		{TokenArithLShift, "<<<"},
+		{TokenArithRShift, ">>>"},
+		{TokenLt, "<"},
+		{TokenGt, ">"},
+		{TokenLte, "<="},
+		{TokenGte, ">="},
+		{TokenAnd, "&&"},
+		{TokenOr, "||"},
+		{TokenPipeGreater, "|>"},
+		{TokenEOF, ""},
+	}
+
+	for i, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp.tokType || tok.Literal != exp.literal {
+			t.Fatalf("[%d] expected %v (%q), got %v (%q)", i, exp.tokType, exp.literal, tok.Type, tok.Literal)
+		}
+	}
+}

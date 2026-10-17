@@ -1326,6 +1326,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return !bv, nil
 			}
 			return nil, fmt.Errorf("unary ! expects Bool, got %v", val)
+		case "~":
+			if iv, ok := val.(IntValue); ok {
+				return IntValue(^int64(iv)), nil
+			}
+			return nil, fmt.Errorf("unary ~ expects Int, got %v", val)
 		default:
 			return nil, fmt.Errorf("unknown unary operator %s", e.Op)
 		}
@@ -1862,6 +1867,51 @@ func evalBinary(op string, left, right Value) (Value, error) {
 				return li / ri, nil
 			case "%":
 				return li % ri, nil
+			case "&":
+				return IntValue(int64(li) & int64(ri)), nil
+			case "|":
+				return IntValue(int64(li) | int64(ri)), nil
+			case "^":
+				return IntValue(int64(li) ^ int64(ri)), nil
+			case "<<":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				if ri >= 64 {
+					return IntValue(0), nil
+				}
+				return IntValue(int64(uint64(li) << uint64(ri))), nil
+			case ">>":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				if ri >= 64 {
+					return IntValue(0), nil
+				}
+				return IntValue(int64(uint64(li) >> uint64(ri))), nil
+			case "<<<":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				const signMask = uint64(1) << 63
+				const valueMask = ^signMask // 0x7fffffffffffffff
+				sign := uint64(li) & signMask
+				if ri >= 63 {
+					return IntValue(int64(sign)), nil
+				}
+				shifted := (uint64(li) << uint64(ri)) & valueMask
+				return IntValue(int64(sign | shifted)), nil
+			case ">>>":
+				if ri < 0 {
+					return nil, fmt.Errorf("negative shift count: %d", ri)
+				}
+				if ri >= 64 {
+					if li < 0 {
+						return IntValue(-1), nil
+					}
+					return IntValue(0), nil
+				}
+				return IntValue(int64(li) >> uint64(ri)), nil
 			case "==":
 				return BoolValue(li == ri), nil
 			case "!=":
@@ -2345,6 +2395,40 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				}
 				return bf, nil
 			}
+		}
+
+	case "~":
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "~",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("~ takes 0 arguments, got %d", len(args))
+					}
+					return IntValue(^int64(iv)), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "~"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+
+	case "&", "|", "^", "<<", ">>", "<<<", ">>>":
+		if _, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					}
+					return evalBinary(member, val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, member); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
 		}
 
 	case "[]":
