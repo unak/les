@@ -86,12 +86,32 @@ les - arg1 arg2 < script.les
 >   - Multiple decimal points (e.g. `1.2.3`) are syntax errors.
 > - **Invalid Suffixes**: Numbers cannot be immediately followed by letters without whitespace or operators (e.g. `0a0` or `123abc` are syntax errors).
 
+> [!NOTE]
+> **Tuple Disambiguation (Grouping Parentheses vs Tuple Literals and Types)**:
+> - **Literals**:
+>   - `(expr)` is treated as **expression grouping** and evaluates to the result of `expr` (e.g. `(1 + 2)` evaluates to `3`, not a tuple).
+>   - `(expr,)` with a trailing comma creates a **1-element `Tuple`** (e.g. `(42,)` creates a `Tuple` containing `42`).
+>   - `()` creates a **0-element (empty) `Tuple`**.
+>   - `(expr1, expr2)` creates a **multi-element `Tuple`** (trailing comma is optional: `(1, 2)` or `(1, 2,)`).
+> - **Type Annotations**:
+>   - `(T)` is grouping for a type expression and resolves to `T` itself.
+>   - `(T,)` with a trailing comma represents the type of a **1-element `Tuple`** holding `T`.
+>   - `()` represents the type of an **empty `Tuple`**.
+>   - `() | (T,)` represents a `Tuple` that contains **either 0 or 1 element** of type `T`.
+
 Type annotations are optional (full HM-style type inference):
 ```python
 x: Int = 10
 p: (Int, String) = (1, "ok")
 d: {String: Int} = {"count": 42}
 opt: String | Nil = nil
+
+# Single-element tuple literal and type annotation (trailing comma required):
+single: (Int,) = (42,)
+
+# Zero-or-one element tuple (e.g. optional single element):
+zero_or_one: () | (String,) = ("hello",)
+empty_or_one: () | (String,) = ()
 
 # Infinite / stream Tuple: ellipsis '...' repeats the last specified element type indefinitely
 fib_stream: (Int, ...) = fib(0, 1)
@@ -870,6 +890,10 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
 
 #### `Tuple`
+- **Syntax**:
+  - `()` creates an empty tuple (type `()`).
+  - `(x,)` creates a single-element tuple (trailing comma required to distinguish from grouping `(x)`). Single-element tuple type annotations are written as `(T,)`.
+  - `(x1, x2, ...)` creates a multi-element tuple (e.g. `(1, 2)`).
 - **Methods**:
   - `t.Len(): Int`: Returns the number of elements in `t`.
   - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
