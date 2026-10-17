@@ -357,10 +357,12 @@ def f(x: Int):
 		}
 	})
 
-	t.Run("top-level lambda with explicit return", func(t *testing.T) {
+	t.Run("closure continue returns empty tuple", func(t *testing.T) {
 		code := `
 f = |x: Int|:
-    return x + 1
+    if x < 0:
+        continue
+    x
 `
 		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 		inf := NewInferencer()
@@ -369,8 +371,8 @@ f = |x: Int|:
 		}
 		fVal, _ := inf.Scope().Lookup("f")
 		fnT := fVal.(*FuncType)
-		if fnT.String() != "(Int) -> Int" {
-			t.Fatalf("expected (Int) -> Int, got %s", fnT.String())
+		if fnT.String() != "(Int) -> () | Int" {
+			t.Fatalf("expected (Int) -> () | Int, got %s", fnT.String())
 		}
 	})
 
@@ -408,6 +410,89 @@ def recurse(n: Int):
 		fnT := fnVal.(*FuncType)
 		if fnT.String() != "(Int) -> Int" {
 			t.Fatalf("expected (Int) -> Int, got %s", fnT.String())
+		}
+	})
+
+	t.Run("2-pass recursion with float and bytes arithmetic", func(t *testing.T) {
+		code := `
+def half(n: Int):
+    if n <= 0:
+        return 1.0
+    return half(n - 1) / 2.0
+
+def repBytes(n: Int):
+    if n <= 0:
+        return Bytes("a")
+    return repBytes(n - 1) + Bytes("b")
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		halfVal, _ := inf.Scope().Lookup("half")
+		if halfVal.(*FuncType).String() != "(Int) -> Float" {
+			t.Fatalf("expected (Int) -> Float, got %s", halfVal.(*FuncType).String())
+		}
+		repBytesVal, _ := inf.Scope().Lookup("repBytes")
+		if repBytesVal.(*FuncType).String() != "(Int) -> Bytes" {
+			t.Fatalf("expected (Int) -> Bytes, got %s", repBytesVal.(*FuncType).String())
+		}
+	})
+
+	t.Run("2-pass recursion returning tuple pair", func(t *testing.T) {
+		code := `
+def fibPair(n: Int):
+    if n <= 0:
+        return (0, 1)
+    a, b = fibPair(n - 1)
+    return (b, a + b)
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		fibVal, _ := inf.Scope().Lookup("fibPair")
+		if fibVal.(*FuncType).String() != "(Int) -> (Int, Int)" {
+			t.Fatalf("expected (Int) -> (Int, Int), got %s", fibVal.(*FuncType).String())
+		}
+	})
+
+	t.Run("tuple indexing element type resolution", func(t *testing.T) {
+		code := `
+def getSecond(p: (Int, String)):
+    return p[1]
+
+def getFirst(p: (Int, String)):
+    return p[0]
+
+def getLast(p: (Int, String)):
+    return p[-1]
+
+def getDynamic(p: (Int, String), i: Int):
+    return p[i]
+`
+		prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(prog); err != nil {
+			t.Fatalf("unexpected type inference error: %v", err)
+		}
+		sVal, _ := inf.Scope().Lookup("getSecond")
+		if sVal.(*FuncType).String() != "((Int, String)) -> String" {
+			t.Fatalf("expected ((Int, String)) -> String, got %s", sVal.(*FuncType).String())
+		}
+		fVal, _ := inf.Scope().Lookup("getFirst")
+		if fVal.(*FuncType).String() != "((Int, String)) -> Int" {
+			t.Fatalf("expected ((Int, String)) -> Int, got %s", fVal.(*FuncType).String())
+		}
+		lVal, _ := inf.Scope().Lookup("getLast")
+		if lVal.(*FuncType).String() != "((Int, String)) -> String" {
+			t.Fatalf("expected ((Int, String)) -> String, got %s", lVal.(*FuncType).String())
+		}
+		dVal, _ := inf.Scope().Lookup("getDynamic")
+		if dVal.(*FuncType).String() != "((Int, String), Int) -> Int | String" {
+			t.Fatalf("expected ((Int, String), Int) -> Int | String, got %s", dVal.(*FuncType).String())
 		}
 	})
 }

@@ -585,8 +585,6 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 			}
 			if inf.funcCtx != nil {
 				inf.funcCtx.returnTypes = append(inf.funcCtx.returnTypes, retT)
-			} else if inf.breakCtx != nil && !inf.breakCtx.isLoop {
-				inf.breakCtx.breakTypes = append(inf.breakCtx.breakTypes, retT)
 			}
 			canFallthrough = false
 			currentValTypes = nil
@@ -607,6 +605,9 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 			currentValTypes = nil
 
 		case *ast.ContinueStmt:
+			if inf.breakCtx != nil && !inf.breakCtx.isLoop {
+				inf.breakCtx.breakTypes = append(inf.breakCtx.breakTypes, emptyTuple)
+			}
 			canFallthrough = false
 			currentValTypes = nil
 
@@ -749,19 +750,31 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 
 	// 2-pass resolution for self-recursion when declaredRetType is unspecified
 	if declaredRetType == TypeUnknown && funcCtx.selfCalled {
-		var knownTypes []Type
+		var candidateTypes []Type
 		for _, t := range funcCtx.returnTypes {
 			if t != TypeUnknown {
-				knownTypes = append(knownTypes, t)
+				candidateTypes = append(candidateTypes, t)
 			}
 		}
 		if canFT {
 			for _, t := range ftTypes {
 				if t != TypeUnknown {
-					knownTypes = append(knownTypes, t)
+					candidateTypes = append(candidateTypes, t)
 				}
 			}
 		}
+
+		// Prefer completely known types (not containing any nested Unknown)
+		var knownTypes []Type
+		for _, t := range candidateTypes {
+			if !containsUnknown(t) {
+				knownTypes = append(knownTypes, t)
+			}
+		}
+		if len(knownTypes) == 0 {
+			knownTypes = candidateTypes
+		}
+
 		if len(knownTypes) > 0 {
 			tentativeRet := NewUnionType(knownTypes...)
 			fnType.Ret = tentativeRet
@@ -1598,6 +1611,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		switch e.Op {
 		case "+", "-":
+			if t == TypeUnknown {
+				return TypeUnknown, nil
+			}
 			if t == TypeFloat {
 				return TypeFloat, nil
 			}
@@ -1665,6 +1681,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		switch e.Op {
 		case "+":
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				return TypeUnknown, nil
+			}
 			if leftT == TypeBytes && rightT == TypeBytes {
 				return TypeBytes, nil
 			}
@@ -1679,6 +1698,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return TypeInt, nil
 		case "-", "*", "/", "%":
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				return TypeUnknown, nil
+			}
 			if leftT == TypeBytes || rightT == TypeBytes {
 				return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
 			}
@@ -1952,6 +1974,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		if _, err := inf.inferExpr(e.Index); err != nil {
+			return nil, err
+		}
 		if st, ok := targetT.(*StructType); ok {
 			if m, err := st.LookupMember("[]"); err == nil {
 				if fnT, ok := m.(*FuncType); ok {
@@ -1966,7 +1991,23 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		if tt, ok := targetT.(*TupleType); ok {
 			if len(tt.Elems) > 0 {
-				return tt.Elems[0], nil
+				if !tt.IsVariadic {
+					if intLit, ok := e.Index.(*ast.IntLit); ok {
+						idx := int(intLit.Value)
+						if idx >= 0 && idx < len(tt.Elems) {
+							return tt.Elems[idx], nil
+						}
+					} else if uExpr, ok := e.Index.(*ast.UnaryExpr); ok && uExpr.Op == "-" {
+						if intLit, ok := uExpr.Expr.(*ast.IntLit); ok {
+							idx := len(tt.Elems) - int(intLit.Value)
+							if idx >= 0 && idx < len(tt.Elems) {
+								return tt.Elems[idx], nil
+							}
+						}
+					}
+					return NewUnionType(tt.Elems...), nil
+				}
+				return NewUnionType(tt.Elems...), nil
 			}
 		} else if dt, ok := targetT.(*DictType); ok {
 			return dt.Value, nil
@@ -2477,4 +2518,29 @@ func isEmptyCollection(expr ast.Expr) bool {
 	default:
 		return false
 	}
+}
+
+func containsUnknown(t Type) bool {
+	if t == nil || t == TypeUnknown {
+		return true
+	}
+	switch v := t.(type) {
+	case *TupleType:
+		for _, el := range v.Elems {
+			if containsUnknown(el) {
+				return true
+			}
+		}
+	case *DictType:
+		return containsUnknown(v.Key) || containsUnknown(v.Value)
+	case *UnionType:
+		for _, m := range v.Members {
+			if containsUnknown(m) {
+				return true
+			}
+		}
+	case *FuncType:
+		return containsUnknown(v.Arg) || containsUnknown(v.Ret)
+	}
+	return false
 }
