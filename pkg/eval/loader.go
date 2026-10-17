@@ -66,6 +66,7 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 	// Lex & Parse
 	l := lexer.NewLexer(string(contentBytes))
 	p := parser.NewParser(l)
+	p.SetFilename(targetFile)
 	prog := p.ParseProgram()
 	if len(p.Errors()) > 0 {
 		return nil, fmt.Errorf("syntax error in module '%s': %s", modPath, strings.Join(p.Errors(), "; "))
@@ -80,6 +81,7 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 	// Execute module in dedicated isolated environment chained to parentEnv
 	modEnv := NewEnvironment(fml.parentEnv)
 	modEnv.Loader = fml.Load
+	modEnv.Filename = targetFile
 	modEnv.Set("scriptName", StringValue(targetFile))
 
 	modInf := types.NewInferencer()
@@ -89,7 +91,7 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleValue, error) {
 
 	for _, stmt := range prog.Body {
 		if _, err := modEnv.evalStmt(stmt); err != nil {
-			return nil, fmt.Errorf("runtime error in module '%s': %w", modName, err)
+			return nil, fmt.Errorf("runtime error in module '%s': %w", modName, FormatRuntimeError(modEnv.Filename, stmt.Pos(), err))
 		}
 	}
 

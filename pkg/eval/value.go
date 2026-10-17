@@ -681,8 +681,10 @@ func NewEnvironment(parent *Environment) *Environment {
 
 // ReturnSignal carries the returned value and the target function call ID.
 type ReturnSignal struct {
-	FuncID uint64
-	Value  Value
+	FuncID   uint64
+	Value    Value
+	Pos      ast.Position
+	Filename string
 }
 
 // BreakSignal carries the break value and the target closure/loop call ID.
@@ -690,12 +692,16 @@ type BreakSignal struct {
 	ClosureID uint64
 	LoopID    uint64
 	Value     Value
+	Pos       ast.Position
+	Filename  string
 }
 
 // ContinueSignal signals skipping to the next iteration of the loop.
 type ContinueSignal struct {
 	ClosureID uint64
 	LoopID    uint64
+	Pos       ast.Position
+	Filename  string
 }
 
 func (env *Environment) Get(name string) (Value, bool) {

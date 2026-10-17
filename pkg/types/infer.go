@@ -481,7 +481,7 @@ func (inf *Inferencer) InferProgram(prog *ast.Program) error {
 	}
 	for _, stmt := range prog.Body {
 		if err := inf.inferStmt(stmt); err != nil {
-			return err
+			return inf.nodeErr(stmt, "%s", err.Error())
 		}
 	}
 	return nil
@@ -890,7 +890,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			inf.scope = methodScope
 			var lastExprType Type = TypeUnknown
 			for _, bStmt := range m.Body {
-				_ = inf.inferStmt(bStmt)
+				if err := inf.inferStmt(bStmt); err != nil {
+					inf.scope = prevScope
+					return inf.nodeErr(bStmt, "%s", err.Error())
+				}
 				if es, ok := bStmt.(*ast.ExprStmt); ok {
 					if et, err := inf.inferExpr(es.Value); err == nil {
 						lastExprType = et
@@ -909,7 +912,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if m.ReturnType != "" {
 				t, err := inf.parseTypeAnnot(m.ReturnType)
 				if err != nil {
-					return err
+					return inf.nodeErr(m, "%s", err.Error())
 				}
 				retType = t
 			} else if m.Name == "init" {
@@ -1663,7 +1666,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					return nil, err
 				}
 				if elemType != TypeUnknown && !IsAssignableTo(defT, elemType) {
-					return nil, fmt.Errorf("type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
+					return nil, inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, elemType, defT)
 				}
 			} else if !p.IsVariadic {
 				minArity++
