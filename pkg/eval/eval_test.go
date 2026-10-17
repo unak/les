@@ -4138,3 +4138,70 @@ print (42 |> -(5))
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
 }
+
+func TestInferredFunctionAndMethodTypeReflection(t *testing.T) {
+	code := `
+def noop():
+    ;
+
+def loopVoid(t: (String, ...)):
+    i = 0
+    for i < t.Len():
+        i = i + 1
+
+def branchInt(x: Int):
+    if x > 0:
+        return 1
+    return 2
+
+def branchUnion(x: Int):
+    if x > 0:
+        return "pos"
+    return 0
+
+def fib(n: Int):
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+struct Calculator:
+    def init():
+        ;
+
+    def clear():
+        x = 0
+
+    def abs(x: Int):
+        if x >= 0:
+            x
+        else:
+            -x
+
+calc = Calculator()
+
+print noop.Type()
+print "|"
+print loopVoid.Type()
+print "|"
+print branchInt.Type()
+print "|"
+print branchUnion.Type()
+print "|"
+print fib.Type()
+print "|"
+print Calculator.Type()
+print "|"
+print calc.clear.Type()
+print "|"
+print calc.abs.Type()
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestInferredFunctionAndMethodTypeReflection: %v", err)
+	}
+
+	expected := "() -> ()|((String, ...)) -> ()|(Int) -> Int|(Int) -> String | Int|(Int) -> Int|() -> Calculator|() -> ()|(Int) -> Int"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
