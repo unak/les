@@ -46,6 +46,20 @@ func (s *Scope) Lookup(name string) (Type, bool) {
 	return nil, false
 }
 
+// TypeWarning represents a warning emitted during type inference.
+type TypeWarning struct {
+	Filename string
+	Pos      ast.Position
+	Message  string
+}
+
+func (w TypeWarning) String() string {
+	if w.Filename != "" {
+		return fmt.Sprintf("%s:%d: %s at col %d", w.Filename, w.Pos.Line, w.Message, w.Pos.Col)
+	}
+	return fmt.Sprintf("%d: %s at col %d", w.Pos.Line, w.Message, w.Pos.Col)
+}
+
 // Inferencer performs Hindley-Milner type inference with lexical scope checking.
 type Inferencer struct {
 	nextVarID    int
@@ -55,6 +69,8 @@ type Inferencer struct {
 	ExprTypes    map[ast.Expr]Type
 	StmtTypes    map[ast.Stmt]Type
 	filename     string
+	warnUnknown  bool
+	warnings     []TypeWarning
 }
 
 var BuiltinBytesFuncType = &FuncType{
@@ -238,11 +254,12 @@ func NewInferencer() *Inferencer {
 	fileScope := NewScope(rootScope)
 
 	inf := &Inferencer{
-		nextVarID: 0,
-		scope:     fileScope,
-		modules:   make(map[string]*ModuleType),
-		ExprTypes: make(map[ast.Expr]Type),
-		StmtTypes: make(map[ast.Stmt]Type),
+		nextVarID:   0,
+		scope:       fileScope,
+		modules:     make(map[string]*ModuleType),
+		ExprTypes:   make(map[ast.Expr]Type),
+		StmtTypes:   make(map[ast.Stmt]Type),
+		warnUnknown: true,
 	}
 	inf.modules["io"] = makeIOModuleType("io")
 	inf.modules["bufio"] = makeBufioModuleType("bufio")
@@ -446,6 +463,26 @@ func (inf *Inferencer) SetFilename(filename string) {
 	inf.filename = filename
 }
 
+func (inf *Inferencer) SetWarnUnknown(warn bool) {
+	inf.warnUnknown = warn
+}
+
+func (inf *Inferencer) Warnings() []TypeWarning {
+	return inf.warnings
+}
+
+func (inf *Inferencer) addWarning(pos ast.Position, format string, args ...any) {
+	if !inf.warnUnknown {
+		return
+	}
+	msg := fmt.Sprintf(format, args...)
+	inf.warnings = append(inf.warnings, TypeWarning{
+		Filename: inf.filename,
+		Pos:      pos,
+		Message:  msg,
+	})
+}
+
 func (inf *Inferencer) nodeErr(node ast.Node, format string, args ...any) error {
 	msg := fmt.Sprintf(format, args...)
 	// Avoid double-formatting if message already begins with location
@@ -504,6 +541,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				return inf.nodeErr(s, "type mismatch for variable '%s': expected %s, got %s", s.Name, expected, valType)
 			}
 			targetType = expected
+		} else if targetType == TypeUnknown && !isEmptyCollection(s.Value) {
+			inf.addWarning(s.Pos(), "Unknown type of variable '%s'", s.Name)
 		}
 		// Enforce same-scope duplicate declaration prohibition
 		if err := inf.scope.Declare(s.Name, targetType); err != nil {
@@ -562,6 +601,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				elemType = t
+			} else {
+				inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in function '%s'", p.Name, s.Name)
 			}
 			if p.DefaultValue != nil {
 				defT, err := inf.inferExpr(p.DefaultValue)
@@ -599,6 +640,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				blockT = t
+			} else {
+				inf.addWarning(s.BlockParam.Pos(), "Unknown type of block parameter '&%s' in function '%s'", s.BlockParam.Name, s.Name)
 			}
 			blockOpt = (s.BlockParam.DefaultValue != nil)
 			if s.BlockParam.DefaultValue != nil {
@@ -681,6 +724,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		} else if lastT != TypeUnknown {
 			fnType.Ret = lastT
+		} else {
+			inf.addWarning(s.Pos(), "Unknown type of return value in function '%s'", s.Name)
 		}
 		return nil
 
@@ -845,6 +890,9 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						}
 					}
 				}
+				if pType == TypeUnknown {
+					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of struct '%s'", p.Name, m.Name, s.Name)
+				}
 
 				if p.IsVariadic {
 					isVariadic = true
@@ -881,6 +929,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						return err
 					}
 					blockT = t
+				} else {
+					inf.addWarning(m.BlockParam.Pos(), "Unknown type of block parameter '&%s' in method '%s' of struct '%s'", m.BlockParam.Name, m.Name, s.Name)
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
 				_ = methodScope.Declare(m.BlockParam.Name, blockT)
@@ -917,8 +967,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				retType = t
 			} else if m.Name == "init" {
 				retType = st
-			} else if lastExprType != nil {
+			} else if lastExprType != nil && lastExprType != TypeUnknown {
 				retType = lastExprType
+			} else {
+				inf.addWarning(m.Pos(), "Unknown type of return value in method '%s' of struct '%s'", m.Name, s.Name)
 			}
 
 
@@ -1045,6 +1097,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						return err
 					}
 					pType = t
+				} else {
+					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of interface '%s'", p.Name, m.Name, s.Name)
 				}
 				paramTypes[i] = pType
 				if p.DefaultValue == nil && !p.IsVariadic {
@@ -1062,6 +1116,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						return err
 					}
 					blockT = t
+				} else {
+					inf.addWarning(m.BlockParam.Pos(), "Unknown type of block parameter '&%s' in method '%s' of interface '%s'", m.BlockParam.Name, m.Name, s.Name)
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
 			}
@@ -1072,6 +1128,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					return err
 				}
 				retType = t
+			} else {
+				inf.addWarning(m.Pos(), "Unknown type of return value in method '%s' of interface '%s'", m.Name, s.Name)
 			}
 			mSig := &FuncType{
 				Arg:        &TupleType{Elems: paramTypes},
@@ -1409,6 +1467,19 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			args := e.Args
 			if fnT.BlockParam != nil {
 				if e.Block != nil {
+					// If the block parameter is a function type with known argument types,
+					// propagate them to unannotated parameters of the block literal so they don't warn as Unknown.
+					if bpFunc, isFunc := fnT.BlockParam.(*FuncType); isFunc {
+						if argTup, isTup := bpFunc.Arg.(*TupleType); isTup {
+							for idx := range e.Block.Params {
+								if e.Block.Params[idx].TypeAnnot == "" {
+									if idx < len(argTup.Elems) && argTup.Elems[idx] != TypeUnknown {
+										e.Block.Params[idx].TypeAnnot = argTup.Elems[idx].String()
+									}
+								}
+							}
+						}
+					}
 					bT, err := inf.inferExpr(e.Block)
 					if err != nil {
 						return nil, err
@@ -1659,6 +1730,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					return nil, err
 				}
 				elemType = t
+			} else {
+				inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in lambda", p.Name)
 			}
 			if p.DefaultValue != nil {
 				defT, err := inf.inferExpr(p.DefaultValue)
@@ -2054,4 +2127,18 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 		}
 	}
 	return elems, nil
+}
+
+func isEmptyCollection(expr ast.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *ast.DictLit:
+		return len(e.Entries) == 0
+	case *ast.TupleLit:
+		return len(e.Elements) == 0
+	default:
+		return false
+	}
 }

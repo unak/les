@@ -226,5 +226,21 @@ func TestErrorReportingFormat(t *testing.T) {
 	if runErr.Error() != expectedRun {
 		t.Fatalf("expected runtime error %q, got %q", expectedRun, runErr.Error())
 	}
+
+	// Type Warning
+	lWarn := lexer.NewLexer("def foo(x):\n  return x\n")
+	pWarn := parser.NewParser(lWarn)
+	pWarn.SetFilename("warn_test.les")
+	progWarn := pWarn.ParseProgram()
+	infWarn := types.NewInferencer()
+	_ = infWarn.InferProgram(progWarn)
+	if len(infWarn.Warnings()) == 0 {
+		t.Fatalf("expected type warnings")
+	}
+	expectedWarn := "warn_test.les:1: Unknown type of parameter 'x' in function 'foo' at col 9"
+	if infWarn.Warnings()[0].String() != expectedWarn {
+		t.Fatalf("expected warning %q, got %q", expectedWarn, infWarn.Warnings()[0].String())
+	}
 }
+
 
