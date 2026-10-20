@@ -1878,15 +1878,39 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		return TypeUnknown, nil // forward reference or flexible variable
 	case *ast.TupleLit:
-		elems := make([]Type, len(e.Elements))
-		for i, el := range e.Elements {
-			t, err := inf.inferExpr(el)
-			if err != nil {
-				return nil, err
+		elems := make([]Type, 0, len(e.Elements))
+		isVariadic := false
+		for _, el := range e.Elements {
+			if sp, ok := el.(*ast.SpreadExpr); ok {
+				spT, err := inf.inferExpr(sp.Expr)
+				if err != nil {
+					return nil, err
+				}
+				if spT == TypeUnknown {
+					isVariadic = true
+					elems = append(elems, TypeUnknown)
+					continue
+				}
+				spTuple, ok := spT.(*TupleType)
+				if !ok {
+					return nil, inf.nodeErr(sp.Expr, "cannot spread non-tuple value of type %s", spT)
+				}
+				if spTuple.IsVariadic {
+					isVariadic = true
+				}
+				elems = append(elems, spTuple.Elems...)
+			} else {
+				if isVariadic {
+					return nil, inf.nodeErr(el, "elements cannot follow a spread infinite/variadic tuple")
+				}
+				t, err := inf.inferExpr(el)
+				if err != nil {
+					return nil, err
+				}
+				elems = append(elems, t)
 			}
-			elems[i] = t
 		}
-		return &TupleType{Elems: elems}, nil
+		return &TupleType{Elems: elems, IsVariadic: isVariadic}, nil
 	case *ast.DictLit:
 		if len(e.Entries) == 0 {
 			return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
@@ -2106,6 +2130,20 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		switch e.Op {
 		case "+":
+			if leftTuple, ok := leftT.(*TupleType); ok {
+				if rightT == TypeUnknown {
+					return &TupleType{Elems: append([]Type(nil), leftTuple.Elems...), IsVariadic: true}, nil
+				}
+				rightTuple, ok := rightT.(*TupleType)
+				if !ok {
+					return nil, inf.nodeErr(e.Right, "type mismatch in operator '+': expected tuple, got %s", rightT)
+				}
+				merged := append(append([]Type(nil), leftTuple.Elems...), rightTuple.Elems...)
+				return &TupleType{Elems: merged, IsVariadic: leftTuple.IsVariadic || rightTuple.IsVariadic}, nil
+			}
+			if _, ok := rightT.(*TupleType); ok {
+				return nil, inf.nodeErr(e.Left, "type mismatch in operator '+': expected tuple, got %s", leftT)
+			}
 			if leftT == TypeUnknown || rightT == TypeUnknown {
 				return TypeUnknown, nil
 			}
@@ -2137,7 +2175,25 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeBool, nil
 		case "&&", "||":
 			return TypeBool, nil
-		case "&", "|", "^", "<<", ">>":
+		case "<<":
+			if leftTuple, ok := leftT.(*TupleType); ok {
+				newElems := append(append([]Type(nil), leftTuple.Elems...), rightT)
+				return &TupleType{Elems: newElems, IsVariadic: leftTuple.IsVariadic}, nil
+			}
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				if leftT != TypeUnknown && leftT != TypeInt {
+					return nil, inf.nodeErr(e, "cannot perform << operation on %s and %s", leftT, rightT)
+				}
+				if rightT != TypeUnknown && rightT != TypeInt {
+					return nil, inf.nodeErr(e, "cannot perform << operation on %s and %s", leftT, rightT)
+				}
+				return TypeUnknown, nil
+			}
+			if leftT == TypeInt && rightT == TypeInt {
+				return TypeInt, nil
+			}
+			return nil, inf.nodeErr(e, "cannot perform << operation on %s and %s", leftT, rightT)
+		case "&", "|", "^", ">>":
 			if leftT == TypeUnknown || rightT == TypeUnknown {
 				if leftT != TypeUnknown && leftT != TypeInt {
 					return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
@@ -2172,6 +2228,92 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		return NewUnionType(thenT, elseT), nil
 	case *ast.CallExpr:
+		if mem, ok := e.Callee.(*ast.MemberAccessExpr); ok {
+			targetT, err := inf.inferExpr(mem.Target)
+			if err != nil {
+				return nil, err
+			}
+			if targetTuple, ok := targetT.(*TupleType); ok {
+				switch mem.Member {
+				case "Append":
+					if len(e.Args) != 1 {
+						return nil, inf.nodeErr(e, "Append expects 1 argument, got %d", len(e.Args))
+					}
+					argT, err := inf.inferExpr(e.Args[0])
+					if err != nil {
+						return nil, err
+					}
+					newElems := append(append([]Type(nil), targetTuple.Elems...), argT)
+					return &TupleType{Elems: newElems, IsVariadic: targetTuple.IsVariadic}, nil
+				case "Prepend":
+					if len(e.Args) != 1 {
+						return nil, inf.nodeErr(e, "Prepend expects 1 argument, got %d", len(e.Args))
+					}
+					argT, err := inf.inferExpr(e.Args[0])
+					if err != nil {
+						return nil, err
+					}
+					newElems := append([]Type{argT}, targetTuple.Elems...)
+					return &TupleType{Elems: newElems, IsVariadic: targetTuple.IsVariadic}, nil
+				case "Concat":
+					if len(e.Args) < 1 {
+						return nil, inf.nodeErr(e, "Concat expects at least 1 argument, got 0")
+					}
+					merged := append([]Type(nil), targetTuple.Elems...)
+					isVar := targetTuple.IsVariadic
+					for i, arg := range e.Args {
+						argT, err := inf.inferExpr(arg)
+						if err != nil {
+							return nil, err
+						}
+						if argTuple, ok := argT.(*TupleType); ok {
+							merged = append(merged, argTuple.Elems...)
+							if argTuple.IsVariadic {
+								isVar = true
+							}
+						} else if argT == TypeUnknown {
+							isVar = true
+						} else {
+							return nil, inf.nodeErr(arg, "Concat argument %d must be a tuple, got %s", i+1, argT)
+						}
+					}
+					return &TupleType{Elems: merged, IsVariadic: isVar}, nil
+				case "Slice":
+					if len(e.Args) < 1 || len(e.Args) > 2 {
+						return nil, inf.nodeErr(e, "Slice expects 1 or 2 arguments, got %d", len(e.Args))
+					}
+					for _, arg := range e.Args {
+						argT, err := inf.inferExpr(arg)
+						if err != nil {
+							return nil, err
+						}
+						if argT != TypeInt && argT != TypeUnknown {
+							return nil, inf.nodeErr(arg, "Slice arguments must be Int, got %s", argT)
+						}
+					}
+					if len(e.Args) == 1 {
+						if intLit, ok := e.Args[0].(*ast.IntLit); ok && intLit.Value >= 0 && int(intLit.Value) <= len(targetTuple.Elems) && !targetTuple.IsVariadic {
+							return &TupleType{Elems: append([]Type(nil), targetTuple.Elems[int(intLit.Value):]...)}, nil
+						}
+					} else if len(e.Args) == 2 {
+						sLit, sOK := e.Args[0].(*ast.IntLit)
+						eLit, eOK := e.Args[1].(*ast.IntLit)
+						if sOK && eOK && sLit.Value >= 0 && eLit.Value >= sLit.Value && int(eLit.Value) <= len(targetTuple.Elems) && !targetTuple.IsVariadic {
+							return &TupleType{Elems: append([]Type(nil), targetTuple.Elems[int(sLit.Value):int(eLit.Value)]...)}, nil
+						}
+					}
+					var elemUnion []Type
+					for _, el := range targetTuple.Elems {
+						elemUnion = append(elemUnion, el)
+					}
+					var retElem Type = TypeUnknown
+					if len(elemUnion) > 0 {
+						retElem = NewUnionType(elemUnion...)
+					}
+					return &TupleType{Elems: []Type{retElem}, IsVariadic: true}, nil
+				}
+			}
+		}
 		calleeT, err := inf.inferExpr(e.Callee)
 		if err != nil {
 			return nil, err
@@ -2957,17 +3099,19 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	case "Nil", "nil":
 		return TypeNil, nil
 	case "Tuple":
-
 		return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 	case "Dict":
 		return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
 	}
 
-	// Tuple annotation or grouping: (Int, ...) or (Int, String) or ((Int) -> String)
+	// Tuple annotation or grouping: (...) or (Int, ...) or (Int, String) or ((Int) -> String)
 	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "" {
 			return &TupleType{Elems: []Type{}}, nil
+		}
+		if inner == "..." {
+			return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 		}
 		// Check if there is a top-level comma
 		hasTopLevelComma := false
@@ -3015,9 +3159,12 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}, nil
 	}
 
-	// Dict annotation: {Key: Value}
+	// Dict annotation: {...} or {Key: Value}
 	if strings.HasPrefix(annot, "{") && strings.HasSuffix(annot, "}") {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner == "..." {
+			return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
+		}
 		colonIdx := -1
 		pDepth := 0
 		bDepth := 0

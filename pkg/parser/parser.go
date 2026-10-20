@@ -1396,6 +1396,18 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 	}
 }
 
+func (p *Parser) parseTupleElement() ast.Expr {
+	if p.curTokenIs(lexer.TokenDot) {
+		pos := p.curPos()
+		for p.curTokenIs(lexer.TokenDot) {
+			p.nextToken()
+		}
+		inner := p.parseExpr(PREC_LOWEST)
+		return &ast.SpreadExpr{Position: pos, Expr: inner}
+	}
+	return p.parseExpr(PREC_LOWEST)
+}
+
 func (p *Parser) parseGroupOrTuple() ast.Expr {
 	pos := p.curPos()
 	// ( ) -> empty tuple
@@ -1405,7 +1417,22 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 	}
 
 	p.nextToken() // advance to first element
-	first := p.parseExpr(PREC_LOWEST)
+	isSpread := p.curTokenIs(lexer.TokenDot)
+	first := p.parseTupleElement()
+
+	if isSpread {
+		elems := []ast.Expr{first}
+		for p.peekTokenIs(lexer.TokenComma) {
+			p.nextToken() // consume ','
+			if p.peekTokenIs(lexer.TokenRParen) {
+				break
+			}
+			p.nextToken()
+			elems = append(elems, p.parseTupleElement())
+		}
+		p.expectPeek(lexer.TokenRParen)
+		return &ast.TupleLit{Position: pos, Elements: elems}
+	}
 
 	if p.peekTokenIs(lexer.TokenComma) {
 		// Tuple with elements
@@ -1416,7 +1443,7 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 				break // single tuple trailing comma: (1,)
 			}
 			p.nextToken()
-			elems = append(elems, p.parseExpr(PREC_LOWEST))
+			elems = append(elems, p.parseTupleElement())
 		}
 		p.expectPeek(lexer.TokenRParen)
 		return &ast.TupleLit{Position: pos, Elements: elems}
@@ -1435,14 +1462,14 @@ func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
 		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 	p.nextToken()
-	elems = append(elems, p.parseExpr(PREC_LOWEST))
+	elems = append(elems, p.parseTupleElement())
 	for p.peekTokenIs(lexer.TokenComma) {
 		p.nextToken()
 		if p.peekTokenIs(closing) {
 			break
 		}
 		p.nextToken()
-		elems = append(elems, p.parseExpr(PREC_LOWEST))
+		elems = append(elems, p.parseTupleElement())
 	}
 	p.expectPeek(closing)
 	return &ast.TupleLit{Position: pos, Elements: elems}
@@ -2016,6 +2043,9 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 
 func isValidDictAnnotationContent(inner string) bool {
 	inner = strings.TrimSpace(inner)
+	if inner == "..." {
+		return true
+	}
 	if inner == "" {
 		return false
 	}

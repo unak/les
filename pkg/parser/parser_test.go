@@ -1710,6 +1710,47 @@ func TestParseGenericErrors(t *testing.T) {
 	}
 }
 
+func TestParseTupleSpread(t *testing.T) {
+	input := `
+t = (1, ...other, 2)
+t2 = (...stream,)
+t3 = (...stream)
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	v1 := prog.Body[0].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if len(v1.Elements) != 3 {
+		t.Fatalf("expected 3 elements in v1, got %d", len(v1.Elements))
+	}
+	if _, ok := v1.Elements[1].(*ast.SpreadExpr); !ok {
+		t.Fatalf("expected SpreadExpr in v1[1], got %T", v1.Elements[1])
+	}
+
+	v2 := prog.Body[1].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if len(v2.Elements) != 1 {
+		t.Fatalf("expected 1 element in v2, got %d", len(v2.Elements))
+	}
+	if _, ok := v2.Elements[0].(*ast.SpreadExpr); !ok {
+		t.Fatalf("expected SpreadExpr in v2[0], got %T", v2.Elements[0])
+	}
+
+	v3 := prog.Body[2].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if len(v3.Elements) != 1 {
+		t.Fatalf("expected 1 element in v3, got %d", len(v3.Elements))
+	}
+	if _, ok := v3.Elements[0].(*ast.SpreadExpr); !ok {
+		t.Fatalf("expected SpreadExpr in v3[0], got %T", v3.Elements[0])
+	}
+}
+
 
 
 

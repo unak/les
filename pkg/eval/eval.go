@@ -1523,14 +1523,23 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.TupleLit:
 		// Lazy tuple elements: wrapped in Thunks unless force-demanded or constant literal
-		elems := make([]Value, len(e.Elements))
-		for i, el := range e.Elements {
-			if env.isForceDemand(el) {
-				elems[i] = Force(env.newThunk(el))
-			} else if val, ok := evalLiteral(el); ok {
-				elems[i] = val
+		elems := make([]Value, 0, len(e.Elements))
+		for _, el := range e.Elements {
+			if sp, ok := el.(*ast.SpreadExpr); ok {
+				spVal := Force(env.newThunk(sp.Expr))
+				spTuple, ok := spVal.(*TupleValue)
+				if !ok {
+					return nil, fmt.Errorf("cannot spread non-tuple value of type %s", typeNameOf(spVal))
+				}
+				elems = append(elems, spTuple.Elements...)
 			} else {
-				elems[i] = env.newThunk(el)
+				if env.isForceDemand(el) {
+					elems = append(elems, Force(env.newThunk(el)))
+				} else if val, ok := evalLiteral(el); ok {
+					elems = append(elems, val)
+				} else {
+					elems = append(elems, env.newThunk(el))
+				}
 			}
 		}
 		return &TupleValue{Elements: elems}, nil
@@ -2358,6 +2367,37 @@ func evalBinary(op string, left, right Value) (Value, error) {
 		return nil, fmt.Errorf("== operator must return Bool, got %v", eqVal)
 	}
 
+	// Tuple operators (+, <<, ==, !=)
+	if lt, ok := left.(*TupleValue); ok {
+		switch op {
+		case "+":
+			rt, ok := right.(*TupleValue)
+			if !ok {
+				return nil, fmt.Errorf("cannot concatenate tuple and %s", typeNameOf(right))
+			}
+			newElems := append(append([]Value(nil), lt.Elements...), rt.Elements...)
+			return &TupleValue{Elements: newElems}, nil
+		case "<<":
+			newElems := append(append([]Value(nil), lt.Elements...), right)
+			return &TupleValue{Elements: newElems}, nil
+		case "==":
+			rt, ok := right.(*TupleValue)
+			if !ok || len(lt.Elements) != len(rt.Elements) {
+				return BoolValue(false), nil
+			}
+			for i := range lt.Elements {
+				eqVal, err := evalBinary("==", Force(lt.Elements[i]), Force(rt.Elements[i]))
+				if err != nil {
+					return nil, err
+				}
+				if b, ok := eqVal.(BoolValue); !ok || !bool(b) {
+					return BoolValue(false), nil
+				}
+			}
+			return BoolValue(true), nil
+		}
+	}
+
 	// Custom operator methods on StructInstance
 	if si, ok := left.(*StructInstance); ok {
 		if fn, err := si.LookupMethod(op, 1); err == nil {
@@ -2967,7 +3007,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			return bf, nil
 		}
 
-	case "&", "|", "^", "<<", ">>":
+	case "&", "|", "^", ">>":
 		if _, ok := val.(IntValue); ok {
 			bf := &BuiltinFunc{
 				Name: member,
@@ -2980,6 +3020,149 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, member); ok {
 				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+
+	case "<<":
+		if _, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					}
+					return evalBinary(member, val, Force(args[0]))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, member); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if tt, ok := val.(*TupleValue); ok {
+			bf := &BuiltinFunc{
+				Name: "<<",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("<< takes 1 argument, got %d", len(args))
+					}
+					newElems := append(append([]Value(nil), tt.Elements...), args[0])
+					return &TupleValue{Elements: newElems}, nil
+				},
+			}
+			return bf, nil
+		}
+
+	case "Append":
+		if tt, ok := val.(*TupleValue); ok {
+			bf := &BuiltinFunc{
+				Name: member,
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					}
+					newElems := append(append([]Value(nil), tt.Elements...), args[0])
+					return &TupleValue{Elements: newElems}, nil
+				},
+			}
+			return bf, nil
+		}
+
+	case "Prepend":
+		if tt, ok := val.(*TupleValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Prepend",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("Prepend takes 1 argument, got %d", len(args))
+					}
+					newElems := append([]Value{args[0]}, tt.Elements...)
+					return &TupleValue{Elements: newElems}, nil
+				},
+			}
+			return bf, nil
+		}
+
+	case "Concat":
+		if tt, ok := val.(*TupleValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Concat",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) < 1 {
+						return nil, fmt.Errorf("Concat takes at least 1 argument, got 0")
+					}
+					newElems := append([]Value(nil), tt.Elements...)
+					for i, arg := range args {
+						forced := Force(arg)
+						otherT, ok := forced.(*TupleValue)
+						if !ok {
+							return nil, fmt.Errorf("Concat argument %d must be a tuple, got %s", i+1, typeNameOf(forced))
+						}
+						newElems = append(newElems, otherT.Elements...)
+					}
+					return &TupleValue{Elements: newElems}, nil
+				},
+			}
+			return bf, nil
+		}
+
+	case "Slice":
+		if tt, ok := val.(*TupleValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Slice",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) < 1 || len(args) > 2 {
+						return nil, fmt.Errorf("Slice takes 1 or 2 arguments, got %d", len(args))
+					}
+					startVal := Force(args[0])
+					sInt, ok := startVal.(IntValue)
+					if !ok {
+						return nil, fmt.Errorf("Slice start index must be an integer, got %s", typeNameOf(startVal))
+					}
+					sIdx64, ok := sInt.ToInt()
+					if !ok {
+						sIdx64 = 0
+					}
+					n := len(tt.Elements)
+					sIdx := sIdx64
+					if sIdx < 0 {
+						sIdx = n + sIdx
+					}
+					if sIdx < 0 {
+						sIdx = 0
+					}
+					if sIdx > n {
+						sIdx = n
+					}
+
+					eIdx := n
+					if len(args) == 2 {
+						endVal := Force(args[1])
+						eInt, ok := endVal.(IntValue)
+						if !ok {
+							return nil, fmt.Errorf("Slice end index must be an integer, got %s", typeNameOf(endVal))
+						}
+						eIdx64, ok := eInt.ToInt()
+						if !ok {
+							eIdx64 = n
+						}
+						eIdx = eIdx64
+						if eIdx < 0 {
+							eIdx = n + eIdx
+						}
+						if eIdx < 0 {
+							eIdx = 0
+						}
+						if eIdx > n {
+							eIdx = n
+						}
+					}
+					if eIdx < sIdx {
+						eIdx = sIdx
+					}
+					return &TupleValue{Elements: append([]Value(nil), tt.Elements[sIdx:eIdx]...)}, nil
+				},
 			}
 			return bf, nil
 		}

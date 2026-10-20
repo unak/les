@@ -161,6 +161,16 @@ func (t *TupleLit) node()         {}
 func (t *TupleLit) expr()         {}
 func (t *TupleLit) Pos() Position { return t.Position }
 
+// SpreadExpr represents tuple spreading inside a tuple literal, e.g. ...expr.
+type SpreadExpr struct {
+	Position Position
+	Expr     Expr
+}
+
+func (s *SpreadExpr) node()         {}
+func (s *SpreadExpr) expr()         {}
+func (s *SpreadExpr) Pos() Position { return s.Position }
+
 // DictEntry represents key-value pair in dictionary.
 type DictEntry struct {
 	Position Position
