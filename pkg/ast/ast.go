@@ -1,5 +1,7 @@
 package ast
 
+import "math/big"
+
 // Position holds source line and column numbers (1-indexed).
 type Position struct {
 	Line int
@@ -103,6 +105,7 @@ func (n *NamedArgExpr) Pos() Position { return n.Position }
 type IntLit struct {
 	Position Position
 	Value    int64
+	BigValue *big.Int // non-nil only when literal exceeds int64 range
 }
 
 func (i *IntLit) node()         {}

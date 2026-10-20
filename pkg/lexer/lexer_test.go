@@ -214,7 +214,7 @@ func TestLexerInvalidNumericLiterals(t *testing.T) {
 }
 
 func TestLexerBitwiseOperators(t *testing.T) {
-	input := `~ & ^ | << >> <<< >>> < > <= >= && || |>`
+	input := `~ & ^ | << >> < > <= >= && || |>`
 	l := NewLexer(input)
 	expected := []struct {
 		tokType TokenType
@@ -226,8 +226,6 @@ func TestLexerBitwiseOperators(t *testing.T) {
 		{TokenPipe, "|"},
 		{TokenLShift, "<<"},
 		{TokenRShift, ">>"},
-		{TokenArithLShift, "<<<"},
-		{TokenArithRShift, ">>>"},
 		{TokenLt, "<"},
 		{TokenGt, ">"},
 		{TokenLte, "<="},

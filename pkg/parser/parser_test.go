@@ -1356,8 +1356,6 @@ v3 = a ^ b
 v4 = a | b
 v5 = a << b
 v6 = a >> b
-v7 = a <<< b
-v8 = a >>> b
 prec1 = a | b ^ c & d << e + f
 prec2 = a & b == c
 prec3 = a | b is Int
@@ -1380,7 +1378,7 @@ call = x |> &(0xff)
 	}
 
 	// check binary operators
-	ops := []string{"&", "^", "|", "<<", ">>", "<<<", ">>>"}
+	ops := []string{"&", "^", "|", "<<", ">>"}
 	for i, op := range ops {
 		vd := prog.Body[i+1].(*ast.VarDecl)
 		bin, ok := vd.Value.(*ast.BinaryExpr)
@@ -1390,7 +1388,7 @@ call = x |> &(0xff)
 	}
 
 	// prec1: a | (b ^ (c & (d << (e + f))))
-	vdPrec1 := prog.Body[8].(*ast.VarDecl)
+	vdPrec1 := prog.Body[6].(*ast.VarDecl)
 	binPipe, ok := vdPrec1.Value.(*ast.BinaryExpr)
 	if !ok || binPipe.Op != "|" {
 		t.Fatalf("expected top-level | in prec1, got %T (%+v)", vdPrec1.Value, vdPrec1.Value)
@@ -1413,7 +1411,7 @@ call = x |> &(0xff)
 	}
 
 	// prec2: (a & b) == c
-	vdPrec2 := prog.Body[9].(*ast.VarDecl)
+	vdPrec2 := prog.Body[7].(*ast.VarDecl)
 	binEq, ok := vdPrec2.Value.(*ast.BinaryExpr)
 	if !ok || binEq.Op != "==" {
 		t.Fatalf("expected == at top of prec2, got %T (%+v)", vdPrec2.Value, vdPrec2.Value)
@@ -1423,7 +1421,7 @@ call = x |> &(0xff)
 	}
 
 	// prec3: (a | b) is Int
-	vdPrec3 := prog.Body[10].(*ast.VarDecl)
+	vdPrec3 := prog.Body[8].(*ast.VarDecl)
 	isExpr, ok := vdPrec3.Value.(*ast.IsExpr)
 	if !ok {
 		t.Fatalf("expected IsExpr in prec3, got %T", vdPrec3.Value)
@@ -1433,14 +1431,14 @@ call = x |> &(0xff)
 	}
 
 	// check: x is Int | String
-	vdCheck := prog.Body[11].(*ast.VarDecl)
+	vdCheck := prog.Body[9].(*ast.VarDecl)
 	isCheck, ok := vdCheck.Value.(*ast.IsExpr)
 	if !ok || isCheck.TypeAnnot != "Int | String" {
 		t.Fatalf("expected IsExpr with 'Int | String', got %+v", vdCheck.Value)
 	}
 
 	// lam: |x, y|: x | y
-	vdLam := prog.Body[12].(*ast.VarDecl)
+	vdLam := prog.Body[10].(*ast.VarDecl)
 	lamExpr, ok := vdLam.Value.(*ast.LambdaExpr)
 	if !ok || len(lamExpr.Params) != 2 {
 		t.Fatalf("expected LambdaExpr with 2 params, got %+v", vdLam.Value)
@@ -1451,14 +1449,14 @@ call = x |> &(0xff)
 	}
 
 	// val: x |> ~
-	vdPipeTilde := prog.Body[13].(*ast.VarDecl)
+	vdPipeTilde := prog.Body[11].(*ast.VarDecl)
 	pipeUn, ok := vdPipeTilde.Value.(*ast.UnaryExpr)
 	if !ok || pipeUn.Op != "~" {
 		t.Fatalf("expected UnaryExpr (~) from |> ~, got %+v", vdPipeTilde.Value)
 	}
 
 	// call: x |> &(0xff) desugars to x & 0xff
-	vdPipeCall := prog.Body[14].(*ast.VarDecl)
+	vdPipeCall := prog.Body[12].(*ast.VarDecl)
 	pipeCallBin, ok := vdPipeCall.Value.(*ast.BinaryExpr)
 	if !ok || pipeCallBin.Op != "&" {
 		t.Fatalf("expected BinaryExpr (&) from |> &(0xff), got %+v", vdPipeCall.Value)
@@ -1473,13 +1471,13 @@ struct Flags:
         Flags(mask: ~self.mask)
     def &(self, other: Flags) -> Flags:
         Flags(mask: self.mask & other.mask)
-    def <<<(self, n: Int) -> Flags:
-        Flags(mask: self.mask <<< n)
+    def <<(self, n: Int) -> Flags:
+        Flags(mask: self.mask << n)
 
 interface Bitwise:
     ~(self): Bitwise
     &(self, other: Bitwise): Bitwise
-    <<<(self, n: Int): Bitwise
+    <<(self, n: Int): Bitwise
 `
 	p := NewParser(lexer.NewLexer(input))
 	prog := p.ParseProgram()
@@ -1494,7 +1492,7 @@ interface Bitwise:
 	if len(st.Methods) != 3 {
 		t.Fatalf("expected 3 methods, got %d", len(st.Methods))
 	}
-	if st.Methods[0].Name != "~" || st.Methods[1].Name != "&" || st.Methods[2].Name != "<<<" {
+	if st.Methods[0].Name != "~" || st.Methods[1].Name != "&" || st.Methods[2].Name != "<<" {
 		t.Fatalf("unexpected method names: %s, %s, %s", st.Methods[0].Name, st.Methods[1].Name, st.Methods[2].Name)
 	}
 
@@ -1505,7 +1503,7 @@ interface Bitwise:
 	if len(it.Methods) != 3 {
 		t.Fatalf("expected 3 interface methods, got %d", len(it.Methods))
 	}
-	if it.Methods[0].Name != "~" || it.Methods[1].Name != "&" || it.Methods[2].Name != "<<<" {
+	if it.Methods[0].Name != "~" || it.Methods[1].Name != "&" || it.Methods[2].Name != "<<" {
 		t.Fatalf("unexpected method names: %s, %s, %s", it.Methods[0].Name, it.Methods[1].Name, it.Methods[2].Name)
 	}
 }

@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
@@ -24,7 +25,7 @@ const (
 	PREC_BIT_OR       // |
 	PREC_BIT_XOR      // ^
 	PREC_BIT_AND      // &
-	PREC_SHIFT        // << >> <<< >>>
+	PREC_SHIFT        // << >>
 	PREC_SUM          // + -
 	PREC_PRODUCT      // * / %
 	PREC_UNARY        // - ! ~
@@ -1183,24 +1184,35 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.Identifier{Position: pos, Name: p.curToken.Literal}
 	case lexer.TokenInt:
 		lit := strings.ReplaceAll(p.curToken.Literal, "_", "")
-		var v int64
+		base := 10
+		digits := lit
 		if len(lit) >= 2 && lit[0] == '0' {
 			switch lit[1] {
 			case 'b', 'B':
-				v, _ = strconv.ParseInt(lit[2:], 2, 64)
+				base = 2
+				digits = lit[2:]
 			case 'o', 'O':
-				v, _ = strconv.ParseInt(lit[2:], 8, 64)
+				base = 8
+				digits = lit[2:]
 			case 'd', 'D':
-				v, _ = strconv.ParseInt(lit[2:], 10, 64)
+				base = 10
+				digits = lit[2:]
 			case 'x', 'X':
-				v, _ = strconv.ParseInt(lit[2:], 16, 64)
-			default:
-				v, _ = strconv.ParseInt(lit, 10, 64)
+				base = 16
+				digits = lit[2:]
 			}
-		} else {
-			v, _ = strconv.ParseInt(lit, 10, 64)
 		}
-		return &ast.IntLit{Position: pos, Value: v}
+		if v, err := strconv.ParseInt(digits, base, 64); err == nil {
+			return &ast.IntLit{Position: pos, Value: v}
+		}
+		if bi, ok := new(big.Int).SetString(digits, base); ok {
+			if bi.IsInt64() {
+				return &ast.IntLit{Position: pos, Value: bi.Int64()}
+			}
+			return &ast.IntLit{Position: pos, BigValue: bi}
+		}
+		p.addError(pos.Line, pos.Col, "invalid integer literal '%s'", p.curToken.Literal)
+		return &ast.IntLit{Position: pos, Value: 0}
 	case lexer.TokenFloat:
 		lit := strings.ReplaceAll(p.curToken.Literal, "_", "")
 		v, _ := strconv.ParseFloat(lit, 64)
@@ -1456,7 +1468,7 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_BIT_XOR
 	case lexer.TokenAmpersand:
 		return PREC_BIT_AND
-	case lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
+	case lexer.TokenLShift, lexer.TokenRShift:
 		return PREC_SHIFT
 	case lexer.TokenPlus, lexer.TokenMinus:
 		return PREC_SUM
@@ -1497,7 +1509,7 @@ func (p *Parser) curPrecedence() int {
 		return PREC_BIT_XOR
 	case lexer.TokenAmpersand:
 		return PREC_BIT_AND
-	case lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
+	case lexer.TokenLShift, lexer.TokenRShift:
 		return PREC_SHIFT
 	case lexer.TokenPlus, lexer.TokenMinus:
 		return PREC_SUM
@@ -1597,7 +1609,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
 		lexer.TokenAnd, lexer.TokenOr,
 		lexer.TokenPipe, lexer.TokenCaret, lexer.TokenAmpersand,
-		lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
+		lexer.TokenLShift, lexer.TokenRShift:
 		op := p.curToken.Literal
 		prec := p.curPrecedence()
 		p.nextToken()
@@ -1929,7 +1941,7 @@ func isOperatorMethodToken(t lexer.TokenType) bool {
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
 		lexer.TokenTilde, lexer.TokenAmpersand, lexer.TokenPipe, lexer.TokenCaret,
-		lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift,
+		lexer.TokenLShift, lexer.TokenRShift,
 		lexer.TokenLBracket:
 		return true
 	default:
@@ -1942,7 +1954,7 @@ func (p *Parser) parseOperatorMethodName() string {
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
 		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
 		lexer.TokenTilde, lexer.TokenAmpersand, lexer.TokenPipe, lexer.TokenCaret,
-		lexer.TokenLShift, lexer.TokenRShift, lexer.TokenArithLShift, lexer.TokenArithRShift:
+		lexer.TokenLShift, lexer.TokenRShift:
 		op := p.curToken.Literal
 		return op
 	case lexer.TokenLBracket:

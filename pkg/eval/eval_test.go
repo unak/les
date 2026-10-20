@@ -425,13 +425,13 @@ func TestModuleAccessEvaluation(t *testing.T) {
 				Fn: func(args []Value) (Value, error) {
 					a := Force(args[0]).(IntValue)
 					b := Force(args[1]).(IntValue)
-					return a + b, nil
+					return a.Add(b), nil
 				},
 			},
 			"sub": &BuiltinFunc{
 				Name: "sub",
 				Fn: func(args []Value) (Value, error) {
-					return IntValue(0), nil
+					return NewIntValue(0), nil
 				},
 			},
 		},
@@ -3848,7 +3848,7 @@ print r1, " ", r2, " ", r3, " ", r4, " ", r5, " ", r6, " ", r7, " | ", \
 		}
 	}
 
-	// 6. 64-bit overflow saturation & MinInt64
+	// 6. Arbitrary-precision large integer parsing & MinInt64
 	codeOverflow := `
 maxOverflow = "99999999999999999999999999999".Int()
 minOverflow = "-99999999999999999999999999999".Int()
@@ -3860,7 +3860,7 @@ print maxOverflow, " ", minOverflow, " ", exactMin, " ", exactMax
 	if err != nil {
 		t.Fatalf("unexpected eval error on overflow code: %v", err)
 	}
-	expectedOvf := "9223372036854775807 -9223372036854775808 -9223372036854775808 9223372036854775807"
+	expectedOvf := "99999999999999999999999999999 -99999999999999999999999999999 -9223372036854775808 9223372036854775807"
 	if outOvf != expectedOvf {
 		t.Fatalf("expected %q, got %q", expectedOvf, outOvf)
 	}
@@ -4218,54 +4218,27 @@ print (1 << 3), " "
 print (-1 << 2), " "
 print (16 >> 2), " "
 print (-1 >> 1), " "
-print (1 <<< 3), " "
-print (-1 <<< 1), " "
-print (-2 <<< 1), " "
-print (0x4000_0000_0000_0000 <<< 1), " "
-print (1 <<< 62), " "
-print (1 <<< 63), " "
-print (-1 <<< 62), " "
-print (-1 <<< 63), " "
-print (-8 >>> 1), " "
-print (-1 >>> 1), " "
-print (16 >>> 2), " "
 print (1 << 64), " "
 print (1 >> 64), " "
 print (-1 >> 64), " "
-print (1 >>> 64), " "
-print (-1 >>> 64), " "
+print (1 << -1), " "
+print (16 >> -2), " "
+print (-8 >> 1), " "
 print (1 | 2 ^ 2 & 2 == 1), " "
 print (1 | 2 is Int), " "
 print (0 |> ~), " "
 print (15 |> &(10)), " "
 print (1 |> <<(4)), " "
-print (-8 |> >>>(1))
+print (-8 |> >>(1))
 `
 	out, err := runLesCode(code)
 	if err != nil {
 		t.Fatalf("unexpected eval error in TestBitwiseOperatorsEval: %v", err)
 	}
 
-	expected := "-1 0 -6 8 14 6 8 -4 4 9223372036854775807 8 -2 -4 0 4611686018427387904 0 -4611686018427387904 -9223372036854775808 -4 -1 4 0 0 0 0 -1 true true -1 10 16 -4"
+	expected := "-1 0 -6 8 14 6 8 -4 4 -1 18446744073709551616 0 -1 0 64 -4 true true -1 10 16 -4"
 	if out != expected {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
-	}
-
-	// Negative shift count runtime errors
-	negShiftCodes := []string{
-		"1 << -1",
-		"1 >> -1",
-		"1 <<< -1",
-		"1 >>> -1",
-	}
-	for _, sc := range negShiftCodes {
-		_, err := runLesCode(sc)
-		if err == nil {
-			t.Fatalf("expected error for negative shift count in %q, got nil", sc)
-		}
-		if !strings.Contains(err.Error(), "negative shift count") {
-			t.Fatalf("expected 'negative shift count' error in %q, got %v", sc, err)
-		}
 	}
 
 	// Custom struct operator methods and method tear-offs
@@ -4280,10 +4253,10 @@ struct Flag:
         Flag(val: self.val | other.val)
     def ^(self, other: Flag) -> Flag:
         Flag(val: self.val ^ other.val)
-    def <<<(self, n: Int) -> Flag:
-        Flag(val: self.val <<< n)
-    def >>>(self, n: Int) -> Flag:
-        Flag(val: self.val >>> n)
+    def <<(self, n: Int) -> Flag:
+        Flag(val: self.val << n)
+    def >>(self, n: Int) -> Flag:
+        Flag(val: self.val >> n)
 
 f1 = Flag(val: 12)
 f2 = Flag(val: 10)
@@ -4291,8 +4264,8 @@ print (~f1).val, " "
 print (f1 & f2).val, " "
 print (f1 | f2).val, " "
 print (f1 ^ f2).val, " "
-print (f1 <<< 1).val, " "
-print (f1 >>> 1).val, " "
+print (f1 << 1).val, " "
+print (f1 >> 1).val, " "
 
 # Builtin Int operator method call
 andFn = (12).&
@@ -4357,6 +4330,82 @@ print (10 is MyShow)
 	expectedExtra := "true true true false false true"
 	if outExtra != expectedExtra {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expectedExtra, outExtra)
+	}
+}
+
+func TestArbitraryPrecisionInt(t *testing.T) {
+	code := `
+a = 9223372036854775807
+b = a + 1
+c = b - 1
+print (b.String()), " "
+print (c.String()), " "
+
+# Multiplication & division expansion and demotion
+huge = 1 << 100
+small = huge >> 90
+print (small == 1024), " "
+
+divSmall = huge / (1 << 90)
+print (divSmall == 1024), " "
+
+rem = huge % ((1 << 90) + 1)
+print (rem > 0), " "
+
+# MinInt64 negation
+minVal = -9223372036854775808
+negMin = -minVal
+print (negMin == b), " "
+
+# Comparisons between small and big Int
+print (b > a), " "
+print (a < b), " "
+print (b == a + 1), " "
+print (b != a), " "
+print (-b == minVal), " "
+print (-(b + 1) < minVal), " "
+
+# Bitwise on big integers
+print (b & a), " "
+print (b | a == (1 << 64) - 1), " "
+print (b ^ a == (1 << 64) - 1), " "
+print (~b == -b - 1), " "
+
+# Ruby shift semantics
+print (100 << -2), " "
+print (100 >> -2), " "
+print (-100 >> 2), " "
+print (-1 >> 100), " "
+print (1 >> 100), " "
+
+# String and radix formatting / parsing
+hexStr = b.String(16)
+print hexStr, " "
+parsedHex = hexStr.Int(16)
+print (parsedHex == b), " "
+
+# Dict keying with big Int
+d = {b: "huge", a: "max64"}
+print d[b], " "
+print d[a]
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error in TestArbitraryPrecisionInt: %v", err)
+	}
+
+	expected := "9223372036854775808 9223372036854775807 true true true true true true true true true true 0 true true true 25 400 -25 -1 0 8000000000000000 true huge max64"
+	if out != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
+	}
+
+	// Verify huge shift limit safety
+	_, err = runLesCode("1 << 100000000")
+	if err == nil {
+		t.Fatalf("expected error for excessive shift count, got nil")
+	}
+	if !strings.Contains(err.Error(), "shift count too large") {
+		t.Fatalf("expected 'shift count too large' error, got %v", err)
 	}
 }
 

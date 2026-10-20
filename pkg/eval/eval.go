@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"strings"
@@ -164,7 +165,11 @@ func (ev *Evaluator) registerBuiltins() {
 				val := Force(args[0])
 				switch v := val.(type) {
 				case IntValue:
-					code = int(v)
+					if c, ok := v.ToInt(); ok {
+						code = c
+					} else {
+						code = int(v.small)
+					}
 				case BoolValue:
 					if bool(v) {
 						code = 0
@@ -585,7 +590,10 @@ func evalLiteral(expr ast.Expr) (Value, bool) {
 	}
 	switch lit := expr.(type) {
 	case *ast.IntLit:
-		return IntValue(lit.Value), true
+		if lit.BigValue != nil {
+			return NewIntValueFromBig(lit.BigValue), true
+		}
+		return NewIntValue(lit.Value), true
 	case *ast.FloatLit:
 		return FloatValue(lit.Value), true
 	case *ast.StringLit:
@@ -597,7 +605,15 @@ func evalLiteral(expr ast.Expr) (Value, bool) {
 	case *ast.UnaryExpr:
 		if lit.Op == "-" {
 			if intLit, ok := lit.Expr.(*ast.IntLit); ok {
-				return IntValue(-intLit.Value), true
+				if intLit.BigValue != nil {
+					neg := new(big.Int).Neg(intLit.BigValue)
+					return NewIntValueFromBig(neg), true
+				}
+				if intLit.Value == math.MinInt64 {
+					neg := new(big.Int).Neg(big.NewInt(math.MinInt64))
+					return NewIntValueFromBig(neg), true
+				}
+				return NewIntValue(-intLit.Value), true
 			}
 			if floatLit, ok := lit.Expr.(*ast.FloatLit); ok {
 				return FloatValue(-floatLit.Value), true
@@ -813,7 +829,11 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 					return nil, fmt.Errorf("return at top level expects Int or Bool, got %v", forced)
 				}
 			case IntValue:
-				code = int(v)
+				if c, ok := v.ToInt(); ok {
+					code = c
+				} else {
+					code = int(v.small)
+				}
 			case BoolValue:
 				if bool(v) {
 					code = 0
@@ -1130,7 +1150,10 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	switch e := expr.(type) {
 	case *ast.IntLit:
-		return IntValue(e.Value), nil
+		if e.BigValue != nil {
+			return NewIntValueFromBig(e.BigValue), nil
+		}
+		return NewIntValue(e.Value), nil
 	case *ast.FloatLit:
 		return FloatValue(e.Value), nil
 	case *ast.StringLit:
@@ -1205,12 +1228,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			if !ok {
 				return nil, fmt.Errorf("tuple index must be Int, got %v", idxVal)
 			}
-			idx := int(i)
+			idx, ok := i.ToInt()
+			if !ok {
+				return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
+			}
 			if idx < 0 {
 				idx = len(t.Elements) + idx
 			}
 			if idx < 0 || idx >= len(t.Elements) {
-				return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", int(i), len(t.Elements))
+				return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", idx, len(t.Elements))
 			}
 			return t.Elements[idx], nil
 		case StringValue:
@@ -1219,12 +1245,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return nil, fmt.Errorf("string index must be Int, got %v", idxVal)
 			}
 			runes := []rune(string(t))
-			idx := int(i)
+			idx, ok := i.ToInt()
+			if !ok {
+				return nil, fmt.Errorf("string index out of bounds: %s (len %d)", i.String(), len(runes))
+			}
 			if idx < 0 {
 				idx = len(runes) + idx
 			}
 			if idx < 0 || idx >= len(runes) {
-				return nil, fmt.Errorf("string index out of bounds: %d (len %d)", int(i), len(runes))
+				return nil, fmt.Errorf("string index out of bounds: %d (len %d)", idx, len(runes))
 			}
 			return StringValue(string(runes[idx])), nil
 		case BytesValue:
@@ -1233,14 +1262,17 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return nil, fmt.Errorf("bytes index must be Int, got %v", idxVal)
 			}
 			data := []byte(t)
-			idx := int(i)
+			idx, ok := i.ToInt()
+			if !ok {
+				return nil, fmt.Errorf("bytes index out of bounds: %s (len %d)", i.String(), len(data))
+			}
 			if idx < 0 {
 				idx = len(data) + idx
 			}
 			if idx < 0 || idx >= len(data) {
-				return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", int(i), len(data))
+				return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", idx, len(data))
 			}
-			return IntValue(data[idx]), nil
+			return NewIntValue(int64(data[idx])), nil
 		case *DictValue:
 			dk := MakeDictKey(idxVal)
 			if v, ok := t.Entries[dk]; ok {
@@ -1315,7 +1347,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			return nil, fmt.Errorf("unary + expects number, got %v", val)
 		case "-":
 			if iv, ok := val.(IntValue); ok {
-				return -iv, nil
+				return iv.Neg(), nil
 			}
 			if fv, ok := val.(FloatValue); ok {
 				return -fv, nil
@@ -1328,7 +1360,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			return nil, fmt.Errorf("unary ! expects Bool, got %v", val)
 		case "~":
 			if iv, ok := val.(IntValue); ok {
-				return IntValue(^int64(iv)), nil
+				return iv.Not(), nil
 			}
 			return nil, fmt.Errorf("unary ~ expects Int, got %v", val)
 		default:
@@ -1855,75 +1887,37 @@ func evalBinary(op string, left, right Value) (Value, error) {
 		if ri, ok := right.(IntValue); ok {
 			switch op {
 			case "+":
-				return li + ri, nil
+				return li.Add(ri), nil
 			case "-":
-				return li - ri, nil
+				return li.Sub(ri), nil
 			case "*":
-				return li * ri, nil
+				return li.Mul(ri), nil
 			case "/":
-				if ri == 0 {
-					return nil, fmt.Errorf("division by zero")
-				}
-				return li / ri, nil
+				return li.Quo(ri)
 			case "%":
-				return li % ri, nil
+				return li.Rem(ri)
 			case "&":
-				return IntValue(int64(li) & int64(ri)), nil
+				return li.And(ri), nil
 			case "|":
-				return IntValue(int64(li) | int64(ri)), nil
+				return li.Or(ri), nil
 			case "^":
-				return IntValue(int64(li) ^ int64(ri)), nil
+				return li.Xor(ri), nil
 			case "<<":
-				if ri < 0 {
-					return nil, fmt.Errorf("negative shift count: %d", ri)
-				}
-				if ri >= 64 {
-					return IntValue(0), nil
-				}
-				return IntValue(int64(uint64(li) << uint64(ri))), nil
+				return li.Lsh(ri)
 			case ">>":
-				if ri < 0 {
-					return nil, fmt.Errorf("negative shift count: %d", ri)
-				}
-				if ri >= 64 {
-					return IntValue(0), nil
-				}
-				return IntValue(int64(uint64(li) >> uint64(ri))), nil
-			case "<<<":
-				if ri < 0 {
-					return nil, fmt.Errorf("negative shift count: %d", ri)
-				}
-				const signMask = uint64(1) << 63
-				const valueMask = ^signMask // 0x7fffffffffffffff
-				sign := uint64(li) & signMask
-				if ri >= 63 {
-					return IntValue(int64(sign)), nil
-				}
-				shifted := (uint64(li) << uint64(ri)) & valueMask
-				return IntValue(int64(sign | shifted)), nil
-			case ">>>":
-				if ri < 0 {
-					return nil, fmt.Errorf("negative shift count: %d", ri)
-				}
-				if ri >= 64 {
-					if li < 0 {
-						return IntValue(-1), nil
-					}
-					return IntValue(0), nil
-				}
-				return IntValue(int64(li) >> uint64(ri)), nil
+				return li.Rsh(ri)
 			case "==":
-				return BoolValue(li == ri), nil
+				return BoolValue(li.Equal(ri)), nil
 			case "!=":
-				return BoolValue(li != ri), nil
+				return BoolValue(!li.Equal(ri)), nil
 			case "<":
-				return BoolValue(li < ri), nil
+				return BoolValue(li.Cmp(ri) < 0), nil
 			case "<=":
-				return BoolValue(li <= ri), nil
+				return BoolValue(li.Cmp(ri) <= 0), nil
 			case ">":
-				return BoolValue(li > ri), nil
+				return BoolValue(li.Cmp(ri) > 0), nil
 			case ">=":
-				return BoolValue(li >= ri), nil
+				return BoolValue(li.Cmp(ri) >= 0), nil
 			}
 		}
 	}
@@ -2035,7 +2029,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
 					}
-					return IntValue(len([]rune(string(v)))), nil
+					return NewIntValue(int64(len([]rune(string(v))))), nil
 				},
 			}, nil
 		case BytesValue:
@@ -2049,7 +2043,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
 					}
-					return IntValue(len(v)), nil
+					return NewIntValue(int64(len(v))), nil
 				},
 			}, nil
 		case *TupleValue:
@@ -2063,7 +2057,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
 					}
-					return IntValue(len(v.Elements)), nil
+					return NewIntValue(int64(len(v.Elements))), nil
 				},
 			}, nil
 		case *DictValue:
@@ -2077,7 +2071,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
 					}
-					return IntValue(len(v.Entries)), nil
+					return NewIntValue(int64(len(v.Entries))), nil
 				},
 			}, nil
 		}
@@ -2098,7 +2092,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if r == utf8.RuneError && size <= 1 {
 						return nil, fmt.Errorf("Ord() invalid UTF-8 string")
 					}
-					return IntValue(r), nil
+					return NewIntValue(int64(r)), nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "Ord"); ok {
@@ -2115,9 +2109,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("Chr() takes 0 arguments, got %d", len(args))
 					}
-					n := int64(iv)
-					if n < 0 || n > 0x10FFFF || (n >= 0xD800 && n <= 0xDFFF) {
-						return nil, fmt.Errorf("Chr() code point %d out of valid Unicode range", n)
+					n, ok := iv.Int64()
+					if !ok || n < 0 || n > 0x10FFFF || (n >= 0xD800 && n <= 0xDFFF) {
+						return nil, fmt.Errorf("Chr() code point %s out of valid Unicode range", iv.String())
 					}
 					return StringValue(string(rune(n))), nil
 				},
@@ -2191,7 +2185,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						if !ok {
 							return nil, fmt.Errorf("String() radix must be an integer, got %s", typeNameOf(rVal))
 						}
-						radix = int(rv)
+						rad, ok := rv.ToInt()
+						if !ok {
+							return nil, fmt.Errorf("unsupported radix %s (supported: 2, 8, 10, 16)", rv.String())
+						}
+						radix = rad
 					} else if len(args) > 1 {
 						return nil, fmt.Errorf("String() takes at most 1 argument, got %d", len(args))
 					}
@@ -2200,7 +2198,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("unsupported radix %d (supported: 2, 8, 10, 16)", radix)
 					}
 
-					return StringValue(strconv.FormatInt(int64(iv), radix)), nil
+					formatted, err := iv.Format(radix)
+					if err != nil {
+						return nil, err
+					}
+					return StringValue(formatted), nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "String"); ok {
@@ -2221,7 +2223,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						if !ok {
 							return nil, fmt.Errorf("Int() radix must be an integer, got %s", typeNameOf(rVal))
 						}
-						radix = int(iv)
+						rad, ok := iv.ToInt()
+						if !ok {
+							return nil, fmt.Errorf("unsupported radix %s (supported: 2, 8, 10, 16)", iv.String())
+						}
+						radix = rad
 					} else if len(args) > 1 {
 						return nil, fmt.Errorf("Int() takes at most 1 argument, got %d", len(args))
 					}
@@ -2230,8 +2236,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("unsupported radix %d (supported: 2, 8, 10, 16)", radix)
 					}
 
-					parsed := parseStringToInt(string(sv), radix)
-					return IntValue(parsed), nil
+					return parseStringToInt(string(sv), radix), nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "Int"); ok {
@@ -2330,7 +2335,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 							return val, nil
 						}
 						if iv, ok := val.(IntValue); ok {
-							return -iv, nil
+							return iv.Neg(), nil
 						}
 						if fv, ok := val.(FloatValue); ok {
 							return -fv, nil
@@ -2405,7 +2410,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("~ takes 0 arguments, got %d", len(args))
 					}
-					return IntValue(^int64(iv)), nil
+					return iv.Not(), nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "~"); ok {
@@ -2414,7 +2419,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			return bf, nil
 		}
 
-	case "&", "|", "^", "<<", ">>", "<<<", ">>>":
+	case "&", "|", "^", "<<", ">>":
 		if _, ok := val.(IntValue); ok {
 			bf := &BuiltinFunc{
 				Name: member,
@@ -2446,12 +2451,15 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("string index must be Int, got %v", idxVal)
 					}
 					runes := []rune(string(t))
-					idx := int(i)
+					idx, ok := i.ToInt()
+					if !ok {
+						return nil, fmt.Errorf("string index out of bounds: %s (len %d)", i.String(), len(runes))
+					}
 					if idx < 0 {
 						idx = len(runes) + idx
 					}
 					if idx < 0 || idx >= len(runes) {
-						return nil, fmt.Errorf("string index out of bounds: %d (len %d)", int(i), len(runes))
+						return nil, fmt.Errorf("string index out of bounds: %d (len %d)", idx, len(runes))
 					}
 					return StringValue(string(runes[idx])), nil
 				},
@@ -2474,14 +2482,17 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("bytes index must be Int, got %v", idxVal)
 					}
 					data := []byte(t)
-					idx := int(i)
+					idx, ok := i.ToInt()
+					if !ok {
+						return nil, fmt.Errorf("bytes index out of bounds: %s (len %d)", i.String(), len(data))
+					}
 					if idx < 0 {
 						idx = len(data) + idx
 					}
 					if idx < 0 || idx >= len(data) {
-						return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", int(i), len(data))
+						return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", idx, len(data))
 					}
-					return IntValue(data[idx]), nil
+					return NewIntValue(int64(data[idx])), nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeBytes, "[]"); ok {
@@ -2501,12 +2512,15 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if !ok {
 						return nil, fmt.Errorf("tuple index must be Int, got %v", idxVal)
 					}
-					idx := int(i)
+					idx, ok := i.ToInt()
+					if !ok {
+						return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
+					}
 					if idx < 0 {
 						idx = len(t.Elements) + idx
 					}
 					if idx < 0 || idx >= len(t.Elements) {
-						return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", int(i), len(t.Elements))
+						return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", idx, len(t.Elements))
 					}
 					return Force(t.Elements[idx]), nil
 				},
@@ -2558,10 +2572,10 @@ func isValidDigitForRadix(c byte, radix int) bool {
 	}
 }
 
-func parseStringToInt(s string, radix int) int64 {
+func parseStringToInt(s string, radix int) IntValue {
 	s = strings.TrimSpace(s)
 	if len(s) == 0 {
-		return 0
+		return NewIntValue(0)
 	}
 	start := 0
 	if s[0] == '+' || s[0] == '-' {
@@ -2576,20 +2590,20 @@ func parseStringToInt(s string, radix int) int64 {
 		end++
 	}
 	if end == start {
-		return 0
+		return NewIntValue(0)
 	}
 	sub := s[:end]
 	v, err := strconv.ParseInt(sub, radix, 64)
 	if err != nil {
 		if strings.Contains(err.Error(), "value out of range") {
-			if s[0] == '-' {
-				return math.MinInt64
+			z, ok := new(big.Int).SetString(sub, radix)
+			if ok {
+				return NewIntValueFromBig(z)
 			}
-			return math.MaxInt64
 		}
-		return 0
+		return NewIntValue(0)
 	}
-	return v
+	return NewIntValue(v)
 }
 
 func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {

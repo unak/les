@@ -76,8 +76,6 @@ const (
 	TokenCaret       // ^
 	TokenLShift      // <<
 	TokenRShift      // >>
-	TokenArithLShift // <<<
-	TokenArithRShift // >>>
 )
 
 // Token holds token information.
@@ -214,10 +212,6 @@ func (t TokenType) String() string {
 		return "'<<'"
 	case TokenRShift:
 		return "'>>'"
-	case TokenArithLShift:
-		return "'<<<'"
-	case TokenArithRShift:
-		return "'>>>'"
 	default:
 		return "unknown"
 	}

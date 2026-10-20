@@ -129,8 +129,8 @@ func testInt(t *testing.T, env *Environment, name string, expected int64) {
 func testIntVal(t *testing.T, val Value, expected int64) {
 	t.Helper()
 	if iv, ok := val.(IntValue); ok {
-		if int64(iv) != expected {
-			t.Fatalf("expected %d, got %d", expected, int64(iv))
+		if n, ok := iv.Int64(); !ok || n != expected {
+			t.Fatalf("expected %d, got %s", expected, iv.String())
 		}
 	} else {
 		t.Fatalf("expected IntValue, got %T (%+v)", val, val)
