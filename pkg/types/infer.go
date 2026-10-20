@@ -2128,9 +2128,17 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return bSig.Ret, nil
 			}
 		}
+		effLeftT := leftT
+		if tp, ok := leftT.(*TypeParamType); ok && tp.Constraint != nil {
+			effLeftT = tp.Constraint
+		}
+		effRightT := rightT
+		if tp, ok := rightT.(*TypeParamType); ok && tp.Constraint != nil {
+			effRightT = tp.Constraint
+		}
 		switch e.Op {
 		case "+":
-			if leftTuple, ok := leftT.(*TupleType); ok {
+			if leftTuple, ok := effLeftT.(*TupleType); ok {
 				if rightT == TypeUnknown {
 					return &TupleType{Elems: append([]Type(nil), leftTuple.Elems...), IsVariadic: true}, nil
 				}
@@ -2141,7 +2149,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				merged := append(append([]Type(nil), leftTuple.Elems...), rightTuple.Elems...)
 				return &TupleType{Elems: merged, IsVariadic: leftTuple.IsVariadic || rightTuple.IsVariadic}, nil
 			}
-			if _, ok := rightT.(*TupleType); ok {
+			if _, ok := effRightT.(*TupleType); ok {
 				return nil, inf.nodeErr(e.Left, "type mismatch in operator '+': expected tuple, got %s", leftT)
 			}
 			if leftT == TypeUnknown || rightT == TypeUnknown {
@@ -2176,7 +2184,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		case "&&", "||":
 			return TypeBool, nil
 		case "<<":
-			if leftTuple, ok := leftT.(*TupleType); ok {
+			if leftTuple, ok := effLeftT.(*TupleType); ok {
 				newElems := append(append([]Type(nil), leftTuple.Elems...), rightT)
 				return &TupleType{Elems: newElems, IsVariadic: leftTuple.IsVariadic}, nil
 			}
@@ -2233,7 +2241,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if err != nil {
 				return nil, err
 			}
-			if targetTuple, ok := targetT.(*TupleType); ok {
+			effTargetT := targetT
+			if tp, ok := targetT.(*TypeParamType); ok && tp.Constraint != nil {
+				effTargetT = tp.Constraint
+			}
+			if targetTuple, ok := effTargetT.(*TupleType); ok {
 				switch mem.Member {
 				case "Append":
 					if len(e.Args) != 1 {

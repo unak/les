@@ -1886,6 +1886,23 @@ def accept_any_dict(d: {...}) -> {...}:
 	assertType("t_prep", "(Nil, Int, String)")
 	assertType("t_concat", "(Int, String, Int, String)")
 	assertType("t_slice1", "(Int, Int)")
+
+	// Generic constraint with Tuple
+	genCode := `
+def addElem[T: (...)](t: T) -> (Int, ...):
+    t << 10
+
+def joinTup[T: (...)](t1: T, t2: T) -> (...):
+    t1 + t2
+
+def appTup[T: (...)](t: T):
+    t.Append("hello")
+`
+	progGen := parser.NewParser(lexer.NewLexer(genCode)).ParseProgram()
+	infGen := NewInferencer()
+	if err := infGen.InferProgram(progGen); err != nil {
+		t.Fatalf("unexpected type inference error on generic tuple constraints: %v", err)
+	}
 }
 
 

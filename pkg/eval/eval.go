@@ -1685,6 +1685,23 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			}
 			return BoolValue(bool(rb)), nil
 		}
+		if e.Op == "<<" {
+			leftVal := Force(NewThunk(e.Left, env))
+			if lt, ok := leftVal.(*TupleValue); ok {
+				var rightVal Value
+				if env.isForceDemand(e.Right) {
+					rightVal = Force(env.newThunk(e.Right))
+				} else if val, ok := evalLiteral(e.Right); ok {
+					rightVal = val
+				} else {
+					rightVal = env.newThunk(e.Right)
+				}
+				newElems := append(append([]Value(nil), lt.Elements...), rightVal)
+				return &TupleValue{Elements: newElems}, nil
+			}
+			rightVal := Force(NewThunk(e.Right, env))
+			return evalBinary(e.Op, leftVal, rightVal)
+		}
 		leftVal := Force(NewThunk(e.Left, env))
 		rightVal := Force(NewThunk(e.Right, env))
 		return evalBinary(e.Op, leftVal, rightVal)
@@ -2954,6 +2971,22 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				}
 				return bf, nil
 			}
+		case *TupleValue:
+			if member == "+" {
+				bf := &BuiltinFunc{
+					Name: "+",
+					Fn: func(args []Value) (Value, error) {
+						if len(args) != 1 {
+							return nil, fmt.Errorf("+ takes 1 argument, got %d", len(args))
+						}
+						return evalBinary("+", val, Force(args[0]))
+					},
+				}
+				if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "+"); ok {
+					bf.FuncType = sig
+				}
+				return bf, nil
+			}
 		}
 
 	case "*", "/", "%":
@@ -3482,6 +3515,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			if inner == "" {
 				return false
 			}
+			if inner == "..." {
+				return true
+			}
 			colonIdx := -1
 			pD := 0
 			bD := 0
@@ -3551,6 +3587,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
 			if inner == "" {
 				return len(tVal.Elements) == 0
+			}
+			if inner == "..." {
+				return true
 			}
 			elemAnnots := splitTopLevelCommas(inner)
 			isVariadic := false

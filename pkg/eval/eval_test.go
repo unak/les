@@ -4926,10 +4926,14 @@ def check_dict(d: {...}) -> {...}:
 
 t_res = check_tuple((10, 20))
 d_res = check_dict({"a": 1})
+is_tup = (1, 2) is (...)
+is_dict = {"x": 42} is {...}
 `
 	prog5 := code5 + `
 print(t_res)
 print(d_res)
+print("IS_TUP:", is_tup)
+print("IS_DICT:", is_dict)
 `
 	out5, err := runLesCode(prog5)
 	if err != nil {
@@ -4937,5 +4941,37 @@ print(d_res)
 	}
 	if !strings.Contains(out5, "(10, 20, 1)") || !strings.Contains(out5, "\"a\": 1") {
 		t.Errorf("unexpected output for arbitrary type annotations: %s", out5)
+	}
+	if !strings.Contains(out5, "IS_TUP:true") || !strings.Contains(out5, "IS_DICT:true") {
+		t.Errorf("expected is (...) and is {...} to be true, got: %s", out5)
+	}
+
+	// 6. Non-forcing right operand for << operator
+	code6 := `
+t = (1, 2)
+# 1 / 0 must not be forced immediately
+t_lazy = t << (1 / 0)
+print("LAZY_SHIFT_OK")
+`
+	out6, err := runLesCode(code6)
+	if err != nil {
+		t.Fatalf("code6 failed: %v", err)
+	}
+	if !strings.Contains(out6, "LAZY_SHIFT_OK") {
+		t.Errorf("expected lazy shift ok, got: %s", out6)
+	}
+
+	// 7. Tuple .+ method tear-off
+	code7 := `
+f = (1, 2).+
+res = f((3, 4))
+print(res)
+`
+	out7, err := runLesCode(code7)
+	if err != nil {
+		t.Fatalf("code7 failed: %v", err)
+	}
+	if !strings.Contains(out7, "(1, 2, 3, 4)") {
+		t.Errorf("expected tuple .+ tear-off, got: %s", out7)
 	}
 }
