@@ -168,7 +168,13 @@ func (ev *Evaluator) registerBuiltins() {
 					if c, ok := v.ToInt(); ok {
 						code = c
 					} else {
-						code = int(v.small)
+						// Preserve non-zero exit status for out-of-range integers
+						low := int(v.ToBig().Int64())
+						if low != 0 {
+							code = low
+						} else {
+							code = 1
+						}
 					}
 				case BoolValue:
 					if bool(v) {
@@ -832,7 +838,12 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 				if c, ok := v.ToInt(); ok {
 					code = c
 				} else {
-					code = int(v.small)
+					low := int(v.ToBig().Int64())
+					if low != 0 {
+						code = low
+					} else {
+						code = 1
+					}
 				}
 			case BoolValue:
 				if bool(v) {
@@ -1236,7 +1247,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				idx = len(t.Elements) + idx
 			}
 			if idx < 0 || idx >= len(t.Elements) {
-				return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", idx, len(t.Elements))
+				return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
 			}
 			return t.Elements[idx], nil
 		case StringValue:
@@ -1253,7 +1264,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				idx = len(runes) + idx
 			}
 			if idx < 0 || idx >= len(runes) {
-				return nil, fmt.Errorf("string index out of bounds: %d (len %d)", idx, len(runes))
+				return nil, fmt.Errorf("string index out of bounds: %s (len %d)", i.String(), len(runes))
 			}
 			return StringValue(string(runes[idx])), nil
 		case BytesValue:
@@ -1270,7 +1281,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				idx = len(data) + idx
 			}
 			if idx < 0 || idx >= len(data) {
-				return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", idx, len(data))
+				return nil, fmt.Errorf("bytes index out of bounds: %s (len %d)", i.String(), len(data))
 			}
 			return NewIntValue(int64(data[idx])), nil
 		case *DictValue:
@@ -2459,7 +2470,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						idx = len(runes) + idx
 					}
 					if idx < 0 || idx >= len(runes) {
-						return nil, fmt.Errorf("string index out of bounds: %d (len %d)", idx, len(runes))
+						return nil, fmt.Errorf("string index out of bounds: %s (len %d)", i.String(), len(runes))
 					}
 					return StringValue(string(runes[idx])), nil
 				},
@@ -2490,7 +2501,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						idx = len(data) + idx
 					}
 					if idx < 0 || idx >= len(data) {
-						return nil, fmt.Errorf("bytes index out of bounds: %d (len %d)", idx, len(data))
+						return nil, fmt.Errorf("bytes index out of bounds: %s (len %d)", i.String(), len(data))
 					}
 					return NewIntValue(int64(data[idx])), nil
 				},
@@ -2520,7 +2531,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						idx = len(t.Elements) + idx
 					}
 					if idx < 0 || idx >= len(t.Elements) {
-						return nil, fmt.Errorf("tuple index out of bounds: %d (len %d)", idx, len(t.Elements))
+						return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
 					}
 					return Force(t.Elements[idx]), nil
 				},

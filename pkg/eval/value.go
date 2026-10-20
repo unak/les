@@ -241,6 +241,13 @@ func (v IntValue) Lsh(shift IntValue) (IntValue, error) {
 	if shift.big != nil || shift.small > 1<<26 {
 		return IntValue{}, fmt.Errorf("shift count too large: %s", shift.String())
 	}
+	vBitLen := int64(64)
+	if v.big != nil {
+		vBitLen = int64(v.big.BitLen())
+	}
+	if vBitLen+shift.small > 1<<26 {
+		return IntValue{}, fmt.Errorf("shift count too large: %s", shift.String())
+	}
 	z := new(big.Int).Lsh(v.ToBig(), uint(shift.small))
 	return NewIntValueFromBig(z), nil
 }
@@ -256,7 +263,11 @@ func (v IntValue) Rsh(shift IntValue) (IntValue, error) {
 	if v.big == nil && v.small == 0 {
 		return v, nil
 	}
-	if shift.big != nil || shift.small > 1<<26 {
+	vBitLen := int64(64)
+	if v.big != nil {
+		vBitLen = int64(v.big.BitLen())
+	}
+	if shift.big != nil || shift.small >= vBitLen {
 		if v.Cmp(NewIntValue(0)) < 0 {
 			return NewIntValue(-1), nil
 		}

@@ -377,10 +377,12 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 			if !ok {
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
-			numBytes, ok := iv.Int64()
-			// A6: n < 0 is error; n == 0 returns empty Bytes
-			if !ok || numBytes < 0 {
+			if iv.Cmp(NewIntValue(0)) < 0 {
 				return nil, fmt.Errorf("Read: negative byte count %s", iv.String())
+			}
+			numBytes, ok := iv.Int64()
+			if !ok {
+				return nil, fmt.Errorf("Read: byte count too large %s", iv.String())
 			}
 			if numBytes == 0 {
 				return BytesValue(""), nil
@@ -513,10 +515,12 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 			if !ok {
 				return nil, fmt.Errorf("Peek expects Int, got %s", typeNameOf(forced))
 			}
-			numBytes, ok := iv.ToInt()
-			// A6: n < 0 is error; n == 0 returns empty Bytes
-			if !ok || numBytes < 0 {
+			if iv.Cmp(NewIntValue(0)) < 0 {
 				return nil, fmt.Errorf("Peek: negative byte count %s", iv.String())
+			}
+			numBytes, ok := iv.ToInt()
+			if !ok {
+				return nil, fmt.Errorf("Peek: byte count too large %s", iv.String())
 			}
 			if numBytes == 0 {
 				return BytesValue(""), nil

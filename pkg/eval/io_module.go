@@ -132,9 +132,12 @@ func (ev *Evaluator) initIOModule() {
 			if !ok {
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
-			numBytes, ok := iv.Int64()
-			if !ok || numBytes < 0 {
+			if iv.Cmp(NewIntValue(0)) < 0 {
 				return nil, fmt.Errorf("Read: negative byte count %s", iv.String())
+			}
+			numBytes, ok := iv.Int64()
+			if !ok {
+				return nil, fmt.Errorf("Read: byte count too large %s", iv.String())
 			}
 			if numBytes == 0 {
 				return BytesValue(""), nil

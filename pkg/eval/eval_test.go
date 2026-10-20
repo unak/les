@@ -4407,6 +4407,23 @@ print d[a]
 	if !strings.Contains(err.Error(), "shift count too large") {
 		t.Fatalf("expected 'shift count too large' error, got %v", err)
 	}
+
+	// Verify chained shift limit safety
+	_, err = runLesCode("(1 << 60000000) << 60000000")
+	if err == nil {
+		t.Fatalf("expected error for chained excessive shift count, got nil")
+	}
+	if !strings.Contains(err.Error(), "shift count too large") {
+		t.Fatalf("expected 'shift count too large' error, got %v", err)
+	}
+
+	// Verify exit with big int preserves non-zero exit code
+	ev := NewEvaluator()
+	prog := parser.NewParser(lexer.NewLexer("exit(1 << 70)")).ParseProgram()
+	_, err = ev.EvalProgram(prog)
+	if exitErr, ok := err.(*ExitError); !ok || exitErr.Code == 0 {
+		t.Fatalf("expected non-zero ExitError, got %v", err)
+	}
 }
 
 
