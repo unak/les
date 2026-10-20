@@ -1809,4 +1809,43 @@ res = mapBlock(42) do |n|:
 	}
 }
 
+func TestSelfAndGenericIndexInference(t *testing.T) {
+	code := `
+struct Box[T]:
+    val: T
+    def Clone(): Box[T]:
+        self
+
+struct List[T]:
+    items: (T, ...)
+    def [](i: Int) -> T:
+        self.items[i]
+
+l = List((10, 20, 30))
+idx = 1
+val = l[idx]
+
+def getVal[T: Box[Int]](b: T) -> Int:
+    b.val
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	// Verify Box[Int].Type() reflection
+	bType, ok := inf.Scope().Lookup("Box")
+	if !ok {
+		t.Fatalf("Box not found in scope")
+	}
+	st := bType.(*StructType)
+	instSt := InstantiateStruct(st, []Type{TypeInt})
+	if initMethod, ok := instSt.Methods["init"]; ok {
+		if !strings.Contains(initMethod.String(), "Box[Int]") {
+			t.Fatalf("expected init return type to be Box[Int], got %s", initMethod.String())
+		}
+	}
+}
+
 

@@ -4695,3 +4695,29 @@ print (ds is Pipeline[String]), "\n"
 
 
 
+
+
+func TestGenericBoxDictAndIndexing(t *testing.T) {
+	code := `struct Box[T]:
+    val: T
+
+b = Box[{String: Int}]({ "a": 10 })
+res1 = b.val["a"]
+
+struct List[T]:
+    items: (T, ...)
+    def [](i: Int) -> T:
+        self.items[i]
+
+l = List((10, 20, 30))
+idx = 1
+res2 = l[idx]`
+	out, err := runLesCode(code + "\nprint(res1)\nprint(res2)")
+	if err != nil {
+		t.Fatalf("failed: %v", err)
+	}
+	expected := "1020"
+	if strings.TrimSpace(out) != strings.TrimSpace(expected) {
+		t.Fatalf("unexpected output:\ngot:\n%s\nexpected:\n%s", out, expected)
+	}
+}

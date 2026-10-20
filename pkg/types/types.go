@@ -346,6 +346,28 @@ func IsAssignableTo(src, target Type) bool {
 
 	// If target is InterfaceType, check if src implements it
 	if ifaceTarget, ok := target.(*InterfaceType); ok {
+		if ifaceSrc, ok := src.(*InterfaceType); ok && ifaceTarget.Name == ifaceSrc.Name {
+			if len(ifaceTarget.TypeArgs) == 0 {
+				return true
+			}
+			if len(ifaceSrc.TypeArgs) == len(ifaceTarget.TypeArgs) {
+				for i := range ifaceSrc.TypeArgs {
+					if !IsAssignableTo(ifaceSrc.TypeArgs[i], ifaceTarget.TypeArgs[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			if len(ifaceSrc.TypeArgs) == 0 && len(ifaceSrc.TypeParams) == len(ifaceTarget.TypeArgs) {
+				for i, tp := range ifaceSrc.TypeParams {
+					tpType := &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
+					if !IsAssignableTo(tpType, ifaceTarget.TypeArgs[i]) {
+						return false
+					}
+				}
+				return true
+			}
+		}
 		return ImplementsInterface(src, ifaceTarget)
 	}
 
@@ -358,6 +380,15 @@ func IsAssignableTo(src, target Type) bool {
 			if len(sSrc.TypeArgs) == len(sTarget.TypeArgs) {
 				for i := range sSrc.TypeArgs {
 					if !IsAssignableTo(sSrc.TypeArgs[i], sTarget.TypeArgs[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			if len(sSrc.TypeArgs) == 0 && len(sSrc.TypeParams) == len(sTarget.TypeArgs) {
+				for i, tp := range sSrc.TypeParams {
+					tpType := &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
+					if !IsAssignableTo(tpType, sTarget.TypeArgs[i]) {
 						return false
 					}
 				}
@@ -1077,6 +1108,9 @@ func Substitute(t Type, bindings map[string]Type) Type {
 			for i, ov := range typ.Overloads {
 				newF.Overloads[i] = Substitute(ov, bindings).(*FuncType)
 			}
+			if len(newF.Overloads) == 2 && typ.OverloadUnion != "" {
+				newF.OverloadUnion = fmt.Sprintf("%s | %s", newF.Overloads[0].String(), newF.Overloads[1].String())
+			}
 		}
 		return newF
 	case *UnionType:
@@ -1097,6 +1131,21 @@ func Substitute(t Type, bindings map[string]Type) Type {
 			}
 			return InstantiateStruct(origin, newArgs)
 		}
+		if len(typ.TypeParams) > 0 {
+			newArgs := make([]Type, len(typ.TypeParams))
+			allBound := true
+			for i, tp := range typ.TypeParams {
+				if b, ok := bindings[tp.Name]; ok {
+					newArgs[i] = b
+				} else {
+					allBound = false
+					break
+				}
+			}
+			if allBound {
+				return InstantiateStruct(typ, newArgs)
+			}
+		}
 		return typ
 	case *InterfaceType:
 		if len(typ.TypeArgs) > 0 {
@@ -1109,6 +1158,21 @@ func Substitute(t Type, bindings map[string]Type) Type {
 				origin = typ
 			}
 			return InstantiateInterface(origin, newArgs)
+		}
+		if len(typ.TypeParams) > 0 {
+			newArgs := make([]Type, len(typ.TypeParams))
+			allBound := true
+			for i, tp := range typ.TypeParams {
+				if b, ok := bindings[tp.Name]; ok {
+					newArgs[i] = b
+				} else {
+					allBound = false
+					break
+				}
+			}
+			if allBound {
+				return InstantiateInterface(typ, newArgs)
+			}
 		}
 		return typ
 	default:

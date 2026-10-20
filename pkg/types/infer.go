@@ -2516,10 +2516,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if st, ok := targetT.(*StructType); ok {
+		effTargetT := targetT
+		if tp, ok := targetT.(*TypeParamType); ok && tp.Constraint != nil {
+			effTargetT = tp.Constraint
+		}
+		if st, ok := effTargetT.(*StructType); ok {
 			return st.LookupMember(e.Member)
 		}
-		if it, ok := targetT.(*InterfaceType); ok {
+		if it, ok := effTargetT.(*InterfaceType); ok {
 			if mSig, ok := it.LookupMethod(e.Member); ok {
 				return mSig, nil
 			}
@@ -2580,60 +2584,58 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		if e.TypeArg != "" {
-			if st, ok := targetT.(*StructType); ok && len(st.TypeParams) > 0 {
-				argT, err := inf.parseTypeAnnot(e.TypeArg)
-				if err != nil {
-					return nil, err
+			if st, ok := targetT.(*StructType); ok && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 {
+				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+					args := []Type{argT}
+					if err := ValidateTypeConstraints(st.TypeParams, args); err != nil {
+						return nil, inf.nodeErr(e, "%s", err.Error())
+					}
+					return InstantiateStruct(st, args), nil
 				}
-				args := []Type{argT}
-				if err := ValidateTypeConstraints(st.TypeParams, args); err != nil {
-					return nil, inf.nodeErr(e, "%s", err.Error())
-				}
-				return InstantiateStruct(st, args), nil
 			}
-			if fnT, ok := targetT.(*FuncType); ok && len(fnT.TypeParams) > 0 {
-				argT, err := inf.parseTypeAnnot(e.TypeArg)
-				if err != nil {
-					return nil, err
+			if fnT, ok := targetT.(*FuncType); ok && len(fnT.TypeParams) > 0 && len(fnT.TypeArgs) == 0 {
+				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+					args := []Type{argT}
+					if err := ValidateTypeConstraints(fnT.TypeParams, args); err != nil {
+						return nil, inf.nodeErr(e, "%s", err.Error())
+					}
+					bindings := map[string]Type{fnT.TypeParams[0].Name: argT}
+					instFn := Substitute(fnT, bindings).(*FuncType)
+					instFn.TypeParams = nil
+					instFn.TypeArgs = args
+					return instFn, nil
 				}
-				args := []Type{argT}
-				if err := ValidateTypeConstraints(fnT.TypeParams, args); err != nil {
-					return nil, inf.nodeErr(e, "%s", err.Error())
-				}
-				bindings := map[string]Type{fnT.TypeParams[0].Name: argT}
-				instFn := Substitute(fnT, bindings).(*FuncType)
-				instFn.TypeParams = nil
-				instFn.TypeArgs = args
-				return instFn, nil
 			}
-			if iface, ok := targetT.(*InterfaceType); ok && len(iface.TypeParams) > 0 {
-				argT, err := inf.parseTypeAnnot(e.TypeArg)
-				if err != nil {
-					return nil, err
+			if iface, ok := targetT.(*InterfaceType); ok && len(iface.TypeParams) > 0 && len(iface.TypeArgs) == 0 {
+				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+					args := []Type{argT}
+					if err := ValidateTypeConstraints(iface.TypeParams, args); err != nil {
+						return nil, inf.nodeErr(e, "%s", err.Error())
+					}
+					return InstantiateInterface(iface, args), nil
 				}
-				args := []Type{argT}
-				if err := ValidateTypeConstraints(iface.TypeParams, args); err != nil {
-					return nil, inf.nodeErr(e, "%s", err.Error())
-				}
-				return InstantiateInterface(iface, args), nil
 			}
 		}
 		if _, err := inf.inferExpr(e.Index); err != nil {
 			return nil, err
 		}
-		if st, ok := targetT.(*StructType); ok {
+		effTargetT := targetT
+		if tp, ok := targetT.(*TypeParamType); ok && tp.Constraint != nil {
+			effTargetT = tp.Constraint
+		}
+		if st, ok := effTargetT.(*StructType); ok {
 			if m, err := st.LookupMember("[]"); err == nil {
 				if fnT, ok := m.(*FuncType); ok {
 					return fnT.Ret, nil
 				}
 			}
 		}
-		if it, ok := targetT.(*InterfaceType); ok {
+		if it, ok := effTargetT.(*InterfaceType); ok {
 			if m, ok := it.LookupMethod("[]"); ok {
 				return m.Ret, nil
 			}
 		}
-		if tt, ok := targetT.(*TupleType); ok {
+		if tt, ok := effTargetT.(*TupleType); ok {
 			if len(tt.Elems) > 0 {
 				if !tt.IsVariadic {
 					if intLit, ok := e.Index.(*ast.IntLit); ok && intLit.BigValue == nil {
@@ -2653,11 +2655,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 				return NewUnionType(tt.Elems...), nil
 			}
-		} else if dt, ok := targetT.(*DictType); ok {
+		} else if dt, ok := effTargetT.(*DictType); ok {
 			return dt.Value, nil
-		} else if targetT == TypeString {
+		} else if effTargetT == TypeString {
 			return TypeString, nil
-		} else if targetT == TypeBytes {
+		} else if effTargetT == TypeBytes {
 			return TypeInt, nil
 		}
 		return TypeUnknown, nil

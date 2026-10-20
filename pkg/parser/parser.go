@@ -2216,6 +2216,15 @@ func exprToTypeAnnot(expr ast.Expr) string {
 			elems = append(elems, t)
 		}
 		return "(" + strings.Join(elems, ", ") + ")"
+	case *ast.DictLit:
+		if len(e.Entries) == 1 {
+			k := exprToTypeAnnot(e.Entries[0].Key)
+			v := exprToTypeAnnot(e.Entries[0].Value)
+			if k != "" && v != "" {
+				return "{" + k + ": " + v + "}"
+			}
+		}
+		return ""
 	default:
 		return ""
 	}
