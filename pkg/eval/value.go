@@ -432,6 +432,8 @@ func (d *DictValue) String() string {
 
 // Closure represents user defined function with closure environment.
 type Closure struct {
+	TypeParams      []ast.TypeParam
+	TypeArgs        []string
 	Params          []ast.FuncParam
 	BlockParam      *ast.FuncParam
 	Body            []ast.Stmt
@@ -464,6 +466,8 @@ func (m *ModuleValue) String() string { return fmt.Sprintf("<module %s>", m.Name
 // StructDefValue represents struct type definition (usable as constructor).
 type StructDefValue struct {
 	Name          string
+	TypeParams    []ast.TypeParam
+	TypeArgs      []string
 	FieldOrder    []string
 	FieldDefaults map[string]ast.Expr
 	EmbeddedNames []string
@@ -481,6 +485,8 @@ func (s *StructDefValue) String() string {
 type InterfaceDefValue struct {
 	Name       string
 	ModuleName string
+	TypeParams []ast.TypeParam
+	TypeArgs   []string
 	Embedded   []string
 	Methods    map[string]ast.MethodSig
 }
@@ -492,6 +498,7 @@ func (i *InterfaceDefValue) String() string {
 // StructInstance represents an instantiated struct value.
 type StructInstance struct {
 	Def            *StructDefValue
+	TypeArgs       []string
 	Fields         map[string]Value
 	Embedded       map[string]*StructInstance
 	IsInitializing bool
@@ -765,7 +772,7 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 				if len(args) != 0 {
 					return nil, fmt.Errorf("Type() takes 0 arguments, got %d", len(args))
 				}
-				return StringValue(si.Def.Name), nil
+				return StringValue(typeNameWithDepth(si, 0)), nil
 			},
 		}, nil
 	}

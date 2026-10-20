@@ -30,6 +30,27 @@ func (p PrimType) Equals(other Type) bool {
 	return ok && p == op
 }
 
+// TypeParamDef defines a type parameter with its name and optional constraint.
+type TypeParamDef struct {
+	Name       string
+	Constraint Type // nil if unconstrained
+}
+
+// TypeParamType represents a type parameter inside a generic body or constraint.
+type TypeParamType struct {
+	Name       string
+	Constraint Type // nil if unconstrained
+}
+
+func (tp *TypeParamType) String() string {
+	return tp.Name
+}
+
+func (tp *TypeParamType) Equals(other Type) bool {
+	otp, ok := other.(*TypeParamType)
+	return ok && tp.Name == otp.Name
+}
+
 // TupleType represents (T1, T2, ...) or infinite stream (T1, ...).
 type TupleType struct {
 	Elems      []Type
@@ -104,6 +125,8 @@ func (d *DictType) Equals(other Type) bool {
 
 // FuncType represents (Arg) -> Ret.
 type FuncType struct {
+	TypeParams    []TypeParamDef
+	TypeArgs      []Type
 	Arg           Type        // argument is always a TupleType or TypeUnknown
 	OverloadUnion string      // if set, custom string representation for overloaded methods
 	Overloads     []*FuncType // if overloaded, individual arity-specific signatures
@@ -303,9 +326,44 @@ func IsAssignableTo(src, target Type) bool {
 	if target.Equals(src) {
 		return true
 	}
+	// If src is TypeParamType
+	if tpSrc, ok := src.(*TypeParamType); ok {
+		if tpTarget, ok := target.(*TypeParamType); ok && tpSrc.Name == tpTarget.Name {
+			return true
+		}
+		if tpSrc.Constraint != nil {
+			return IsAssignableTo(tpSrc.Constraint, target)
+		}
+		return false
+	}
+	// If target is TypeParamType
+	if tpTarget, ok := target.(*TypeParamType); ok {
+		if tpSrc, ok := src.(*TypeParamType); ok && tpSrc.Name == tpTarget.Name {
+			return true
+		}
+		return false
+	}
+
 	// If target is InterfaceType, check if src implements it
 	if ifaceTarget, ok := target.(*InterfaceType); ok {
 		return ImplementsInterface(src, ifaceTarget)
+	}
+
+	// If target is StructType and src is StructType
+	if sTarget, ok := target.(*StructType); ok {
+		if sSrc, ok := src.(*StructType); ok && sTarget.Name == sSrc.Name {
+			if len(sTarget.TypeArgs) == 0 {
+				return true
+			}
+			if len(sSrc.TypeArgs) == len(sTarget.TypeArgs) {
+				for i := range sSrc.TypeArgs {
+					if !IsAssignableTo(sSrc.TypeArgs[i], sTarget.TypeArgs[i]) {
+						return false
+					}
+				}
+				return true
+			}
+		}
 	}
 
 	// If target is UnionType, src must match at least one member
@@ -400,18 +458,39 @@ func IsAssignableTo(src, target Type) bool {
 
 // InterfaceType represents an interface type with method signatures.
 type InterfaceType struct {
-	Name     string
-	Methods  map[string]*FuncType
-	Embedded []*InterfaceType
+	Name          string
+	TypeParams    []TypeParamDef
+	TypeArgs      []Type
+	GenericOrigin *InterfaceType
+	Methods       map[string]*FuncType
+	Embedded      []*InterfaceType
 }
 
 func (i *InterfaceType) String() string {
+	if len(i.TypeArgs) > 0 {
+		var args []string
+		for _, a := range i.TypeArgs {
+			args = append(args, a.String())
+		}
+		return fmt.Sprintf("%s[%s]", i.Name, strings.Join(args, ", "))
+	}
 	return i.Name
 }
 
 func (i *InterfaceType) Equals(other Type) bool {
 	oi, ok := other.(*InterfaceType)
-	return ok && i.Name == oi.Name
+	if !ok || i.Name != oi.Name {
+		return false
+	}
+	if len(i.TypeArgs) != len(oi.TypeArgs) {
+		return false
+	}
+	for j := range i.TypeArgs {
+		if !i.TypeArgs[j].Equals(oi.TypeArgs[j]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
@@ -429,8 +508,28 @@ func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
 
 // ImplementsInterface checks if src type satisfies target interface.
 func ImplementsInterface(src Type, target *InterfaceType) bool {
+	if tpSrc, ok := src.(*TypeParamType); ok {
+		if tpSrc.Constraint != nil {
+			return ImplementsInterface(tpSrc.Constraint, target)
+		}
+		return false
+	}
+
 	// If src is itself an interface, check if it contains all required methods
 	if srcIface, ok := src.(*InterfaceType); ok {
+		if target.Name == srcIface.Name {
+			if len(target.TypeArgs) == 0 {
+				return true
+			}
+			if len(srcIface.TypeArgs) == len(target.TypeArgs) {
+				for j := range srcIface.TypeArgs {
+					if !IsAssignableTo(srcIface.TypeArgs[j], target.TypeArgs[j]) {
+						return false
+					}
+				}
+				return true
+			}
+		}
 		for mName, targetSig := range target.Methods {
 			srcSig, ok := srcIface.LookupMethod(mName)
 			if !ok {
@@ -530,6 +629,29 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 
 // LookupBuiltinTypeMethod returns the method signature if type t has a built-in method named mName.
 func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
+	if tp, ok := t.(*TypeParamType); ok {
+		if tp.Constraint != nil {
+			if iface, ok := tp.Constraint.(*InterfaceType); ok {
+				return iface.LookupMethod(mName)
+			}
+			if st, ok := tp.Constraint.(*StructType); ok {
+				if m, err := st.LookupMember(mName); err == nil {
+					if fnT, ok := m.(*FuncType); ok {
+						return fnT, true
+					}
+				}
+			}
+			return LookupBuiltinTypeMethod(tp.Constraint, mName)
+		}
+		if mName == "Type" || mName == "ToString" {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeString,
+			}, true
+		}
+		return nil, false
+	}
+
 	if mName == "ToString" {
 		switch t.(type) {
 		case PrimType, *TupleType, *DictType, *FuncType, *TypeVar, *UnionType:
@@ -792,20 +914,41 @@ type StructFieldInfo struct {
 
 // StructType represents user-defined struct type with fields, embedded structs, and methods.
 type StructType struct {
-	Name       string
-	Fields     map[string]Type
-	FieldOrder []string
-	Embedded   []*StructType
-	Methods    map[string]*FuncType
+	Name          string
+	TypeParams    []TypeParamDef
+	TypeArgs      []Type
+	GenericOrigin *StructType
+	Fields        map[string]Type
+	FieldOrder    []string
+	Embedded      []*StructType
+	Methods       map[string]*FuncType
 }
 
 func (s *StructType) String() string {
+	if len(s.TypeArgs) > 0 {
+		var args []string
+		for _, a := range s.TypeArgs {
+			args = append(args, a.String())
+		}
+		return fmt.Sprintf("%s[%s]", s.Name, strings.Join(args, ", "))
+	}
 	return s.Name
 }
 
 func (s *StructType) Equals(other Type) bool {
 	os, ok := other.(*StructType)
-	return ok && s.Name == os.Name
+	if !ok || s.Name != os.Name {
+		return false
+	}
+	if len(s.TypeArgs) != len(os.TypeArgs) {
+		return false
+	}
+	for i := range s.TypeArgs {
+		if !s.TypeArgs[i].Equals(os.TypeArgs[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 type memberCandidate struct {
@@ -883,4 +1026,198 @@ func (m *ModuleType) String() string { return "Module<" + m.Name + ">" }
 func (m *ModuleType) Equals(other Type) bool {
 	om, ok := other.(*ModuleType)
 	return ok && m.Name == om.Name
+}
+
+// Substitute replaces all TypeParamType occurrences in t with bound types in bindings.
+func Substitute(t Type, bindings map[string]Type) Type {
+	if t == nil {
+		return nil
+	}
+	switch typ := t.(type) {
+	case *TypeParamType:
+		if bound, ok := bindings[typ.Name]; ok {
+			return bound
+		}
+		return typ
+	case *TupleType:
+		newElems := make([]Type, len(typ.Elems))
+		for i, el := range typ.Elems {
+			newElems[i] = Substitute(el, bindings)
+		}
+		return &TupleType{Elems: newElems, IsVariadic: typ.IsVariadic}
+	case *DictType:
+		return &DictType{
+			Key:   Substitute(typ.Key, bindings),
+			Value: Substitute(typ.Value, bindings),
+		}
+	case *FuncType:
+		newF := &FuncType{
+			TypeParams:    typ.TypeParams,
+			TypeArgs:      typ.TypeArgs,
+			Arg:           Substitute(typ.Arg, bindings),
+			OverloadUnion: typ.OverloadUnion,
+			MinArity:      typ.MinArity,
+			MaxArity:      typ.MaxArity,
+			BlockParam:    Substitute(typ.BlockParam, bindings),
+			BlockOpt:      typ.BlockOpt,
+			Ret:           Substitute(typ.Ret, bindings),
+		}
+		if len(typ.Overloads) > 0 {
+			newF.Overloads = make([]*FuncType, len(typ.Overloads))
+			for i, ov := range typ.Overloads {
+				newF.Overloads[i] = Substitute(ov, bindings).(*FuncType)
+			}
+		}
+		return newF
+	case *UnionType:
+		newMembers := make([]Type, len(typ.Members))
+		for i, m := range typ.Members {
+			newMembers[i] = Substitute(m, bindings)
+		}
+		return NewUnionType(newMembers...)
+	case *StructType:
+		if len(typ.TypeArgs) > 0 {
+			newArgs := make([]Type, len(typ.TypeArgs))
+			for i, a := range typ.TypeArgs {
+				newArgs[i] = Substitute(a, bindings)
+			}
+			origin := typ.GenericOrigin
+			if origin == nil {
+				origin = typ
+			}
+			return InstantiateStruct(origin, newArgs)
+		}
+		return typ
+	case *InterfaceType:
+		if len(typ.TypeArgs) > 0 {
+			newArgs := make([]Type, len(typ.TypeArgs))
+			for i, a := range typ.TypeArgs {
+				newArgs[i] = Substitute(a, bindings)
+			}
+			origin := typ.GenericOrigin
+			if origin == nil {
+				origin = typ
+			}
+			return InstantiateInterface(origin, newArgs)
+		}
+		return typ
+	default:
+		return t
+	}
+}
+
+var structInstCache = make(map[string]*StructType)
+var ifaceInstCache = make(map[string]*InterfaceType)
+
+// InstantiateStruct specializes a generic StructType with concrete type arguments.
+func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
+	if s == nil || len(typeArgs) == 0 {
+		return s
+	}
+	origin := s.GenericOrigin
+	if origin == nil {
+		origin = s
+	}
+	var argStrs []string
+	for _, a := range typeArgs {
+		argStrs = append(argStrs, a.String())
+	}
+	cacheKey := origin.Name + "[" + strings.Join(argStrs, ", ") + "]"
+	if cached, ok := structInstCache[cacheKey]; ok {
+		return cached
+	}
+
+	inst := &StructType{
+		Name:          origin.Name,
+		TypeParams:    origin.TypeParams,
+		TypeArgs:      typeArgs,
+		GenericOrigin: origin,
+		FieldOrder:    origin.FieldOrder,
+		Fields:        make(map[string]Type),
+		Methods:       make(map[string]*FuncType),
+	}
+	structInstCache[cacheKey] = inst
+
+	bindings := make(map[string]Type)
+	for i, tp := range origin.TypeParams {
+		if i < len(typeArgs) {
+			bindings[tp.Name] = typeArgs[i]
+		}
+	}
+
+	for fName, fType := range origin.Fields {
+		inst.Fields[fName] = Substitute(fType, bindings)
+	}
+	for mName, mType := range origin.Methods {
+		inst.Methods[mName] = Substitute(mType, bindings).(*FuncType)
+	}
+	for _, emb := range origin.Embedded {
+		inst.Embedded = append(inst.Embedded, Substitute(emb, bindings).(*StructType))
+	}
+
+	return inst
+}
+
+// InstantiateInterface specializes a generic InterfaceType with concrete type arguments.
+func InstantiateInterface(i *InterfaceType, typeArgs []Type) *InterfaceType {
+	if i == nil || len(typeArgs) == 0 {
+		return i
+	}
+	origin := i.GenericOrigin
+	if origin == nil {
+		origin = i
+	}
+	var argStrs []string
+	for _, a := range typeArgs {
+		argStrs = append(argStrs, a.String())
+	}
+	cacheKey := origin.Name + "[" + strings.Join(argStrs, ", ") + "]"
+	if cached, ok := ifaceInstCache[cacheKey]; ok {
+		return cached
+	}
+
+	inst := &InterfaceType{
+		Name:          origin.Name,
+		TypeParams:    origin.TypeParams,
+		TypeArgs:      typeArgs,
+		GenericOrigin: origin,
+		Methods:       make(map[string]*FuncType),
+	}
+	ifaceInstCache[cacheKey] = inst
+
+	bindings := make(map[string]Type)
+	for j, tp := range origin.TypeParams {
+		if j < len(typeArgs) {
+			bindings[tp.Name] = typeArgs[j]
+		}
+	}
+
+	for mName, mType := range origin.Methods {
+		inst.Methods[mName] = Substitute(mType, bindings).(*FuncType)
+	}
+	for _, emb := range origin.Embedded {
+		inst.Embedded = append(inst.Embedded, Substitute(emb, bindings).(*InterfaceType))
+	}
+
+	return inst
+}
+
+// ValidateTypeConstraints validates type arguments against type parameter constraints.
+func ValidateTypeConstraints(typeParams []TypeParamDef, typeArgs []Type) error {
+	if len(typeParams) != len(typeArgs) {
+		return fmt.Errorf("expected %d type arguments, got %d", len(typeParams), len(typeArgs))
+	}
+	bindings := make(map[string]Type)
+	for i, tp := range typeParams {
+		bindings[tp.Name] = typeArgs[i]
+	}
+	for i, tp := range typeParams {
+		if tp.Constraint != nil {
+			subConstraint := Substitute(tp.Constraint, bindings)
+			if !IsAssignableTo(typeArgs[i], subConstraint) {
+				return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", typeArgs[i].String(), subConstraint.String(), tp.Name)
+			}
+		}
+	}
+	return nil
 }

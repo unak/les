@@ -247,6 +247,11 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 	}
 	name := p.curToken.Literal
 
+	var typeParams []ast.TypeParam
+	if p.peekTokenIs(lexer.TokenLBracket) {
+		typeParams = p.parseTypeParams()
+	}
+
 	if p.peekTokenIs(lexer.TokenColon) {
 		p.nextToken() // advance to ':'
 	} else {
@@ -299,14 +304,20 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 				})
 				p.consumeStmtEnd()
 			} else {
-				// Embedded struct type: e.g. Person
+				// Embedded struct type: e.g. Person or Base[T]
+				var typeAnnot string
+				if p.peekTokenIs(lexer.TokenLBracket) {
+					typeAnnot = p.parseTypeAnnotString()
+				} else {
+					typeAnnot = ident
+					p.nextToken() // consume ident
+				}
 				fields = append(fields, ast.StructField{
 					Position:   fPos,
 					Name:       ident,
-					TypeAnnot:  ident,
+					TypeAnnot:  typeAnnot,
 					IsEmbedded: true,
 				})
-				p.nextToken() // consume ident
 				p.consumeStmtEnd()
 			}
 		} else if isOperatorMethodToken(p.curToken.Type) && p.peekTokenIs(lexer.TokenLParen) {
@@ -354,10 +365,11 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 	}
 
 	return &ast.StructDef{
-		Position: pos,
-		Name:     name,
-		Fields:   fields,
-		Methods:  methods,
+		Position:   pos,
+		Name:       name,
+		TypeParams: typeParams,
+		Fields:     fields,
+		Methods:    methods,
 	}
 }
 
@@ -369,6 +381,11 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 		return nil
 	}
 	name := p.curToken.Literal
+
+	var typeParams []ast.TypeParam
+	if p.peekTokenIs(lexer.TokenLBracket) {
+		typeParams = p.parseTypeParams()
+	}
 
 	if p.peekTokenIs(lexer.TokenColon) {
 		p.nextToken() // advance to ':'
@@ -394,6 +411,10 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 		if p.curTokenIs(lexer.TokenIdent) {
 			mPos := p.curPos()
 			ident := p.curToken.Literal
+			var mTypeParams []ast.TypeParam
+			if p.peekTokenIs(lexer.TokenLBracket) && isGenericMethodLookahead(p.peekToken.Literal+p.l.PeekRestOfLine()) {
+				mTypeParams = p.parseTypeParams()
+			}
 			if p.peekTokenIs(lexer.TokenLParen) {
 				// Method signature: ident(params...): ReturnType
 				p.nextToken() // advance to '('
@@ -410,15 +431,22 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 				methods = append(methods, ast.MethodSig{
 					Position:   mPos,
 					Name:       ident,
+					TypeParams: mTypeParams,
 					Params:     params,
 					BlockParam: blockParam,
 					ReturnType: strings.TrimSpace(retType),
 				})
 				p.consumeStmtEnd()
 			} else {
-				// Embedded interface: e.g. Reader
-				embedded = append(embedded, ident)
-				p.nextToken() // consume ident
+				// Embedded interface: e.g. Reader or Reader[T]
+				var embName string
+				if p.peekTokenIs(lexer.TokenLBracket) {
+					embName = p.parseTypeAnnotString()
+				} else {
+					embName = ident
+					p.nextToken() // consume ident
+				}
+				embedded = append(embedded, embName)
 				p.consumeStmtEnd()
 			}
 		} else if isOperatorMethodToken(p.curToken.Type) {
@@ -455,10 +483,11 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 	}
 
 	return &ast.InterfaceDef{
-		Position: pos,
-		Name:     name,
-		Embedded: embedded,
-		Methods:  methods,
+		Position:   pos,
+		Name:       name,
+		TypeParams: typeParams,
+		Embedded:   embedded,
+		Methods:    methods,
 	}
 }
 
@@ -474,6 +503,11 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	} else {
 		p.addError(p.curToken.Line, p.curToken.Col, "expected function name after def")
 		return nil
+	}
+
+	var typeParams []ast.TypeParam
+	if p.peekTokenIs(lexer.TokenLBracket) {
+		typeParams = p.parseTypeParams()
 	}
 
 	if !p.expectPeek(lexer.TokenLParen) {
@@ -507,6 +541,7 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 	return &ast.FuncDef{
 		Position:   pos,
 		Name:       name,
+		TypeParams: typeParams,
 		Params:     params,
 		BlockParam: blockParam,
 		ReturnType: strings.TrimSpace(returnType),
@@ -619,7 +654,7 @@ func (p *Parser) parseTypeAnnotString() string {
 	braceDepth := 0
 	for {
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
+			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenRBracket) || p.curTokenIs(lexer.TokenRBrace) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
 				break
 			}
 		}
@@ -638,7 +673,7 @@ func (p *Parser) parseTypeAnnotString() string {
 		}
 		parts = append(parts, p.curToken.Literal)
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) {
+			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenRBracket) || p.peekTokenIs(lexer.TokenRBrace) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) {
 				break
 			}
 			if p.peekTokenIs(lexer.TokenPipe) {
@@ -1635,14 +1670,73 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			Block:    block,
 		}
 	case lexer.TokenLBracket:
-		// target[index]
-		p.nextToken()
+		// target[index] or target[TypeArgs...]
+		rest := p.peekToken.Literal + " " + p.l.PeekRestOfLine()
+		isArrow := hasArrowBeforeRBracket(rest)
+		p.nextToken() // consume '['
+		if p.curTokenIs(lexer.TokenRBracket) {
+			p.addError(p.curToken.Line, p.curToken.Col, "bracket expression cannot be empty")
+			return nil
+		}
+		if isArrow {
+			var typeArgs []string
+			for {
+				arg := p.parseTypeAnnotString()
+				typeArgs = append(typeArgs, arg)
+				if p.peekTokenIs(lexer.TokenComma) {
+					p.nextToken() // advance to ','
+					if p.peekTokenIs(lexer.TokenRBracket) {
+						break
+					}
+					p.nextToken() // advance to start of next type annot
+				} else {
+					break
+				}
+			}
+			if !p.expectPeek(lexer.TokenRBracket) {
+				return nil
+			}
+			return &ast.TypeInstExpr{
+				Position: pos,
+				Target:   left,
+				TypeArgs: typeArgs,
+			}
+		}
 		idx := p.parseExpr(PREC_LOWEST)
-		p.expectPeek(lexer.TokenRBracket)
+		if p.peekTokenIs(lexer.TokenComma) {
+			firstArg := exprToTypeAnnot(idx)
+			if firstArg == "" {
+				p.addError(p.peekToken.Line, p.peekToken.Col, "unexpected ',' in index expression")
+				return nil
+			}
+			typeArgs := []string{firstArg}
+			for p.peekTokenIs(lexer.TokenComma) {
+				p.nextToken() // advance to ','
+				if p.peekTokenIs(lexer.TokenRBracket) {
+					break
+				}
+				p.nextToken() // advance to start of next type annot
+				arg := p.parseTypeAnnotString()
+				typeArgs = append(typeArgs, arg)
+			}
+			if !p.expectPeek(lexer.TokenRBracket) {
+				return nil
+			}
+			return &ast.TypeInstExpr{
+				Position: pos,
+				Target:   left,
+				TypeArgs: typeArgs,
+			}
+		}
+		if !p.expectPeek(lexer.TokenRBracket) {
+			return nil
+		}
+		typeArg := exprToTypeAnnot(idx)
 		return &ast.IndexExpr{
 			Position: pos,
 			Target:   left,
 			Index:    idx,
+			TypeArg:  typeArg,
 		}
 	case lexer.TokenPipeGreater:
 		// left |> right => right(left)
@@ -1868,12 +1962,17 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 	if annot == "" {
 		return
 	}
-	if strings.Contains(annot, "[") || strings.Contains(annot, "]") {
-		p.addError(line, col, "invalid type annotation '%s': brackets '[' are not supported (use '{Key: Value}' for dictionaries)", annot)
+	if strings.Contains(annot, "Dict[") || strings.Contains(annot, "Dict [") {
+		p.addError(line, col, "invalid type annotation '%s': 'Dict[...]' is not supported (use '{Key: Value}' for dictionaries)", annot)
+		return
+	}
+	if strings.Contains(annot, "Tuple[") || strings.Contains(annot, "Tuple [") {
+		p.addError(line, col, "invalid type annotation '%s': 'Tuple[...]' is not supported (use '(T1, T2)' for tuples)", annot)
 		return
 	}
 	runes := []rune(annot)
 	var braceStack []int
+	var bracketStack []int
 	for i, r := range runes {
 		if r == '{' {
 			braceStack = append(braceStack, i)
@@ -1889,10 +1988,28 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 				p.addError(line, col, "invalid dictionary type annotation in '%s': expected '{Key: Value}'", annot)
 				return
 			}
+		} else if r == '[' {
+			bracketStack = append(bracketStack, i)
+		} else if r == ']' {
+			if len(bracketStack) == 0 {
+				p.addError(line, col, "unmatched ']' in type annotation '%s'", annot)
+				return
+			}
+			startIdx := bracketStack[len(bracketStack)-1]
+			bracketStack = bracketStack[:len(bracketStack)-1]
+			inner := strings.TrimSpace(string(runes[startIdx+1 : i]))
+			if inner == "" {
+				p.addError(line, col, "invalid type annotation '%s': empty type arguments '[]'", annot)
+				return
+			}
 		}
 	}
 	if len(braceStack) > 0 {
 		p.addError(line, col, "unclosed '{' in type annotation '%s'", annot)
+		return
+	}
+	if len(bracketStack) > 0 {
+		p.addError(line, col, "unclosed '[' in type annotation '%s'", annot)
 		return
 	}
 }
@@ -1963,6 +2080,142 @@ func (p *Parser) parseOperatorMethodName() string {
 			return "[]"
 		}
 		return ""
+	default:
+		return ""
+	}
+}
+
+func (p *Parser) parseTypeParams() []ast.TypeParam {
+	p.nextToken() // advance to '['
+	var tps []ast.TypeParam
+	if p.peekTokenIs(lexer.TokenRBracket) {
+		p.addError(p.peekToken.Line, p.peekToken.Col, "type parameter list cannot be empty")
+		p.nextToken() // advance to ']'
+		return nil
+	}
+	p.nextToken() // advance to first param
+	for {
+		if !p.curTokenIs(lexer.TokenIdent) {
+			p.addError(p.curToken.Line, p.curToken.Col, "expected type parameter name, got %s", p.curToken.Literal)
+			break
+		}
+		tp := ast.TypeParam{
+			Position: p.curPos(),
+			Name:     p.curToken.Literal,
+		}
+		if p.peekTokenIs(lexer.TokenColon) {
+			p.nextToken() // advance to ':'
+			p.nextToken() // advance to constraint start
+			tp.Constraint = p.parseTypeAnnotString()
+		}
+		tps = append(tps, tp)
+		if p.peekTokenIs(lexer.TokenComma) {
+			p.nextToken() // advance to ','
+			if p.peekTokenIs(lexer.TokenRBracket) {
+				break
+			}
+			p.nextToken() // advance to next param name
+		} else {
+			break
+		}
+	}
+	if !p.expectPeek(lexer.TokenRBracket) {
+		return nil
+	}
+	seen := make(map[string]bool)
+	for _, tp := range tps {
+		if seen[tp.Name] {
+			p.addError(tp.Position.Line, tp.Position.Col, "duplicate type parameter '%s'", tp.Name)
+		}
+		seen[tp.Name] = true
+	}
+	return tps
+}
+
+func isGenericMethodLookahead(rest string) bool {
+	depth := 0
+	runes := []rune(rest)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '[' {
+			depth++
+		} else if r == ']' {
+			depth--
+			if depth == 0 {
+				for j := i + 1; j < len(runes); j++ {
+					if runes[j] == ' ' || runes[j] == '\t' {
+						continue
+					}
+					return runes[j] == '('
+				}
+				return false
+			}
+		}
+	}
+	return false
+}
+
+func hasArrowBeforeRBracket(rest string) bool {
+	depth := 1
+	runes := []rune(rest)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '[' {
+			depth++
+		} else if r == ']' {
+			depth--
+			if depth <= 0 {
+				return false
+			}
+		} else if depth == 1 && r == '-' && i+1 < len(runes) && runes[i+1] == '>' {
+			return true
+		}
+	}
+	return false
+}
+
+func exprToTypeAnnot(expr ast.Expr) string {
+	if expr == nil {
+		return ""
+	}
+	switch e := expr.(type) {
+	case *ast.Identifier:
+		return e.Name
+	case *ast.NilLit:
+		return "Nil"
+	case *ast.ModuleAccessExpr:
+		return "@" + e.Module + "." + e.Member
+	case *ast.BinaryExpr:
+		if e.Op == "|" {
+			left := exprToTypeAnnot(e.Left)
+			right := exprToTypeAnnot(e.Right)
+			if left != "" && right != "" {
+				return left + " | " + right
+			}
+		}
+		return ""
+	case *ast.IndexExpr:
+		target := exprToTypeAnnot(e.Target)
+		if target != "" && e.TypeArg != "" {
+			return target + "[" + e.TypeArg + "]"
+		}
+		return ""
+	case *ast.TypeInstExpr:
+		target := exprToTypeAnnot(e.Target)
+		if target != "" && len(e.TypeArgs) > 0 {
+			return target + "[" + strings.Join(e.TypeArgs, ", ") + "]"
+		}
+		return ""
+	case *ast.TupleLit:
+		var elems []string
+		for _, el := range e.Elements {
+			t := exprToTypeAnnot(el)
+			if t == "" {
+				return ""
+			}
+			elems = append(elems, t)
+		}
+		return "(" + strings.Join(elems, ", ") + ")"
 	default:
 		return ""
 	}

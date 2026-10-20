@@ -4426,4 +4426,212 @@ print d[a]
 	}
 }
 
+func TestUserDefinedGenericsEval(t *testing.T) {
+	// 1. Generic struct with call-site inference and explicit instantiation
+	code1 := `
+struct Box[T]:
+    val: T
+
+b1 = Box(10)
+b2 = Box[String]("hello")
+print b1.Type(), "\n"
+print b1.val, "\n"
+print (b1 is Box[Int]), "\n"
+print (b1 is Box), "\n"
+print (b1 is Box[String]), "\n"
+print b2.Type(), "\n"
+print b2.val, "\n"
+print (b2 is Box[String]), "\n"
+print (b2 is Box[Int]), "\n"
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("code1 failed: %v", err)
+	}
+	expected1 := strings.Join([]string{
+		"Box[Int]",
+		"10",
+		"true",
+		"true",
+		"false",
+		"Box[String]",
+		"hello",
+		"true",
+		"false",
+	}, "\n")
+	if out1 != expected1 {
+		t.Fatalf("unexpected output for code1:\ngot:\n%s\nexpected:\n%s", out1, expected1)
+	}
+
+	// 2. Multi-parameter generic struct
+	code2 := `
+struct Pair[K, V]:
+    first: K
+    second: V
+
+p = Pair("answer", 42)
+print p.Type(), "\n"
+print (p is Pair[String, Int]), "\n"
+print (p is Pair[Int, String]), "\n"
+print (p is Pair), "\n"
+`
+	out2, err := runLesCode(code2)
+	if err != nil {
+		t.Fatalf("code2 failed: %v", err)
+	}
+	expected2 := strings.Join([]string{
+		"Pair[String, Int]",
+		"true",
+		"false",
+		"true",
+	}, "\n")
+	if out2 != expected2 {
+		t.Fatalf("unexpected output for code2:\ngot:\n%s\nexpected:\n%s", out2, expected2)
+	}
+
+	// 3. Generic function inference, explicit specialization, and constraints
+	code3 := `
+def id[T](x: T) -> T:
+    x
+
+print id(123), "\n"
+print id[String]("abc"), "\n"
+
+def add[T: Int | Float](a: T, b: T) -> T:
+    a + b
+
+print add(10, 20), "\n"
+print add(1.5, 2.5), "\n"
+`
+	out3, err := runLesCode(code3)
+	if err != nil {
+		t.Fatalf("code3 failed: %v", err)
+	}
+	expected3 := strings.Join([]string{
+		"123",
+		"abc",
+		"30",
+		"4",
+	}, "\n")
+	if out3 != expected3 {
+		t.Fatalf("unexpected output for code3:\ngot:\n%s\nexpected:\n%s", out3, expected3)
+	}
+
+	// 4. Pattern matching with generic types
+	code4 := `
+struct Container[T]:
+    item: T
+
+def inspect(c):
+    match c:
+        case Container[Int]:
+            "container of int: " + c.item.ToString()
+        case Container[String]:
+            "container of string: " + c.item
+        case _:
+            "something else"
+
+print inspect(Container(42)), "\n"
+print inspect(Container("apple")), "\n"
+print inspect(Container(true)), "\n"
+`
+	out4, err := runLesCode(code4)
+	if err != nil {
+		t.Fatalf("code4 failed: %v", err)
+	}
+	expected4 := strings.Join([]string{
+		"container of int: 42",
+		"container of string: apple",
+		"something else",
+	}, "\n")
+	if out4 != expected4 {
+		t.Fatalf("unexpected output for code4:\ngot:\n%s\nexpected:\n%s", out4, expected4)
+	}
+
+	// 5. Generic interface implementation check
+	code5 := `
+interface Iterator[T]:
+    Next(): T
+
+struct IntIter:
+    val: Int
+    def Next() -> Int:
+        self.val
+
+struct StrIter:
+    val: String
+    def Next() -> String:
+        self.val
+
+i = IntIter(100)
+s = StrIter("stream")
+
+print (i is Iterator[Int]), "\n"
+print (i is Iterator[String]), "\n"
+print (i is Iterator), "\n"
+print (s is Iterator[String]), "\n"
+print (s is Iterator[Int]), "\n"
+`
+	out5, err := runLesCode(code5)
+	if err != nil {
+		t.Fatalf("code5 failed: %v", err)
+	}
+	expected5 := strings.Join([]string{
+		"true",
+		"false",
+		"true",
+		"true",
+		"false",
+	}, "\n")
+	if out5 != expected5 {
+		t.Fatalf("unexpected output for code5:\ngot:\n%s\nexpected:\n%s", out5, expected5)
+	}
+
+	// 6. Generic struct laziness preservation
+	code6 := `
+struct LazyBox[T]:
+    val: T
+
+b = LazyBox(1 / 0)
+print (b is LazyBox), "\n"
+`
+	out6, err := runLesCode(code6)
+	if err != nil {
+		t.Fatalf("lazy generic struct failed unexpectedly: %v", err)
+	}
+	if strings.TrimSpace(out6) != "true" {
+		t.Fatalf("expected true, got %q", out6)
+	}
+
+	// 7. Generic function with self-referential / F-bounded constraint
+	code7 := `
+interface Ord[T]:
+    <=(other: T): Bool
+
+struct Item:
+    num: Int
+    def <=(other: Item) -> Bool:
+        self.num <= other.num
+
+def getMin[T: Ord[T]](a: T, b: T) -> T:
+    if a <= b:
+        a
+    else:
+        b
+
+it1 = Item(10)
+it2 = Item(20)
+m = getMin(it1, it2)
+print m.num, "\n"
+`
+	out7, err := runLesCode(code7)
+	if err != nil {
+		t.Fatalf("code7 failed: %v", err)
+	}
+	if strings.TrimSpace(out7) != "10" {
+		t.Fatalf("expected 10, got %q", out7)
+	}
+}
+
+
 
