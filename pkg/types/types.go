@@ -928,18 +928,30 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			}, true
 		}
 		if tt, ok := t.(*TupleType); ok {
-			newElems := append(append([]Type(nil), tt.Elems...), TypeUnknown)
+			var retT Type
+			if tt.IsVariadic {
+				retT = tt
+			} else {
+				newElems := append(append([]Type(nil), tt.Elems...), TypeUnknown)
+				retT = &TupleType{Elems: newElems}
+			}
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeUnknown}},
-				Ret: &TupleType{Elems: newElems, IsVariadic: tt.IsVariadic},
+				Ret: retT,
 			}, true
 		}
 	case "Append":
 		if tt, ok := t.(*TupleType); ok {
-			newElems := append(append([]Type(nil), tt.Elems...), TypeUnknown)
+			var retT Type
+			if tt.IsVariadic {
+				retT = tt
+			} else {
+				newElems := append(append([]Type(nil), tt.Elems...), TypeUnknown)
+				retT = &TupleType{Elems: newElems}
+			}
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeUnknown}},
-				Ret: &TupleType{Elems: newElems, IsVariadic: tt.IsVariadic},
+				Ret: retT,
 			}, true
 		}
 	case "Prepend":

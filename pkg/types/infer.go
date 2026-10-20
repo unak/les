@@ -2188,8 +2188,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeBool, nil
 		case "<<":
 			if leftTuple, ok := effLeftT.(*TupleType); ok {
+				if leftTuple.IsVariadic {
+					return leftTuple, nil
+				}
 				newElems := append(append([]Type(nil), leftTuple.Elems...), rightT)
-				return &TupleType{Elems: newElems, IsVariadic: leftTuple.IsVariadic}, nil
+				return &TupleType{Elems: newElems}, nil
 			}
 			if leftT == TypeUnknown || rightT == TypeUnknown {
 				if leftT != TypeUnknown && leftT != TypeInt {
@@ -2258,8 +2261,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if err != nil {
 						return nil, err
 					}
+					if targetTuple.IsVariadic {
+						return targetTuple, nil
+					}
 					newElems := append(append([]Type(nil), targetTuple.Elems...), argT)
-					return &TupleType{Elems: newElems, IsVariadic: targetTuple.IsVariadic}, nil
+					return &TupleType{Elems: newElems}, nil
 				case "Prepend":
 					if len(e.Args) != 1 {
 						return nil, inf.nodeErr(e, "Prepend expects 1 argument, got %d", len(e.Args))

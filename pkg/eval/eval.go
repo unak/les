@@ -2883,6 +2883,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		case NilValue:
 			return types.TypeNil
 		case *TupleValue:
+			if t, err := types.ParseTypeAnnot(typeNameOf(v)); err == nil {
+				return t
+			}
 			return &types.TupleType{Elems: []types.Type{}}
 		case *DictValue:
 			return &types.DictType{Key: types.TypeUnknown, Value: types.TypeUnknown}

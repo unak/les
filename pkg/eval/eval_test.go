@@ -4961,11 +4961,13 @@ print("LAZY_SHIFT_OK")
 		t.Errorf("expected lazy shift ok, got: %s", out6)
 	}
 
-	// 7. Tuple .+ method tear-off
+	// 7. Tuple .+ method tear-off and method .Type() reflection
 	code7 := `
 f = (1, 2).+
 res = f((3, 4))
+app_type = ((1, 2).Append).Type()
 print(res)
+print("APP_TYPE:", app_type)
 `
 	out7, err := runLesCode(code7)
 	if err != nil {
@@ -4973,5 +4975,8 @@ print(res)
 	}
 	if !strings.Contains(out7, "(1, 2, 3, 4)") {
 		t.Errorf("expected tuple .+ tear-off, got: %s", out7)
+	}
+	if !strings.Contains(out7, "APP_TYPE:(Unknown) -> (Int, Int, Unknown)") {
+		t.Errorf("expected accurate method Type reflection, got: %s", out7)
 	}
 }
