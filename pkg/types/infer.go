@@ -2155,7 +2155,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if st, ok := calleeT.(*StructType); ok {
+		effCalleeT := calleeT
+		if tp, ok := calleeT.(*TypeParamType); ok && tp.Constraint != nil {
+			effCalleeT = tp.Constraint
+		}
+		if st, ok := effCalleeT.(*StructType); ok {
 			if len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 {
 				bindings := make(map[string]Type)
 				argStartIdx := 0
@@ -2293,7 +2297,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return st, nil
 		}
-		if iface, ok := calleeT.(*InterfaceType); ok && iface.Name == "Error" {
+		if iface, ok := effCalleeT.(*InterfaceType); ok && iface.Name == "Error" {
 			for _, argExpr := range e.Args {
 				if _, err := inf.inferExpr(argExpr); err != nil {
 					return nil, err
@@ -2301,7 +2305,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return iface, nil
 		}
-		if fnT, ok := calleeT.(*FuncType); ok {
+		if fnT, ok := effCalleeT.(*FuncType); ok {
 			if len(fnT.TypeParams) > 0 {
 				bindings := make(map[string]Type)
 				argTuple, isTuple := fnT.Arg.(*TupleType)

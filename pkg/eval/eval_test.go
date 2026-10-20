@@ -4765,4 +4765,27 @@ inner = o.Inner
 	if !strings.Contains(out2, "Outer[Int]") || !strings.Contains(out2, "Inner[Int]") {
 		t.Fatalf("expected Outer[Int] and Inner[Int], got: %s", out2)
 	}
+
+	// 3. Function type param constraint call inference and nested dict type match
+	code3 := `
+def apply[F: (Int) -> Int](f: F, x: Int) -> Int:
+    f(x)
+
+def double(n: Int) -> Int:
+    n*2
+
+res = apply(double, 21)
+
+struct NestedDictHolder[T]:
+    data: T
+
+h = NestedDictHolder({ { "a": 1 }: true })
+`
+	out3, err := runLesCode(code3 + "\nprint(res)\nprint(h.Type())")
+	if err != nil {
+		t.Fatalf("code3 failed: %v", err)
+	}
+	if !strings.Contains(out3, "42") || !strings.Contains(out3, "NestedDictHolder[{{String: Int}: Bool}]") {
+		t.Fatalf("unexpected output for code3: %s", out3)
+	}
 }
