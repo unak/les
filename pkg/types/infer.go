@@ -1911,7 +1911,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if st, ok := t.(*StructType); ok {
+		effT := t
+		if tp, ok := t.(*TypeParamType); ok && tp.Constraint != nil {
+			effT = tp.Constraint
+		}
+		if st, ok := effT.(*StructType); ok {
 			if m, err := st.LookupMember(e.Op); err == nil {
 				if fnT, ok := m.(*FuncType); ok {
 					if len(fnT.Overloads) > 0 {
@@ -1929,7 +1933,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 			}
 		}
-		if it, ok := t.(*InterfaceType); ok {
+		if it, ok := effT.(*InterfaceType); ok {
 			if m, ok := it.LookupMethod(e.Op); ok {
 				if m.MinArity > 0 {
 					return nil, inf.nodeErr(e, "operator %s requires 0 arguments, got %d", e.Op, m.MinArity)
@@ -1937,22 +1941,39 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return m.Ret, nil
 			}
 		}
+		if tp, ok := t.(*TypeParamType); ok && tp.Constraint != nil {
+			if bSig, ok := LookupBuiltinTypeMethod(tp.Constraint, e.Op); ok {
+				return bSig.Ret, nil
+			}
+			switch e.Op {
+			case "+", "-":
+				if IsAssignableTo(tp.Constraint, NewUnionType(TypeInt, TypeFloat)) {
+					return tp, nil
+				}
+			case "!":
+				return TypeBool, nil
+			case "~":
+				if IsAssignableTo(tp.Constraint, TypeInt) {
+					return tp, nil
+				}
+			}
+		}
 		switch e.Op {
 		case "+", "-":
-			if t == TypeUnknown {
+			if effT == TypeUnknown {
 				return TypeUnknown, nil
 			}
-			if t == TypeFloat {
+			if effT == TypeFloat {
 				return TypeFloat, nil
 			}
 			return TypeInt, nil
 		case "!":
 			return TypeBool, nil
 		case "~":
-			if t == TypeUnknown {
+			if effT == TypeUnknown {
 				return TypeUnknown, nil
 			}
-			if t == TypeInt {
+			if effT == TypeInt {
 				return TypeInt, nil
 			}
 			return nil, inf.nodeErr(e, "cannot perform ~ operation on %s", t)

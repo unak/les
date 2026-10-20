@@ -4788,4 +4788,23 @@ h = NestedDictHolder({ { "a": 1 }: true })
 	if !strings.Contains(out3, "42") || !strings.Contains(out3, "NestedDictHolder[{{String: Int}: Bool}]") {
 		t.Fatalf("unexpected output for code3: %s", out3)
 	}
+
+	// 4. Unary operator on type parameter constraint
+	code4 := `
+def negate[T: Int](x: T) -> T:
+    -x
+
+def invert[T: Int](x: T) -> T:
+    ~x
+
+res1 = negate(10)
+res2 = invert(0)
+`
+	out4, err := runLesCode(code4 + "\nprint(res1)\nprint(res2)")
+	if err != nil {
+		t.Fatalf("code4 failed: %v", err)
+	}
+	if !strings.Contains(out4, "-10") || !strings.Contains(out4, "-1") {
+		t.Fatalf("unexpected output for code4: %s", out4)
+	}
 }

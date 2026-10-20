@@ -538,10 +538,18 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	// Populate promoted fields from embedded structs
 	var populateEmbeddedFields func(target *StructInstance)
 	populateEmbeddedFields = func(target *StructInstance) {
-		for _, emb := range target.Embedded {
-			populateEmbeddedFields(emb)
-			for fName, fVal := range emb.Fields {
-				methodEnv.Set(fName, fVal)
+		if target.Def != nil {
+			for _, embName := range target.Def.EmbeddedNames {
+				lookupName := embName
+				if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+					lookupName = base
+				}
+				if emb, ok := target.Embedded[lookupName]; ok && emb != nil {
+					populateEmbeddedFields(emb)
+					for fName, fVal := range emb.Fields {
+						methodEnv.Set(fName, fVal)
+					}
+				}
 			}
 		}
 	}
@@ -657,8 +665,16 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 	}
 
 	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
-	for _, emb := range si.Embedded {
-		currentLevel = append(currentLevel, emb)
+	if si.Def != nil {
+		for _, embName := range si.Def.EmbeddedNames {
+			lookupName := embName
+			if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+			}
+			if emb, ok := si.Embedded[lookupName]; ok && emb != nil {
+				currentLevel = append(currentLevel, emb)
+			}
+		}
 	}
 
 	visited := make(map[string]bool)
@@ -690,8 +706,16 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 				}
 			}
 
-			for _, sub := range emb.Embedded {
-				nextLevel = append(nextLevel, sub)
+			if emb.Def != nil {
+				for _, subName := range emb.Def.EmbeddedNames {
+					lookupName := subName
+					if base, _, isGen := parseGenericTypeAnnot(subName); isGen {
+						lookupName = base
+					}
+					if sub, ok := emb.Embedded[lookupName]; ok && sub != nil {
+						nextLevel = append(nextLevel, sub)
+					}
+				}
 			}
 		}
 
@@ -731,8 +755,16 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 
 	// 3. BFS over embedded structs
 	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
-	for _, emb := range si.Embedded {
-		currentLevel = append(currentLevel, emb)
+	if si.Def != nil {
+		for _, embName := range si.Def.EmbeddedNames {
+			lookupName := embName
+			if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+			}
+			if emb, ok := si.Embedded[lookupName]; ok && emb != nil {
+				currentLevel = append(currentLevel, emb)
+			}
+		}
 	}
 
 	visited := make(map[string]bool)
@@ -765,8 +797,16 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 				}
 			}
 
-			for _, sub := range emb.Embedded {
-				nextLevel = append(nextLevel, sub)
+			if emb.Def != nil {
+				for _, subName := range emb.Def.EmbeddedNames {
+					lookupName := subName
+					if base, _, isGen := parseGenericTypeAnnot(subName); isGen {
+						lookupName = base
+					}
+					if sub, ok := emb.Embedded[lookupName]; ok && sub != nil {
+						nextLevel = append(nextLevel, sub)
+					}
+				}
 			}
 		}
 
