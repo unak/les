@@ -1554,8 +1554,6 @@ e = a ^ b
 f = a | b
 g = a << b
 h = a >> b
-i = a <<< b
-j = a >>> b
 
 struct Bits:
     val: Int
@@ -1575,7 +1573,7 @@ b4 = b1 & b2
 		t.Fatalf("unexpected type error: %v", err)
 	}
 
-	for _, v := range []string{"c", "d", "e", "f", "g", "h", "i", "j"} {
+	for _, v := range []string{"c", "d", "e", "f", "g", "h"} {
 		ty, ok := inf.scope.Lookup(v)
 		if !ok || ty != TypeInt {
 			t.Fatalf("expected %s to be Int, got %v", v, ty)

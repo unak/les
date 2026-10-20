@@ -5,7 +5,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	"os"
+	"strconv"
 	"strings"
 
 	"les/pkg/ast"
@@ -17,9 +20,259 @@ type Value interface {
 	String() string
 }
 
-type IntValue int64
+// IntValue represents an arbitrary-precision integer in Les.
+// If the value fits in [math.MinInt64, math.MaxInt64], it is stored in small and big is nil.
+// If the value overflows int64, big stores the *big.Int and small is 0.
+type IntValue struct {
+	small int64
+	big   *big.Int
+}
 
-func (v IntValue) String() string { return fmt.Sprintf("%d", v) }
+// NewIntValue creates an IntValue from an int64.
+func NewIntValue(n int64) IntValue {
+	return IntValue{small: n}
+}
+
+// NewIntValueFromBig creates an IntValue from a *big.Int, automatically demoting to int64 if it fits.
+func NewIntValueFromBig(z *big.Int) IntValue {
+	if z == nil {
+		return IntValue{}
+	}
+	if z.IsInt64() {
+		return IntValue{small: z.Int64()}
+	}
+	return IntValue{big: new(big.Int).Set(z)}
+}
+
+// IsBig reports whether the integer exceeds the int64 range.
+func (v IntValue) IsBig() bool {
+	return v.big != nil
+}
+
+// Int64 returns the int64 value if it fits, or (0, false) if it is a multi-precision integer.
+func (v IntValue) Int64() (int64, bool) {
+	if v.big != nil {
+		return 0, false
+	}
+	return v.small, true
+}
+
+// ToInt returns the Go int value if it fits in int, or (0, false) otherwise.
+func (v IntValue) ToInt() (int, bool) {
+	if v.big != nil {
+		return 0, false
+	}
+	const maxInt = int(^uint(0) >> 1)
+	const minInt = -maxInt - 1
+	if v.small < int64(minInt) || v.small > int64(maxInt) {
+		return 0, false
+	}
+	return int(v.small), true
+}
+
+// ToBig returns a *big.Int representing the value.
+func (v IntValue) ToBig() *big.Int {
+	if v.big != nil {
+		return new(big.Int).Set(v.big)
+	}
+	return big.NewInt(v.small)
+}
+
+func (v IntValue) String() string {
+	if v.big != nil {
+		return v.big.String()
+	}
+	return strconv.FormatInt(v.small, 10)
+}
+
+// Format formats the integer in the specified radix (2 to 36).
+func (v IntValue) Format(radix int) (string, error) {
+	if radix < 2 || radix > 36 {
+		return "", fmt.Errorf("unsupported radix %d", radix)
+	}
+	if v.big != nil {
+		return v.big.Text(radix), nil
+	}
+	return strconv.FormatInt(v.small, radix), nil
+}
+
+// Equal reports whether two IntValue instances have equal value.
+func (v IntValue) Equal(other IntValue) bool {
+	if v.big == nil && other.big == nil {
+		return v.small == other.small
+	}
+	if (v.big == nil) != (other.big == nil) {
+		return false
+	}
+	return v.big.Cmp(other.big) == 0
+}
+
+// Cmp compares v and other and returns:
+// -1 if v <  other
+//  0 if v == other
+// +1 if v >  other
+func (v IntValue) Cmp(other IntValue) int {
+	if v.big == nil && other.big == nil {
+		if v.small < other.small {
+			return -1
+		} else if v.small > other.small {
+			return 1
+		}
+		return 0
+	}
+	return v.ToBig().Cmp(other.ToBig())
+}
+
+// Neg negates the integer value, promoting to big.Int if -math.MinInt64.
+func (v IntValue) Neg() IntValue {
+	if v.big == nil {
+		if v.small == math.MinInt64 {
+			return NewIntValueFromBig(new(big.Int).Neg(big.NewInt(math.MinInt64)))
+		}
+		return NewIntValue(-v.small)
+	}
+	return NewIntValueFromBig(new(big.Int).Neg(v.big))
+}
+
+// Add returns v + other.
+func (v IntValue) Add(other IntValue) IntValue {
+	if v.big == nil && other.big == nil {
+		res := v.small + other.small
+		if (res^v.small)&(res^other.small) >= 0 {
+			return NewIntValue(res)
+		}
+	}
+	return NewIntValueFromBig(new(big.Int).Add(v.ToBig(), other.ToBig()))
+}
+
+// Sub returns v - other.
+func (v IntValue) Sub(other IntValue) IntValue {
+	if v.big == nil && other.big == nil {
+		res := v.small - other.small
+		if (res^v.small)&^(res^other.small) >= 0 {
+			return NewIntValue(res)
+		}
+	}
+	return NewIntValueFromBig(new(big.Int).Sub(v.ToBig(), other.ToBig()))
+}
+
+// Mul returns v * other.
+func (v IntValue) Mul(other IntValue) IntValue {
+	if v.big == nil && other.big == nil {
+		if v.small == 0 || other.small == 0 {
+			return NewIntValue(0)
+		}
+		res := v.small * other.small
+		if res/other.small == v.small && !(v.small == -1 && other.small == math.MinInt64) && !(other.small == -1 && v.small == math.MinInt64) {
+			return NewIntValue(res)
+		}
+	}
+	return NewIntValueFromBig(new(big.Int).Mul(v.ToBig(), other.ToBig()))
+}
+
+// Quo returns v / other (integer truncated division).
+func (v IntValue) Quo(other IntValue) (IntValue, error) {
+	if other.big == nil && other.small == 0 {
+		return IntValue{}, fmt.Errorf("division by zero")
+	}
+	if v.big == nil && other.big == nil {
+		if v.small == math.MinInt64 && other.small == -1 {
+			return NewIntValueFromBig(new(big.Int).Quo(big.NewInt(math.MinInt64), big.NewInt(-1))), nil
+		}
+		return NewIntValue(v.small / other.small), nil
+	}
+	return NewIntValueFromBig(new(big.Int).Quo(v.ToBig(), other.ToBig())), nil
+}
+
+// Rem returns v % other (integer remainder).
+func (v IntValue) Rem(other IntValue) (IntValue, error) {
+	if other.big == nil && other.small == 0 {
+		return IntValue{}, fmt.Errorf("division by zero")
+	}
+	if v.big == nil && other.big == nil {
+		if v.small == math.MinInt64 && other.small == -1 {
+			return NewIntValue(0), nil
+		}
+		return NewIntValue(v.small % other.small), nil
+	}
+	return NewIntValueFromBig(new(big.Int).Rem(v.ToBig(), other.ToBig())), nil
+}
+
+// Not returns ^v (bitwise NOT / two's complement complement).
+func (v IntValue) Not() IntValue {
+	if v.big == nil {
+		return NewIntValue(^v.small)
+	}
+	return NewIntValueFromBig(new(big.Int).Not(v.big))
+}
+
+// And returns v & other.
+func (v IntValue) And(other IntValue) IntValue {
+	if v.big == nil && other.big == nil {
+		return NewIntValue(v.small & other.small)
+	}
+	return NewIntValueFromBig(new(big.Int).And(v.ToBig(), other.ToBig()))
+}
+
+// Or returns v | other.
+func (v IntValue) Or(other IntValue) IntValue {
+	if v.big == nil && other.big == nil {
+		return NewIntValue(v.small | other.small)
+	}
+	return NewIntValueFromBig(new(big.Int).Or(v.ToBig(), other.ToBig()))
+}
+
+// Xor returns v ^ other.
+func (v IntValue) Xor(other IntValue) IntValue {
+	if v.big == nil && other.big == nil {
+		return NewIntValue(v.small ^ other.small)
+	}
+	return NewIntValueFromBig(new(big.Int).Xor(v.ToBig(), other.ToBig()))
+}
+
+// Lsh returns v << shift with Ruby semantics (negative shift acts as Rsh).
+func (v IntValue) Lsh(shift IntValue) (IntValue, error) {
+	if shift.Cmp(NewIntValue(0)) < 0 {
+		return v.Rsh(shift.Neg())
+	}
+	if (v.big == nil && v.small == 0) || (shift.big == nil && shift.small == 0) {
+		return v, nil
+	}
+	if shift.big != nil || shift.small > 1<<26 {
+		return IntValue{}, fmt.Errorf("shift count too large: %s", shift.String())
+	}
+	vBitLen := int64(v.ToBig().BitLen())
+	if vBitLen+shift.small > 1<<26 {
+		return IntValue{}, fmt.Errorf("shift count too large: %s", shift.String())
+	}
+	z := new(big.Int).Lsh(v.ToBig(), uint(shift.small))
+	return NewIntValueFromBig(z), nil
+}
+
+// Rsh returns v >> shift with Ruby semantics (negative shift acts as Lsh).
+func (v IntValue) Rsh(shift IntValue) (IntValue, error) {
+	if shift.Cmp(NewIntValue(0)) < 0 {
+		return v.Lsh(shift.Neg())
+	}
+	if shift.big == nil && shift.small == 0 {
+		return v, nil
+	}
+	if v.big == nil && v.small == 0 {
+		return v, nil
+	}
+	vBitLen := int64(64)
+	if v.big != nil {
+		vBitLen = int64(v.big.BitLen())
+	}
+	if shift.big != nil || shift.small >= vBitLen {
+		if v.Cmp(NewIntValue(0)) < 0 {
+			return NewIntValue(-1), nil
+		}
+		return NewIntValue(0), nil
+	}
+	z := new(big.Int).Rsh(v.ToBig(), uint(shift.small))
+	return NewIntValueFromBig(z), nil
+}
 
 type FloatValue float64
 
@@ -90,7 +343,7 @@ func MakeDictKey(v Value) DictKey {
 	v = Force(v)
 	switch val := v.(type) {
 	case IntValue:
-		return DictKey{Type: "Int", Key: fmt.Sprintf("%d", int64(val))}
+		return DictKey{Type: "Int", Key: val.String()}
 	case FloatValue:
 		return DictKey{Type: "Float", Key: fmt.Sprintf("%g", float64(val))}
 	case StringValue:

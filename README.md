@@ -65,7 +65,7 @@ les - arg1 arg2 < script.les
 
 | Type | Syntax / Examples | Description |
 |---|---|---|
-| `Int` | `42`, `-10`, `0`, `0b1010`, `0o755`, `0d100`, `0xdead_beef`, `1_000_000` | 64-bit signed integer. Supports binary (`0b`/`0B`), octal (`0o`/`0O`), explicit decimal (`0d`/`0D`), hexadecimal (`0x`/`0X`), and visual digit separators (`_`). |
+| `Int` | `42`, `-10`, `0`, `0b1010`, `0o755`, `0d100`, `0xdead_beef`, `1_000_000` | Arbitrary-precision signed integer (transparently expanding from 64-bit int to multi-precision). Supports binary (`0b`/`0B`), octal (`0o`/`0O`), explicit decimal (`0d`/`0D`), hexadecimal (`0x`/`0X`), and visual digit separators (`_`). |
 | `Float` | `3.14`, `-0.5`, `2.0`, `1_000.5`, `3.14159_26535` | 64-bit IEEE 754 floating-point number. Supports visual digit separators (`_`) in both integer and fractional parts. |
 | `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
 | `Bytes` | `Bytes("hello")`, `"hello".Bytes()`, `Bytes()` | Immutable raw byte sequence representing binary data. Indexed by 0-based byte offset `b[0]`, returning an `Int` (`0`–`255`). Supports negative index `b[-1]` (last byte). |
@@ -356,7 +356,7 @@ Listed from highest to lowest precedence:
 | 2 | `+`, `-`, `!`, `~` | `+x`, `-x`, `!flag`, `~mask` | `Int`/`Float` (`+`, `-`), `Bool` (`!`), `Int` (`~`) | Unary plus, negation, logical NOT, and bitwise NOT |
 | 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int`, `Float` (`*`, `/`) | Multiplication, division, modulo |
 | 4 | `+`, `-` | `a + b`, `a - b` | `Int`, `Float`, `String` (`+`), `Bytes` (`+`) | Addition, subtraction, string/bytes concatenation |
-| 5 | `<<`, `>>`, `<<<`, `>>>` | `x << n`, `x >>> n` | `Int` | Logical shifts (`<<`, `>>`), arithmetic shifts (`<<<`, `>>>`) |
+| 5 | `<<`, `>>` | `x << n`, `x >> n` | `Int` | Arithmetic bitwise shifts with Ruby semantics (`x << -n` acts as `x >> n`) |
 | 6 | `&` | `a & b` | `Int` | Bitwise AND |
 | 7 | `^` | `a ^ b` | `Int` | Bitwise XOR |
 | 8 | `\|` | `a \| b` | `Int` | Bitwise OR |
@@ -369,27 +369,23 @@ Listed from highest to lowest precedence:
 | 15 | `\|>` | `x \|> f` | Any | Pipeline operator |
 | 16 (Lowest) | *(space)* | `print x * 2 + 1` | Callable | Paren-omitted function call (weakest binding) |
 
-#### Bitwise Operators (`~`, `&`, `^`, `|`, `<<`, `>>`, `<<<`, `>>>`)
-Les provides comprehensive bitwise operators operating on 64-bit signed integers (`Int`):
+#### Bitwise Operators (`~`, `&`, `^`, `|`, `<<`, `>>`)
+Les provides comprehensive bitwise operators operating on arbitrary-precision integers (`Int`):
 
-- **Bitwise NOT (`~x`)**: Inverts all bits (one's complement). E.g. `~0 == -1`, `~(-1) == 0`.
+- **Bitwise NOT (`~x`)**: Inverts all bits (two's complement complement, equivalent to `-x - 1`). E.g. `~0 == -1`, `~(-1) == 0`.
 - **Bitwise AND (`a & b`)**: Bitwise AND of two integers.
 - **Bitwise XOR (`a ^ b`)**: Bitwise exclusive OR.
 - **Bitwise OR (`a | b`)**: Bitwise inclusive OR. Syntactically unambiguous: expression bitwise OR is separated from union types (`A | B`) and lambda parameters (`|x|:`).
-- **Logical Shift (`<<`, `>>`)**:
-  - `x << n`: Left shift by `n` bits (zeros shifted in at LSB).
-  - `x >> n`: Logical (unsigned, zero-fill) right shift by `n` bits. MSB bits are filled with zero (e.g. `-1 >> 1 == 0x7fffffffffffffff`).
-- **Arithmetic Shift (`<<<`, `>>>`)**:
-  - `x <<< n`: Arithmetic left shift. The sign bit (bit 63) is excluded from the shift and strictly preserved. Positive/zero values never become negative, and negative values never become positive or zero.
-  - `x >>> n`: Arithmetic (signed, sign-extending) right shift by `n` bits. Preserves sign bit at MSB (e.g. `-8 >>> 1 == -4`, `-1 >>> 1 == -1`).
-- **Shift Count Edge Cases**:
-  - A negative shift count (`n < 0`) raises a runtime error (`negative shift count: n`).
-  - Shift count `n >= 64`: `<<`, `>>` evaluate to `0`; `>>>` evaluates to `0` (if `x >= 0`) or `-1` (if `x < 0`).
-  - For `<<<`: for `n >= 63`, all value bits are cleared, leaving only the preserved sign bit (`0` for `x >= 0`, `math.MinInt64` for `x < 0`).
+- **Arithmetic Shift (`<<`, `>>`) with Ruby Semantics**:
+  - `x << n`: Left shift by `n` bits (multiplication by $2^n$).
+  - `x >> n`: Arithmetic right shift by `n` bits (floor division by $2^n$). Preserves signs (e.g. `-8 >> 1 == -4`, `-1 >> 1 == -1`).
+  - Supports arbitrary-precision expansion without overflow or loss of precision.
+  - Negative shift count reverses the shift direction: `x << -n` is equivalent to `x >> n`, and `x >> -n` is equivalent to `x << n`.
+  - Shift count safeguard: shifts exceeding $2^{26}$ bits raise a runtime error (`shift count too large: n`) to prevent memory exhaustion.
 - **Operator Overloading & Pipeline Integration**:
-  - Structs and interfaces can define methods for bitwise operators (`def ~()`, `def &(other)`, `def <<<(n)`, etc.).
-  - Built-in `Int` exposes bound operator methods (e.g. `(12).&(10)`).
-  - Seamlessly supported on RHS of the pipeline operator: `x |> ~`, `x |> &(0xff)`, `x |> >>>(2)`.
+  - Structs and interfaces can define methods for bitwise operators (`def ~()`, `def &(other)`, `def <<(n)`, `def >>(n)`).
+  - Built-in `Int` exposes bound operator methods (e.g. `(12).&(10)`, `(1).<<(4)`).
+  - Seamlessly supported on RHS of the pipeline operator: `x |> ~`, `x |> &(0xff)`, `x |> >>(2)`.
 
 #### Indexing Details (`[]`)
 - `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
@@ -876,7 +872,8 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `n.ToString(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (integer division; division by zero raises a runtime error), `%` (modulo).
-  - Unary: `-n` (negation), `+n`.
+  - Unary: `-n` (negation), `+n`, `~n` (bitwise NOT).
+  - Bitwise: `&` (AND), `|` (OR), `^` (XOR), `<<` (arithmetic left shift), `>>` (arithmetic right shift). Shifts follow Ruby semantics (negative shift reverses direction; shifts exceeding $2^{26}$ bits raise a runtime error).
   - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
 
 #### `Float`
@@ -1044,15 +1041,7 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
   - Native regex matching operations (`s =~ /re/` or `s is /re/`, `re.Find(s)`, `re.Replace(s, rep)`).
   - Implicitly satisfies the `Show` interface for printing.
 
-### 2. Arbitrary-Precision Integers (Multi-precision `Int`)
-
-`Int` will be upgraded from a fixed 64-bit signed integer to an arbitrary-precision integer (multi-precision / big integer backed by Go's `math/big.Int`).
-
-- **Infinite Magnitude**: `Int` will handle arbitrarily large integers up to available memory limits without overflow or wrap-around (similar to Python 3 and Ruby).
-- **Unified `Int` Type**: Users continue writing `Int` without needing a distinct `BigInt` type. Fast-path optimizations (e.g. 64-bit int fast-path for small values) will be handled transparently under the hood.
-- **Seamless Interop**: Arithmetic operators (`+`, `-`, `*`, `/`, `%`), string formatting, bitwise operations, and Hindley-Milner type inference will continue to work seamlessly without code changes.
-
-### 3. Hexadecimal Floating-Point Literals
+### 2. Hexadecimal Floating-Point Literals
 
 - Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
   - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
@@ -1061,7 +1050,7 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
   - Direct method invocation on literals (e.g., `42.ToString()`, `3.14.ToString()`).
   - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.ToString()`) is disambiguated as a method call on integer `42`.
 
-### 4. String Interpolation (`#{}`)
+### 3. String Interpolation (`#{}`)
 
 Ruby-style string interpolation within double-quoted strings:
 
@@ -1077,7 +1066,7 @@ Ruby-style string interpolation within double-quoted strings:
   print 'Literal #{name}\n'  # prints "Literal #{name}\n"
   ```
 
-### 5. Null-Safe Navigation (`?.`) & Coalescing Operator (`??`)
+### 4. Null-Safe Navigation (`?.`) & Coalescing Operator (`??`)
 
 Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
 
@@ -1090,7 +1079,7 @@ Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
   displayName = user?.Name ?? "Guest"
   ```
 
-### 6. User-Defined Generics (Type Parameters `[T]`)
+### 5. User-Defined Generics (Type Parameters `[T]`)
 
 Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
 

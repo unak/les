@@ -132,9 +132,12 @@ func (ev *Evaluator) initIOModule() {
 			if !ok {
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
-			numBytes := int64(iv)
-			if numBytes < 0 {
-				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
+			if iv.Cmp(NewIntValue(0)) < 0 {
+				return nil, fmt.Errorf("Read: negative byte count %s", iv.String())
+			}
+			numBytes, ok := iv.Int64()
+			if !ok {
+				return nil, fmt.Errorf("Read: byte count too large %s", iv.String())
 			}
 			if numBytes == 0 {
 				return BytesValue(""), nil
@@ -229,7 +232,7 @@ func (ev *Evaluator) initIOModule() {
 			if err != nil {
 				return nil, err
 			}
-			return IntValue(n), nil
+			return NewIntValue(int64(n)), nil
 		},
 	}
 	stdoutInstance.Fields["Close"] = &BuiltinFunc{
@@ -321,7 +324,7 @@ func (ev *Evaluator) initIOModule() {
 			if err != nil {
 				return nil, err
 			}
-			return IntValue(n), nil
+			return NewIntValue(int64(n)), nil
 		},
 	}
 	stderrInstance.Fields["Close"] = &BuiltinFunc{

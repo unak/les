@@ -198,25 +198,6 @@ func (l *Lexer) NextToken() Token {
 			return l.readIdentifier()
 		}
 
-		// Three-character operators
-		if l.pos+2 < len(l.source) {
-			three := string(l.source[l.pos : l.pos+3])
-			switch three {
-			case "<<<":
-				t := Token{Type: TokenArithLShift, Literal: "<<<", Line: l.line, Col: l.col}
-				l.advance()
-				l.advance()
-				l.advance()
-				return t
-			case ">>>":
-				t := Token{Type: TokenArithRShift, Literal: ">>>", Line: l.line, Col: l.col}
-				l.advance()
-				l.advance()
-				l.advance()
-				return t
-			}
-		}
-
 		// Two-character operators
 		if l.pos+1 < len(l.source) {
 			two := string(l.source[l.pos : l.pos+2])

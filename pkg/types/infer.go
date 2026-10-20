@@ -1782,7 +1782,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeBool, nil
 		case "&&", "||":
 			return TypeBool, nil
-		case "&", "|", "^", "<<", ">>", "<<<", ">>>":
+		case "&", "|", "^", "<<", ">>":
 			if leftT == TypeUnknown || rightT == TypeUnknown {
 				if leftT != TypeUnknown && leftT != TypeInt {
 					return nil, inf.nodeErr(e, "cannot perform %s operation on %s and %s", e.Op, leftT, rightT)
@@ -2076,13 +2076,13 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if tt, ok := targetT.(*TupleType); ok {
 			if len(tt.Elems) > 0 {
 				if !tt.IsVariadic {
-					if intLit, ok := e.Index.(*ast.IntLit); ok {
+					if intLit, ok := e.Index.(*ast.IntLit); ok && intLit.BigValue == nil {
 						idx := int(intLit.Value)
 						if idx >= 0 && idx < len(tt.Elems) {
 							return tt.Elems[idx], nil
 						}
 					} else if uExpr, ok := e.Index.(*ast.UnaryExpr); ok && uExpr.Op == "-" {
-						if intLit, ok := uExpr.Expr.(*ast.IntLit); ok {
+						if intLit, ok := uExpr.Expr.(*ast.IntLit); ok && intLit.BigValue == nil {
 							idx := len(tt.Elems) - int(intLit.Value)
 							if idx >= 0 && idx < len(tt.Elems) {
 								return tt.Elems[idx], nil

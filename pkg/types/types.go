@@ -743,7 +743,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 				Ret: TypeInt,
 			}, true
 		}
-	case "&", "|", "^", "<<", ">>", "<<<", ">>>":
+	case "&", "|", "^", "<<", ">>":
 		if t == TypeInt {
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeInt}},

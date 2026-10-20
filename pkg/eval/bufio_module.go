@@ -57,7 +57,7 @@ func (a *customReaderAdapter) Read(p []byte) (n int, err error) {
 	if err != nil {
 		return 0, fmt.Errorf("Reader has no Read method: %w", err)
 	}
-	resVal, err := a.ev.callValue(readVal, []Value{IntValue(len(p))})
+	resVal, err := a.ev.callValue(readVal, []Value{NewIntValue(int64(len(p)))})
 	if err != nil {
 		return 0, err
 	}
@@ -122,12 +122,12 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 	}
 	forced := Force(resVal)
 	if iv, ok := forced.(IntValue); ok {
-		nVal := int(iv)
-		if nVal < 0 {
-			return 0, fmt.Errorf("Write returned negative count %d", nVal)
+		if iv.Cmp(NewIntValue(0)) < 0 {
+			return 0, fmt.Errorf("Write returned negative count %s", iv.String())
 		}
-		if nVal > len(p) {
-			return 0, fmt.Errorf("Write returned count %d exceeding buffer length %d", nVal, len(p))
+		nVal, ok := iv.ToInt()
+		if !ok || nVal > len(p) {
+			return 0, fmt.Errorf("Write returned count %s exceeding buffer length %d", iv.String(), len(p))
 		}
 		if nVal < len(p) {
 			return nVal, io.ErrShortWrite
@@ -377,10 +377,12 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 			if !ok {
 				return nil, fmt.Errorf("Read expects Int, got %s", typeNameOf(forced))
 			}
-			numBytes := int64(iv)
-			// A6: n < 0 is error; n == 0 returns empty Bytes
-			if numBytes < 0 {
-				return nil, fmt.Errorf("Read: negative byte count %d", numBytes)
+			if iv.Cmp(NewIntValue(0)) < 0 {
+				return nil, fmt.Errorf("Read: negative byte count %s", iv.String())
+			}
+			numBytes, ok := iv.Int64()
+			if !ok {
+				return nil, fmt.Errorf("Read: byte count too large %s", iv.String())
 			}
 			if numBytes == 0 {
 				return BytesValue(""), nil
@@ -513,10 +515,12 @@ func (ev *Evaluator) makeBufioReaderInstance(getReader func() *bufio.Reader, def
 			if !ok {
 				return nil, fmt.Errorf("Peek expects Int, got %s", typeNameOf(forced))
 			}
-			numBytes := int(iv)
-			// A6: n < 0 is error; n == 0 returns empty Bytes
-			if numBytes < 0 {
-				return nil, fmt.Errorf("Peek: negative byte count %d", numBytes)
+			if iv.Cmp(NewIntValue(0)) < 0 {
+				return nil, fmt.Errorf("Peek: negative byte count %s", iv.String())
+			}
+			numBytes, ok := iv.ToInt()
+			if !ok {
+				return nil, fmt.Errorf("Peek: byte count too large %s", iv.String())
 			}
 			if numBytes == 0 {
 				return BytesValue(""), nil
@@ -572,7 +576,7 @@ func (ev *Evaluator) makeBufioWriterInstance(getWriter func() *bufio.Writer, get
 				und = getUnderlying()
 			}
 			ev.globalEnv.RegisterBufioWriter(bw, und)
-			return IntValue(n), nil
+			return NewIntValue(int64(n)), nil
 		},
 	}
 
