@@ -178,16 +178,28 @@ func (d *DictLit) node()         {}
 func (d *DictLit) expr()         {}
 func (d *DictLit) Pos() Position { return d.Position }
 
-// IndexExpr represents indexing with [], e.g. target[index].
+// IndexExpr represents indexing with [], e.g. target[index] or single type argument target[T].
 type IndexExpr struct {
 	Position Position
 	Target   Expr
 	Index    Expr
+	TypeArg  string
 }
 
 func (idx *IndexExpr) node()         {}
 func (idx *IndexExpr) expr()         {}
 func (idx *IndexExpr) Pos() Position { return idx.Position }
+
+// TypeInstExpr represents explicit type argument instantiation, e.g. target[T1, T2] or target[-> Int].
+type TypeInstExpr struct {
+	Position Position
+	Target   Expr
+	TypeArgs []string
+}
+
+func (t *TypeInstExpr) node()         {}
+func (t *TypeInstExpr) expr()         {}
+func (t *TypeInstExpr) Pos() Position { return t.Position }
 
 // BinaryExpr represents binary operations (+, -, *, /, %, ==, !=, <, <=, >, >=).
 type BinaryExpr struct {
@@ -382,6 +394,15 @@ func (e *ExprStmt) node()         {}
 func (e *ExprStmt) stmt()         {}
 func (e *ExprStmt) Pos() Position { return e.Position }
 
+// TypeParam represents a type parameter with optional constraint, e.g. T or T: Constraint.
+type TypeParam struct {
+	Position   Position
+	Name       string
+	Constraint string // Empty if unconstrained; otherwise type annotation (e.g. "@io.ReadCloser", "Int | Float")
+}
+
+func (tp TypeParam) Pos() Position { return tp.Position }
+
 // FuncParam represents function parameter with optional type annotation.
 type FuncParam struct {
 	Position     Position
@@ -391,10 +412,11 @@ type FuncParam struct {
 	IsVariadic   bool
 }
 
-// FuncDef represents function definition block: def name(params): body.
+// FuncDef represents function definition block: def name[T](params): body.
 type FuncDef struct {
 	Position   Position
 	Name       string
+	TypeParams []TypeParam
 	Params     []FuncParam
 	BlockParam *FuncParam // optional &block parameter
 	ReturnType string
@@ -426,12 +448,13 @@ type StructField struct {
 	IsEmbedded   bool
 }
 
-// StructDef represents struct definition block: struct Name: ...
+// StructDef represents struct definition block: struct Name[T]: ...
 type StructDef struct {
-	Position Position
-	Name     string
-	Fields   []StructField
-	Methods  []*FuncDef
+	Position   Position
+	Name       string
+	TypeParams []TypeParam
+	Fields     []StructField
+	Methods    []*FuncDef
 }
 
 func (s *StructDef) node()         {}
@@ -454,6 +477,7 @@ func (m *MemberAssignStmt) Pos() Position { return m.Position }
 type MethodSig struct {
 	Position   Position
 	Name       string
+	TypeParams []TypeParam
 	Params     []FuncParam
 	BlockParam *FuncParam
 	ReturnType string
@@ -462,12 +486,13 @@ type MethodSig struct {
 func (f FuncParam) Pos() Position { return f.Position }
 func (m MethodSig) Pos() Position { return m.Position }
 
-// InterfaceDef represents interface definition block: interface Name: ...
+// InterfaceDef represents interface definition block: interface Name[T]: ...
 type InterfaceDef struct {
-	Position Position
-	Name     string
-	Embedded []string // Embedded interface names
-	Methods  []MethodSig
+	Position   Position
+	Name       string
+	TypeParams []TypeParam
+	Embedded   []string // Embedded interface names (may include type arguments, e.g. Reader[T])
+	Methods    []MethodSig
 }
 
 func (i *InterfaceDef) node()         {}

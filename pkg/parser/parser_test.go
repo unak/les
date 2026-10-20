@@ -1550,6 +1550,166 @@ v5 = x |> |(0xff)
 	}
 }
 
+func TestParseUserDefinedGenerics(t *testing.T) {
+	code := `
+def id[T](x: T) -> T:
+    x
+
+def pair[T: Int | String, U](a: T, b: U) -> (T, U):
+    (a, b)
+
+struct Box[T]:
+    val: T
+    def map[U](self, fn: (T) -> U) -> Box[U]:
+        Box(fn(self.val))
+
+interface Iterator[T]:
+    Next(): T | Nil
+    Map[U](fn: (T) -> U): Iterator[U]
+
+struct Derived[T]:
+    Box[T]
+    tag: String
+
+b1 = Box[Int](42)
+p1 = pair[Int, String](10, "hello")
+f1 = id[() -> Int]()
+`
+	l := lexer.NewLexer(code)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+
+	// 1. def id[T](x: T) -> T
+	f1, ok := prog.Body[0].(*ast.FuncDef)
+	if !ok || f1.Name != "id" || len(f1.TypeParams) != 1 || f1.TypeParams[0].Name != "T" {
+		t.Fatalf("expected generic func id[T], got %+v", prog.Body[0])
+	}
+	if f1.TypeParams[0].Constraint != "" {
+		t.Errorf("expected empty constraint for T, got %q", f1.TypeParams[0].Constraint)
+	}
+
+	// 2. def pair[T: Int | String, U](...)
+	f2, ok := prog.Body[1].(*ast.FuncDef)
+	if !ok || f2.Name != "pair" || len(f2.TypeParams) != 2 {
+		t.Fatalf("expected generic func pair[T, U], got %+v", prog.Body[1])
+	}
+	if f2.TypeParams[0].Name != "T" || f2.TypeParams[0].Constraint != "Int | String" {
+		t.Errorf("expected T: Int | String, got %+v", f2.TypeParams[0])
+	}
+	if f2.TypeParams[1].Name != "U" || f2.TypeParams[1].Constraint != "" {
+		t.Errorf("expected U unconstrained, got %+v", f2.TypeParams[1])
+	}
+
+	// 3. struct Box[T]
+	s1, ok := prog.Body[2].(*ast.StructDef)
+	if !ok || s1.Name != "Box" || len(s1.TypeParams) != 1 || s1.TypeParams[0].Name != "T" {
+		t.Fatalf("expected generic struct Box[T], got %+v", prog.Body[2])
+	}
+	if len(s1.Methods) != 1 || len(s1.Methods[0].TypeParams) != 1 || s1.Methods[0].TypeParams[0].Name != "U" {
+		t.Fatalf("expected method map[U] on Box, got %+v", s1.Methods)
+	}
+
+	// 4. interface Iterator[T]
+	i1, ok := prog.Body[3].(*ast.InterfaceDef)
+	if !ok || i1.Name != "Iterator" || len(i1.TypeParams) != 1 || i1.TypeParams[0].Name != "T" {
+		t.Fatalf("expected generic interface Iterator[T], got %+v", prog.Body[3])
+	}
+	if len(i1.Methods) != 2 {
+		t.Fatalf("expected 2 methods on Iterator, got %d", len(i1.Methods))
+	}
+	if i1.Methods[1].Name != "Map" || len(i1.Methods[1].TypeParams) != 1 || i1.Methods[1].TypeParams[0].Name != "U" {
+		t.Fatalf("expected method Map[U] on Iterator, got %+v", i1.Methods[1])
+	}
+
+	// 5. struct Derived[T]: Box[T]
+	s2, ok := prog.Body[4].(*ast.StructDef)
+	if !ok || s2.Name != "Derived" || len(s2.Fields) != 2 {
+		t.Fatalf("expected struct Derived[T], got %+v", prog.Body[4])
+	}
+	if !s2.Fields[0].IsEmbedded || s2.Fields[0].TypeAnnot != "Box[T]" {
+		t.Errorf("expected embedded Box[T], got %+v", s2.Fields[0])
+	}
+
+	// 6. b1 = Box[Int](42) => CallExpr with IndexExpr callee (TypeArg = "Int")
+	vd1, ok := prog.Body[5].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl for b1, got %+v", prog.Body[5])
+	}
+	call1, ok := vd1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for b1, got %+v", vd1.Value)
+	}
+	idx1, ok := call1.Callee.(*ast.IndexExpr)
+	if !ok || idx1.TypeArg != "Int" {
+		t.Fatalf("expected IndexExpr callee with TypeArg 'Int', got %+v", call1.Callee)
+	}
+
+	// 7. p1 = pair[Int, String](10, "hello") => CallExpr with TypeInstExpr callee
+	vd2, ok := prog.Body[6].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl for p1, got %+v", prog.Body[6])
+	}
+	call2, ok := vd2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for p1, got %+v", vd2.Value)
+	}
+	inst2, ok := call2.Callee.(*ast.TypeInstExpr)
+	if !ok || len(inst2.TypeArgs) != 2 || inst2.TypeArgs[0] != "Int" || inst2.TypeArgs[1] != "String" {
+		t.Fatalf("expected TypeInstExpr callee with [Int, String], got %+v", call2.Callee)
+	}
+
+	// 8. f1 = id[() -> Int]() => CallExpr with TypeInstExpr callee (function type arg)
+	vd3, ok := prog.Body[7].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl for f1, got %+v", prog.Body[7])
+	}
+	call3, ok := vd3.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for f1, got %+v", vd3.Value)
+	}
+	inst3, ok := call3.Callee.(*ast.TypeInstExpr)
+	if !ok || len(inst3.TypeArgs) != 1 || inst3.TypeArgs[0] != "() -> Int" {
+		t.Fatalf("expected TypeInstExpr callee with [() -> Int], got %+v", call3.Callee)
+	}
+}
+
+func TestParseGenericErrors(t *testing.T) {
+	errCases := []struct {
+		code        string
+		expectedErr string
+	}{
+		{"def f[](x): 1", "type parameter list cannot be empty"},
+		{"struct Box[]:\n    x: Int", "type parameter list cannot be empty"},
+		{"interface Iter[]:\n    Next(): Int", "type parameter list cannot be empty"},
+		{"def f[T, T](x: T): x", "duplicate type parameter 'T'"},
+		{"struct Box[T, T]:\n    x: T", "duplicate type parameter 'T'"},
+		{"x = Box[]()", "bracket expression cannot be empty"},
+	}
+
+	for _, tt := range errCases {
+		l := lexer.NewLexer(tt.code)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Errorf("expected error for %q, got none", tt.code)
+			continue
+		}
+		found := false
+		for _, err := range p.Errors() {
+			if strings.Contains(err, tt.expectedErr) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected error containing %q for %q, got %v", tt.expectedErr, tt.code, p.Errors())
+		}
+	}
+}
+
 
 
 

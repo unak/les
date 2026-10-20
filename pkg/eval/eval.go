@@ -341,29 +341,44 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Equal interface definition: ==(other): Bool
+	// Built-in Equal interface definition: ==(other: T): Bool
 	ev.builtinsEnv.Set("Equal", &InterfaceDefValue{
 		Name: "Equal",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+		},
 		Methods: map[string]ast.MethodSig{
 			"==": {
-				Name:   "==",
-				Params: []ast.FuncParam{{Name: "other"}},
+				Name: "==",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
 			},
 		},
 	})
 
-	// Built-in Comparable interface definition: ==(other): Bool, <(other): Bool
+	// Built-in Comparable interface definition: ==(other: T): Bool, <(other: T): Bool
 	ev.builtinsEnv.Set("Comparable", &InterfaceDefValue{
-		Name:     "Comparable",
-		Embedded: []string{"Equal"},
+		Name: "Comparable",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+		},
+		Embedded: []string{"Equal[T]"},
 		Methods: map[string]ast.MethodSig{
 			"==": {
-				Name:   "==",
-				Params: []ast.FuncParam{{Name: "other"}},
+				Name: "==",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
 			},
 			"<": {
-				Name:   "<",
-				Params: []ast.FuncParam{{Name: "other"}},
+				Name: "<",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
 			},
 		},
 	})
@@ -478,6 +493,12 @@ func typeNameWithDepth(val Value, depth int) string {
 		valTypeStr := joinSortedTypeSet(valTypesSet)
 		return fmt.Sprintf("{%s: %s}", keyTypeStr, valTypeStr)
 	case *StructInstance:
+		if len(v.TypeArgs) == 0 && v.Def != nil && len(v.Def.TypeParams) > 0 {
+			inferStructInstanceTypeArgs(v)
+		}
+		if len(v.TypeArgs) > 0 {
+			return fmt.Sprintf("%s[%s]", v.Def.Name, strings.Join(v.TypeArgs, ", "))
+		}
 		return v.Def.Name
 	case *StructDefValue:
 		if v.StructType != nil {
@@ -486,6 +507,9 @@ func typeNameWithDepth(val Value, depth int) string {
 					return initFn.String()
 				}
 			}
+		}
+		if len(v.TypeArgs) > 0 {
+			return fmt.Sprintf("() -> %s[%s]", v.Name, strings.Join(v.TypeArgs, ", "))
 		}
 		return "() -> " + v.Name
 
@@ -506,6 +530,313 @@ func typeNameWithDepth(val Value, depth int) string {
 	default:
 		return "Unknown"
 	}
+}
+
+func safeFieldTypeName(val Value) string {
+	if evaluated, ok := PeekEvaluated(val); ok {
+		return typeNameWithDepth(evaluated, 0)
+	}
+	if thunk, ok := val.(*Thunk); ok {
+		if thunk.InferredType != nil {
+			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown {
+				return t.String()
+			}
+		}
+		if thunk.Expr != nil {
+			if litVal, ok := evalLiteral(thunk.Expr); ok {
+				return typeNameWithDepth(litVal, 0)
+			}
+			if tup, ok := thunk.Expr.(*ast.TupleLit); ok && len(tup.Elements) > 0 {
+				parts := make([]string, len(tup.Elements))
+				for i, el := range tup.Elements {
+					if lv, ok := evalLiteral(el); ok {
+						parts[i] = typeNameWithDepth(lv, 0)
+					} else {
+						parts[i] = "Unknown"
+					}
+				}
+				return "(" + strings.Join(parts, ", ") + ")"
+			}
+		}
+	}
+	return ""
+}
+
+func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings map[string]string) {
+	if declaredType == nil || valTypeStr == "" || valTypeStr == "Unknown" {
+		return
+	}
+	switch dt := declaredType.(type) {
+	case *types.TypeParamType:
+		if _, ok := bindings[dt.Name]; !ok {
+			bindings[dt.Name] = valTypeStr
+		}
+	case *types.TupleType:
+		if strings.HasPrefix(valTypeStr, "(") && strings.HasSuffix(valTypeStr, ")") {
+			inner := strings.TrimSpace(valTypeStr[1 : len(valTypeStr)-1])
+			if inner != "" {
+				parts := splitTopLevelCommas(inner)
+				if dt.IsVariadic && len(dt.Elems) > 0 {
+					varElem := dt.Elems[len(dt.Elems)-1]
+					for _, p := range parts {
+						matchTypeStringToField(varElem, p, bindings)
+					}
+				} else {
+					for i := 0; i < len(dt.Elems) && i < len(parts); i++ {
+						matchTypeStringToField(dt.Elems[i], parts[i], bindings)
+					}
+				}
+			}
+		}
+	case *types.DictType:
+		if strings.HasPrefix(valTypeStr, "{") && strings.HasSuffix(valTypeStr, "}") {
+			inner := strings.TrimSpace(valTypeStr[1 : len(valTypeStr)-1])
+			colonIdx := -1
+			pDepth := 0
+			bDepth := 0
+			brDepth := 0
+			for i, r := range inner {
+				if r == '(' {
+					pDepth++
+				} else if r == ')' {
+					pDepth--
+				} else if r == '[' {
+					bDepth++
+				} else if r == ']' {
+					bDepth--
+				} else if r == '{' {
+					brDepth++
+				} else if r == '}' {
+					brDepth--
+				} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+					colonIdx = i
+					break
+				}
+			}
+			if colonIdx != -1 {
+				kStr := strings.TrimSpace(inner[:colonIdx])
+				vStr := strings.TrimSpace(inner[colonIdx+1:])
+				matchTypeStringToField(dt.Key, kStr, bindings)
+				matchTypeStringToField(dt.Value, vStr, bindings)
+			}
+		}
+	case *types.StructType:
+		base, args, isGen := parseGenericTypeAnnot(valTypeStr)
+		if isGen && dt.Name == base {
+			for i := 0; i < len(dt.TypeArgs) && i < len(args); i++ {
+				matchTypeStringToField(dt.TypeArgs[i], args[i], bindings)
+			}
+		}
+	}
+}
+
+func inferStructInstanceTypeArgs(inst *StructInstance) {
+	if inst.Def == nil || len(inst.Def.TypeParams) == 0 {
+		return
+	}
+	if len(inst.TypeArgs) > 0 {
+		return
+	}
+	bindings := make(map[string]string)
+	if inst.Def.StructType != nil {
+		if st, ok := inst.Def.StructType.(*types.StructType); ok {
+			for fName, fType := range st.Fields {
+				if fVal, ok := inst.Fields[fName]; ok {
+					tName := safeFieldTypeName(fVal)
+					if tName != "" && tName != "Unknown" {
+						matchTypeStringToField(fType, tName, bindings)
+					}
+				}
+			}
+		}
+	}
+	res := make([]string, len(inst.Def.TypeParams))
+	allFound := true
+	for i, tp := range inst.Def.TypeParams {
+		if b, ok := bindings[tp.Name]; ok {
+			res[i] = b
+		} else {
+			allFound = false
+			break
+		}
+	}
+	if allFound {
+		inst.TypeArgs = res
+	}
+}
+
+func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Value, error) {
+	var inf *types.Inferencer
+	if env != nil && env.Inferencer != nil {
+		if i, ok := env.Inferencer.(*types.Inferencer); ok {
+			inf = i
+		}
+	}
+
+	parseArgType := func(s string) types.Type {
+		if inf != nil {
+			if t, err := inf.ParseTypeAnnot(s); err == nil {
+				return t
+			}
+		}
+		if t, err := types.ParseTypeAnnot(s); err == nil {
+			return t
+		}
+		return types.TypeUnknown
+	}
+
+	switch v := val.(type) {
+	case *StructDefValue:
+		newDef := *v
+		newDef.TypeArgs = append([]string(nil), typeArgs...)
+		if v.StructType != nil {
+			if st, ok := v.StructType.(*types.StructType); ok && len(st.TypeParams) > 0 {
+				argTypes := make([]types.Type, len(typeArgs))
+				bindings := make(map[string]types.Type)
+				for i, argStr := range typeArgs {
+					argT := parseArgType(argStr)
+					argTypes[i] = argT
+					if i < len(st.TypeParams) {
+						bindings[st.TypeParams[i].Name] = argT
+					}
+				}
+				if len(argTypes) == len(st.TypeParams) {
+					newDef.StructType = types.InstantiateStruct(st, argTypes)
+				} else {
+					newDef.StructType = types.Substitute(st, bindings)
+				}
+			}
+		}
+		return &newDef, nil
+
+	case *Closure:
+		newClosure := *v
+		newClosure.TypeArgs = append([]string(nil), typeArgs...)
+		if v.FuncType != nil {
+			if ft, ok := v.FuncType.(*types.FuncType); ok && len(ft.TypeParams) > 0 {
+				bindings := make(map[string]types.Type)
+				for i, argStr := range typeArgs {
+					if i < len(ft.TypeParams) {
+						bindings[ft.TypeParams[i].Name] = parseArgType(argStr)
+					}
+				}
+				if len(bindings) > 0 {
+					newClosure.FuncType = types.Substitute(ft, bindings)
+				}
+			}
+		}
+		return &newClosure, nil
+
+	case *InterfaceDefValue:
+		newIDef := *v
+		newIDef.TypeArgs = append([]string(nil), typeArgs...)
+		return &newIDef, nil
+
+	default:
+		return val, nil
+	}
+}
+
+func parseGenericTypeAnnot(annot string) (string, []string, bool) {
+	annot = strings.TrimSpace(annot)
+	if !strings.HasSuffix(annot, "]") {
+		return annot, nil, false
+	}
+	depth := 0
+	bracketIdx := -1
+	runes := []rune(annot)
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] == ']' {
+			depth++
+		} else if runes[i] == '[' {
+			depth--
+			if depth == 0 {
+				bracketIdx = i
+				break
+			}
+		}
+	}
+	if bracketIdx <= 0 {
+		return annot, nil, false
+	}
+	base := strings.TrimSpace(string(runes[:bracketIdx]))
+	if strings.Contains(base, "->") || strings.HasPrefix(base, "(") || strings.HasPrefix(base, "{") {
+		return annot, nil, false
+	}
+	inner := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
+	if inner == "" {
+		return annot, nil, false
+	}
+	args := splitTopLevelCommas(inner)
+	return base, args, true
+}
+
+func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string) *InterfaceDefValue {
+	substMap := make(map[string]string)
+	for i, tp := range iface.TypeParams {
+		if i < len(typeArgs) {
+			substMap[tp.Name] = typeArgs[i]
+		}
+	}
+	var newEmbedded []string
+	for _, emb := range iface.Embedded {
+		newEmbedded = append(newEmbedded, substituteTypeString(emb, substMap))
+	}
+	res := &InterfaceDefValue{
+		Name:       iface.Name,
+		ModuleName: iface.ModuleName,
+		TypeParams: iface.TypeParams,
+		TypeArgs:   append([]string(nil), typeArgs...),
+		Embedded:   newEmbedded,
+		Methods:    make(map[string]ast.MethodSig),
+	}
+	for mName, sig := range iface.Methods {
+		newSig := sig
+		newSig.ReturnType = substituteTypeString(sig.ReturnType, substMap)
+		newParams := make([]ast.FuncParam, len(sig.Params))
+		for i, p := range sig.Params {
+			newP := p
+			newP.TypeAnnot = substituteTypeString(p.TypeAnnot, substMap)
+			newParams[i] = newP
+		}
+		newSig.Params = newParams
+		res.Methods[mName] = newSig
+	}
+	return res
+}
+
+func isIdentStart(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+}
+
+func isIdentPart(r rune) bool {
+	return isIdentStart(r) || (r >= '0' && r <= '9')
+}
+
+func substituteTypeString(annot string, substMap map[string]string) string {
+	if annot == "" || len(substMap) == 0 {
+		return annot
+	}
+	var b strings.Builder
+	runes := []rune(annot)
+	for i := 0; i < len(runes); {
+		if isIdentStart(runes[i]) {
+			start := i
+			for i < len(runes) && isIdentPart(runes[i]) {
+				i++
+			}
+			word := string(runes[start:i])
+			if repl, ok := substMap[word]; ok {
+				b.WriteString(repl)
+			} else {
+				b.WriteString(word)
+			}
+		} else {
+			b.WriteRune(runes[i])
+			i++
+		}
+	}
+	return b.String()
 }
 
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
@@ -698,6 +1029,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 	case *ast.FuncDef:
 		closure := &Closure{
+			TypeParams: s.TypeParams,
 			Params:     s.Params,
 			BlockParam: s.BlockParam,
 			Body:       s.Body,
@@ -728,6 +1060,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 	case *ast.StructDef:
 		sDef := &StructDefValue{
 			Name:          s.Name,
+			TypeParams:    s.TypeParams,
 			FieldOrder:    make([]string, 0),
 			FieldDefaults: make(map[string]ast.Expr),
 			EmbeddedNames: make([]string, 0),
@@ -738,7 +1071,11 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 		for _, f := range s.Fields {
 			if f.IsEmbedded {
-				sDef.EmbeddedNames = append(sDef.EmbeddedNames, f.Name)
+				embName := f.TypeAnnot
+				if embName == "" {
+					embName = f.Name
+				}
+				sDef.EmbeddedNames = append(sDef.EmbeddedNames, embName)
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
 			} else {
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
@@ -777,9 +1114,10 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 	case *ast.InterfaceDef:
 		iDef := &InterfaceDefValue{
-			Name:     s.Name,
-			Embedded: s.Embedded,
-			Methods:  make(map[string]ast.MethodSig),
+			Name:       s.Name,
+			TypeParams: s.TypeParams,
+			Embedded:   s.Embedded,
+			Methods:    make(map[string]ast.MethodSig),
 		}
 		for _, m := range s.Methods {
 			iDef.Methods[m.Name] = m
@@ -1214,7 +1552,18 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		}
 		return NewDictValue(entries, keyValues), nil
 
+	case *ast.TypeInstExpr:
+		targetVal := Force(NewThunk(e.Target, env))
+		return specializeGenericValue(targetVal, e.TypeArgs, env)
+
 	case *ast.IndexExpr:
+		if e.TypeArg != "" {
+			targetVal := Force(NewThunk(e.Target, env))
+			switch targetVal.(type) {
+			case *StructDefValue, *Closure, *InterfaceDefValue:
+				return specializeGenericValue(targetVal, []string{e.TypeArg}, env)
+			}
+		}
 		targetVal := Force(NewThunk(e.Target, env))
 		idxVal := Force(NewThunk(e.Index, env))
 
@@ -1443,7 +1792,32 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			return env.invokeClosure(fn, argValues)
 
 		case *StructDefValue:
-			return env.instantiateStruct(fn, e.Args)
+			targetDef := fn
+			if len(targetDef.TypeArgs) == 0 && len(targetDef.TypeParams) > 0 && env != nil && env.Inferencer != nil {
+				if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
+					if callT, ok := inf.ExprTypes[e]; ok {
+						if st, ok := callT.(*types.StructType); ok && len(st.TypeArgs) == len(targetDef.TypeParams) {
+							typeArgs := make([]string, len(st.TypeArgs))
+							allKnown := true
+							for i, a := range st.TypeArgs {
+								if a == types.TypeUnknown {
+									allKnown = false
+									break
+								}
+								typeArgs[i] = a.String()
+							}
+							if allKnown {
+								if sp, err := specializeGenericValue(targetDef, typeArgs, env); err == nil {
+									if spDef, ok := sp.(*StructDefValue); ok {
+										targetDef = spDef
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			return env.instantiateStruct(targetDef, e.Args)
 
 		default:
 			return nil, fmt.Errorf("cannot call non-function value: %v", calleeVal)
@@ -1566,10 +1940,27 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	// Check if 1st argument is a copy-update base instance (e.g. Person(p, x: 30))
 	if len(args) > 0 {
 		if _, isNamed := args[0].(*ast.NamedArgExpr); !isNamed {
-			val := Force(NewThunk(args[0], env))
-			if si, ok := val.(*StructInstance); ok && si.Def.Name == sDef.Name {
-				baseInstance = si
-				argStartIdx = 1
+			th0 := env.newThunk(args[0])
+			isPotentialBase := false
+			if th0.InferredType != nil {
+				if st, ok := th0.InferredType.(*types.StructType); ok && st.Name == sDef.Name {
+					isPotentialBase = true
+				}
+			} else if ident, isIdent := args[0].(*ast.Identifier); isIdent {
+				if v, ok := env.Get(ident.Name); ok {
+					if evaluated, isEval := PeekEvaluated(v); isEval {
+						if si, ok := evaluated.(*StructInstance); ok && si.Def.Name == sDef.Name {
+							isPotentialBase = true
+						}
+					}
+				}
+			}
+			if isPotentialBase {
+				val := Force(th0)
+				if si, ok := val.(*StructInstance); ok && si.Def.Name == sDef.Name {
+					baseInstance = si
+					argStartIdx = 1
+				}
 			}
 		}
 	}
@@ -1585,11 +1976,11 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 		for i := argStartIdx; i < len(args); i++ {
 			arg := args[i]
 			if named, ok := arg.(*ast.NamedArgExpr); ok {
-				fields[named.Name] = NewThunk(named.Value, env)
+				fields[named.Name] = env.newThunk(named.Value)
 			} else {
 				if posIdx < len(sDef.FieldOrder) {
 					fName := sDef.FieldOrder[posIdx]
-					fields[fName] = NewThunk(arg, env)
+					fields[fName] = env.newThunk(arg)
 					posIdx++
 				}
 			}
@@ -1602,11 +1993,16 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 				}
 			}
 		}
-		return &StructInstance{
+		inst := &StructInstance{
 			Def:      sDef,
+			TypeArgs: append([]string(nil), sDef.TypeArgs...),
 			Fields:   fields,
 			Embedded: embedded,
-		}, nil
+		}
+		if len(inst.TypeArgs) == 0 && len(sDef.TypeParams) > 0 {
+			inferStructInstanceTypeArgs(inst)
+		}
+		return inst, nil
 	}
 
 	if initDef, hasInit := sDef.Methods["init"]; hasInit {
@@ -1619,12 +2015,12 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	for i := argStartIdx; i < len(args); i++ {
 		arg := args[i]
 		if named, ok := arg.(*ast.NamedArgExpr); ok {
-			fields[named.Name] = NewThunk(named.Value, env)
+			fields[named.Name] = env.newThunk(named.Value)
 		} else {
 			// Positional argument
 			if posIdx < len(sDef.FieldOrder) {
 				fName := sDef.FieldOrder[posIdx]
-				fields[fName] = NewThunk(arg, env)
+				fields[fName] = env.newThunk(arg)
 				posIdx++
 			}
 		}
@@ -1633,6 +2029,9 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			isEmbeddedField[base] = true
+		}
 	}
 
 	// For any fields not yet populated:
@@ -1642,7 +2041,7 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 		}
 		if _, ok := fields[fName]; !ok {
 			if defExpr, hasDef := sDef.FieldDefaults[fName]; hasDef {
-				fields[fName] = NewThunk(defExpr, sDef.Env)
+				fields[fName] = sDef.Env.newThunk(defExpr)
 			} else {
 				fields[fName] = &TupleValue{Elements: []Value{}}
 			}
@@ -1651,30 +2050,86 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 
 	// Populate embedded struct instances
 	for _, embName := range sDef.EmbeddedNames {
-		if fVal, ok := fields[embName]; ok {
+		lookupName := embName
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			lookupName = base
+		}
+		if fVal, ok := fields[lookupName]; ok {
 			forced := Force(fVal)
 			if si, ok := forced.(*StructInstance); ok {
-				embedded[embName] = si
+				embedded[lookupName] = si
+			}
+		} else if fVal, ok := fields[embName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				embedded[lookupName] = si
 			}
 		} else {
-			// Auto-instantiate embedded struct if defined in environment
-			if embDefVal, ok := env.Get(embName); ok {
+			var embTypeArgs []string
+			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+				embTypeArgs = make([]string, len(args))
+				substMap := make(map[string]string)
+				for i, tp := range sDef.TypeParams {
+					if i < len(sDef.TypeArgs) {
+						substMap[tp.Name] = sDef.TypeArgs[i]
+					}
+				}
+				for i, a := range args {
+					embTypeArgs[i] = substituteTypeString(a, substMap)
+				}
+			}
+			if embDefVal, ok := env.Get(lookupName); ok {
 				if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
-					subInst, err := env.instantiateStruct(embDef, []ast.Expr{})
+					targetDef := embDef
+					if len(embTypeArgs) > 0 {
+						if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+							if spDef, ok := sp.(*StructDefValue); ok {
+								targetDef = spDef
+							}
+						}
+					}
+					subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
 					if err == nil {
-						embedded[embName] = subInst
-						fields[embName] = subInst
+						embedded[lookupName] = subInst
+						fields[lookupName] = subInst
 					}
 				}
 			}
 		}
 	}
 
-	return &StructInstance{
+	inst := &StructInstance{
 		Def:      sDef,
+		TypeArgs: append([]string(nil), sDef.TypeArgs...),
 		Fields:   fields,
 		Embedded: embedded,
-	}, nil
+	}
+	if len(inst.TypeArgs) == 0 && len(sDef.TypeParams) > 0 {
+		inferStructInstanceTypeArgs(inst)
+	}
+	// Re-specialize embedded generic structs if type args were inferred
+	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
+		substMap := make(map[string]string)
+		for i, tp := range sDef.TypeParams {
+			if i < len(inst.TypeArgs) {
+				substMap[tp.Name] = inst.TypeArgs[i]
+			}
+		}
+		for _, embName := range sDef.EmbeddedNames {
+			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName := base
+				embTypeArgs := make([]string, len(args))
+				for i, a := range args {
+					embTypeArgs[i] = substituteTypeString(a, substMap)
+				}
+				if subInst, ok := inst.Embedded[lookupName]; ok && subInst != nil {
+					subInst.TypeArgs = embTypeArgs
+				}
+			}
+		}
+	}
+	return inst, nil
 }
 
 func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef *ast.FuncDef, args []ast.Expr) (*StructInstance, error) {
@@ -1684,6 +2139,9 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			isEmbeddedField[base] = true
+		}
 	}
 
 	// 1. Initialize fields with default values
@@ -1700,12 +2158,35 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 
 	// 2. Auto-instantiate embedded struct instances if defined in environment
 	for _, embName := range sDef.EmbeddedNames {
-		if embDefVal, ok := env.Get(embName); ok {
+		lookupName := embName
+		var embTypeArgs []string
+		if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+			lookupName = base
+			embTypeArgs = make([]string, len(args))
+			substMap := make(map[string]string)
+			for i, tp := range sDef.TypeParams {
+				if i < len(sDef.TypeArgs) {
+					substMap[tp.Name] = sDef.TypeArgs[i]
+				}
+			}
+			for i, a := range args {
+				embTypeArgs[i] = substituteTypeString(a, substMap)
+			}
+		}
+		if embDefVal, ok := env.Get(lookupName); ok {
 			if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
-				subInst, err := env.instantiateStruct(embDef, []ast.Expr{})
+				targetDef := embDef
+				if len(embTypeArgs) > 0 {
+					if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+						if spDef, ok := sp.(*StructDefValue); ok {
+							targetDef = spDef
+						}
+					}
+				}
+				subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
 				if err == nil {
-					embedded[embName] = subInst
-					fields[embName] = subInst
+					embedded[lookupName] = subInst
+					fields[lookupName] = subInst
 				}
 			}
 		}
@@ -1714,6 +2195,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	// 3. Create initializing instance
 	inst := &StructInstance{
 		Def:            sDef,
+		TypeArgs:       append([]string(nil), sDef.TypeArgs...),
 		Fields:         fields,
 		Embedded:       embedded,
 		IsInitializing: true,
@@ -1743,7 +2225,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 		if param.IsVariadic {
 			var rest []Value
 			for p := posIdx; p < len(posArgs); p++ {
-				rest = append(rest, NewThunk(posArgs[p], env))
+				rest = append(rest, env.newThunk(posArgs[p]))
 			}
 			tup := &TupleValue{Elements: rest}
 			argValues[i] = tup
@@ -1808,7 +2290,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 		if !foundInParams {
 			for _, fName := range sDef.FieldOrder {
 				if fName == name {
-					fields[name] = NewThunk(expr, env)
+					fields[name] = env.newThunk(expr)
 					break
 				}
 			}
@@ -1824,6 +2306,30 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 
 	// 7. Freeze instance
 	inst.IsInitializing = false
+	if len(inst.TypeArgs) == 0 && len(sDef.TypeParams) > 0 {
+		inferStructInstanceTypeArgs(inst)
+	}
+	// Re-specialize embedded generic structs if type args were inferred
+	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
+		substMap := make(map[string]string)
+		for i, tp := range sDef.TypeParams {
+			if i < len(inst.TypeArgs) {
+				substMap[tp.Name] = inst.TypeArgs[i]
+			}
+		}
+		for _, embName := range sDef.EmbeddedNames {
+			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName := base
+				embTypeArgs := make([]string, len(args))
+				for i, a := range args {
+					embTypeArgs[i] = substituteTypeString(a, substMap)
+				}
+				if subInst, ok := inst.Embedded[lookupName]; ok && subInst != nil {
+					subInst.TypeArgs = embTypeArgs
+				}
+			}
+		}
+	}
 	return inst, nil
 }
 
@@ -1929,6 +2435,37 @@ func evalBinary(op string, left, right Value) (Value, error) {
 				return BoolValue(li.Cmp(ri) > 0), nil
 			case ">=":
 				return BoolValue(li.Cmp(ri) >= 0), nil
+			}
+		}
+	}
+
+	// Float operations
+	if lf, ok := left.(FloatValue); ok {
+		if rf, ok := right.(FloatValue); ok {
+			switch op {
+			case "+":
+				return lf + rf, nil
+			case "-":
+				return lf - rf, nil
+			case "*":
+				return lf * rf, nil
+			case "/":
+				if rf == 0 {
+					return nil, fmt.Errorf("division by zero")
+				}
+				return lf / rf, nil
+			case "==":
+				return BoolValue(lf == rf), nil
+			case "!=":
+				return BoolValue(lf != rf), nil
+			case "<":
+				return BoolValue(lf < rf), nil
+			case "<=":
+				return BoolValue(lf <= rf), nil
+			case ">":
+				return BoolValue(lf > rf), nil
+			case ">=":
+				return BoolValue(lf >= rf), nil
 			}
 		}
 	}
@@ -2865,6 +3402,74 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			return true
 		}
+		// Check generic struct or generic interface type annotation: Name[T1, T2]
+		baseName, typeArgs, isGeneric := parseGenericTypeAnnot(typeAnnot)
+		if isGeneric {
+			if si, ok := val.(*StructInstance); ok {
+				if si.Def.Name == baseName {
+					if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
+						inferStructInstanceTypeArgs(si)
+					}
+					if len(si.TypeArgs) == len(typeArgs) {
+						allMatch := true
+						for i, ta := range typeArgs {
+							if si.TypeArgs[i] == ta {
+								continue
+							}
+							actualT, err1 := types.ParseTypeAnnot(si.TypeArgs[i])
+							targetT, err2 := types.ParseTypeAnnot(ta)
+							if err1 == nil && err2 == nil && types.IsAssignableTo(actualT, targetT) {
+								continue
+							}
+							allMatch = false
+							break
+						}
+						if allMatch {
+							return true
+						}
+					}
+				}
+				for _, emb := range si.Embedded {
+					if checkValueMatchesType(emb, typeAnnot, optEnv...) {
+						return true
+					}
+				}
+			}
+			// Check if baseName is an interface
+			var searchEnv *Environment
+			if len(optEnv) > 0 && optEnv[0] != nil {
+				searchEnv = optEnv[0]
+			} else if si, ok := val.(*StructInstance); ok && si.Def != nil {
+				searchEnv = si.Def.Env
+			}
+			if searchEnv != nil {
+				var ifaceDef *InterfaceDefValue
+				if strings.HasPrefix(baseName, "@") && strings.Contains(baseName, ".") {
+					parts := strings.SplitN(baseName[1:], ".", 2)
+					if modVal, found := searchEnv.GetModule(parts[0]); found {
+						if expVal, ok := modVal.Exports[parts[1]]; ok {
+							forcedExp := Force(expVal)
+							if bf, isBF := forcedExp.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+								forcedExp = Force(bf.TypeDef)
+							}
+							if id, isIface := forcedExp.(*InterfaceDefValue); isIface {
+								ifaceDef = id
+							}
+						}
+					}
+				} else if ifaceVal, found := searchEnv.Get(baseName); found {
+					if id, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
+						ifaceDef = id
+					}
+				}
+				if ifaceDef != nil {
+					substIface := substituteInterfaceDef(ifaceDef, typeArgs)
+					return valueImplementsInterfaceValue(val, substIface, searchEnv)
+				}
+			}
+			return false
+		}
+
 		// Check struct type or embedded struct type
 		if si, ok := val.(*StructInstance); ok {
 			if si.Def.Name == typeAnnot {
@@ -3048,6 +3653,48 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 			if nonSelfCount != expectedCount {
 				return false
 			}
+			if ft, ok := fn.FuncType.(*types.FuncType); ok && ft != nil {
+				if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil {
+					var inf *types.Inferencer
+					if env != nil && env.Inferencer != nil {
+						if i, ok := env.Inferencer.(*types.Inferencer); ok {
+							inf = i
+						}
+					}
+					var expectedRetT types.Type
+					if inf != nil {
+						expectedRetT, _ = inf.ParseTypeAnnot(sig.ReturnType)
+					}
+					if expectedRetT == nil {
+						expectedRetT, _ = types.ParseTypeAnnot(sig.ReturnType)
+					}
+					if expectedRetT != nil && !types.IsAssignableTo(ft.Ret, expectedRetT) {
+						return false
+					}
+				}
+				if env != nil && env.Inferencer != nil {
+					if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+						if srcTup, ok := ft.Arg.(*types.TupleType); ok {
+							paramIdx := 0
+							for _, p := range sig.Params {
+								if p.Name == "self" {
+									continue
+								}
+								if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" {
+									if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
+										if paramIdx < len(srcTup.Elems) {
+											if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {
+												return false
+											}
+										}
+									}
+								}
+								paramIdx++
+							}
+						}
+					}
+				}
+			}
 		case *BuiltinFunc:
 			if si, ok := val.(*StructInstance); ok {
 				if mName == "Type" {
@@ -3126,11 +3773,16 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 	// Check embedded interfaces
 	for _, embName := range iface.Embedded {
 		var embDef *InterfaceDefValue
+		embBase, embArgs, isGen := parseGenericTypeAnnot(embName)
+		lookupName := embName
+		if isGen {
+			lookupName = embBase
+		}
 		if env != nil {
 			// If iface belongs to a specific module, resolve embedded interface from that owning module first
 			if iface.ModuleName != "" {
 				if mod, found := env.GetModule(iface.ModuleName); found {
-					if expVal, exists := mod.Exports[embName]; exists {
+					if expVal, exists := mod.Exports[lookupName]; exists {
 						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
 							embDef = ed
 						}
@@ -3138,7 +3790,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 			}
 			if embDef == nil {
-				if embVal, found := env.Get(embName); found {
+				if embVal, found := env.Get(lookupName); found {
 					if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
 						embDef = ed
 					}
@@ -3148,7 +3800,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				// Try finding in imported modules across environment hierarchy
 				for cur := env; cur != nil; cur = cur.parent {
 					for _, mod := range cur.modules {
-						if expVal, exists := mod.Exports[embName]; exists {
+						if expVal, exists := mod.Exports[lookupName]; exists {
 							if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
 								embDef = ed
 								break
@@ -3161,7 +3813,14 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 			}
 		}
-		if embDef == nil || !valueImplementsInterfaceValue(val, embDef, env) {
+		if embDef == nil {
+			return false
+		}
+		targetDef := embDef
+		if isGen {
+			targetDef = substituteInterfaceDef(embDef, embArgs)
+		}
+		if !valueImplementsInterfaceValue(val, targetDef, env) {
 			return false
 		}
 	}

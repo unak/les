@@ -432,6 +432,8 @@ func (d *DictValue) String() string {
 
 // Closure represents user defined function with closure environment.
 type Closure struct {
+	TypeParams      []ast.TypeParam
+	TypeArgs        []string
 	Params          []ast.FuncParam
 	BlockParam      *ast.FuncParam
 	Body            []ast.Stmt
@@ -464,6 +466,8 @@ func (m *ModuleValue) String() string { return fmt.Sprintf("<module %s>", m.Name
 // StructDefValue represents struct type definition (usable as constructor).
 type StructDefValue struct {
 	Name          string
+	TypeParams    []ast.TypeParam
+	TypeArgs      []string
 	FieldOrder    []string
 	FieldDefaults map[string]ast.Expr
 	EmbeddedNames []string
@@ -481,6 +485,8 @@ func (s *StructDefValue) String() string {
 type InterfaceDefValue struct {
 	Name       string
 	ModuleName string
+	TypeParams []ast.TypeParam
+	TypeArgs   []string
 	Embedded   []string
 	Methods    map[string]ast.MethodSig
 }
@@ -492,6 +498,7 @@ func (i *InterfaceDefValue) String() string {
 // StructInstance represents an instantiated struct value.
 type StructInstance struct {
 	Def            *StructDefValue
+	TypeArgs       []string
 	Fields         map[string]Value
 	Embedded       map[string]*StructInstance
 	IsInitializing bool
@@ -531,10 +538,18 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	// Populate promoted fields from embedded structs
 	var populateEmbeddedFields func(target *StructInstance)
 	populateEmbeddedFields = func(target *StructInstance) {
-		for _, emb := range target.Embedded {
-			populateEmbeddedFields(emb)
-			for fName, fVal := range emb.Fields {
-				methodEnv.Set(fName, fVal)
+		if target.Def != nil {
+			for _, embName := range target.Def.EmbeddedNames {
+				lookupName := embName
+				if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+					lookupName = base
+				}
+				if emb, ok := target.Embedded[lookupName]; ok && emb != nil {
+					populateEmbeddedFields(emb)
+					for fName, fVal := range emb.Fields {
+						methodEnv.Set(fName, fVal)
+					}
+				}
 			}
 		}
 	}
@@ -551,6 +566,7 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	}
 
 	closure := &Closure{
+		TypeParams:      m.TypeParams,
 		Params:          params,
 		BlockParam:      m.BlockParam,
 		Body:            m.Body,
@@ -562,6 +578,19 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[m.Name]; ok {
 				closure.FuncType = mType
+				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
+					bindings := make(map[string]types.Type)
+					for i, argStr := range si.TypeArgs {
+						if i < len(si.Def.TypeParams) {
+							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+								bindings[si.Def.TypeParams[i].Name] = t
+							}
+						}
+					}
+					if len(bindings) > 0 {
+						closure.FuncType = types.Substitute(mType, bindings)
+					}
+				}
 			}
 		}
 	}
@@ -602,6 +631,19 @@ func (si *StructInstance) makeDispatcher(name string, methods []*ast.FuncDef) Va
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[name]; ok {
 				bf.FuncType = mType
+				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
+					bindings := make(map[string]types.Type)
+					for i, argStr := range si.TypeArgs {
+						if i < len(si.Def.TypeParams) {
+							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+								bindings[si.Def.TypeParams[i].Name] = t
+							}
+						}
+					}
+					if len(bindings) > 0 {
+						bf.FuncType = types.Substitute(mType, bindings)
+					}
+				}
 			}
 		}
 	}
@@ -623,9 +665,15 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 	}
 
 	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
-	for _, embName := range si.Def.EmbeddedNames {
-		if emb, ok := si.Embedded[embName]; ok {
-			currentLevel = append(currentLevel, emb)
+	if si.Def != nil {
+		for _, embName := range si.Def.EmbeddedNames {
+			lookupName := embName
+			if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+			}
+			if emb, ok := si.Embedded[lookupName]; ok && emb != nil {
+				currentLevel = append(currentLevel, emb)
+			}
 		}
 	}
 
@@ -658,9 +706,15 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 				}
 			}
 
-			for _, subName := range emb.Def.EmbeddedNames {
-				if sub, ok := emb.Embedded[subName]; ok {
-					nextLevel = append(nextLevel, sub)
+			if emb.Def != nil {
+				for _, subName := range emb.Def.EmbeddedNames {
+					lookupName := subName
+					if base, _, isGen := parseGenericTypeAnnot(subName); isGen {
+						lookupName = base
+					}
+					if sub, ok := emb.Embedded[lookupName]; ok && sub != nil {
+						nextLevel = append(nextLevel, sub)
+					}
 				}
 			}
 		}
@@ -701,9 +755,15 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 
 	// 3. BFS over embedded structs
 	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
-	for _, embName := range si.Def.EmbeddedNames {
-		if emb, ok := si.Embedded[embName]; ok {
-			currentLevel = append(currentLevel, emb)
+	if si.Def != nil {
+		for _, embName := range si.Def.EmbeddedNames {
+			lookupName := embName
+			if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+			}
+			if emb, ok := si.Embedded[lookupName]; ok && emb != nil {
+				currentLevel = append(currentLevel, emb)
+			}
 		}
 	}
 
@@ -737,9 +797,15 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 				}
 			}
 
-			for _, subName := range emb.Def.EmbeddedNames {
-				if sub, ok := emb.Embedded[subName]; ok {
-					nextLevel = append(nextLevel, sub)
+			if emb.Def != nil {
+				for _, subName := range emb.Def.EmbeddedNames {
+					lookupName := subName
+					if base, _, isGen := parseGenericTypeAnnot(subName); isGen {
+						lookupName = base
+					}
+					if sub, ok := emb.Embedded[lookupName]; ok && sub != nil {
+						nextLevel = append(nextLevel, sub)
+					}
 				}
 			}
 		}
@@ -765,7 +831,7 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 				if len(args) != 0 {
 					return nil, fmt.Errorf("Type() takes 0 arguments, got %d", len(args))
 				}
-				return StringValue(si.Def.Name), nil
+				return StringValue(typeNameWithDepth(si, 0)), nil
 			},
 		}, nil
 	}

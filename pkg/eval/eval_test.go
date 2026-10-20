@@ -4426,4 +4426,385 @@ print d[a]
 	}
 }
 
+func TestUserDefinedGenericsEval(t *testing.T) {
+	// 1. Generic struct with call-site inference and explicit instantiation
+	code1 := `
+struct Box[T]:
+    val: T
 
+b1 = Box(10)
+b2 = Box[String]("hello")
+print b1.Type(), "\n"
+print b1.val, "\n"
+print (b1 is Box[Int]), "\n"
+print (b1 is Box), "\n"
+print (b1 is Box[String]), "\n"
+print b2.Type(), "\n"
+print b2.val, "\n"
+print (b2 is Box[String]), "\n"
+print (b2 is Box[Int]), "\n"
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("code1 failed: %v", err)
+	}
+	expected1 := strings.Join([]string{
+		"Box[Int]",
+		"10",
+		"true",
+		"true",
+		"false",
+		"Box[String]",
+		"hello",
+		"true",
+		"false",
+	}, "\n")
+	if out1 != expected1 {
+		t.Fatalf("unexpected output for code1:\ngot:\n%s\nexpected:\n%s", out1, expected1)
+	}
+
+	// 2. Multi-parameter generic struct
+	code2 := `
+struct Pair[K, V]:
+    first: K
+    second: V
+
+p = Pair("answer", 42)
+print p.Type(), "\n"
+print (p is Pair[String, Int]), "\n"
+print (p is Pair[Int, String]), "\n"
+print (p is Pair), "\n"
+`
+	out2, err := runLesCode(code2)
+	if err != nil {
+		t.Fatalf("code2 failed: %v", err)
+	}
+	expected2 := strings.Join([]string{
+		"Pair[String, Int]",
+		"true",
+		"false",
+		"true",
+	}, "\n")
+	if out2 != expected2 {
+		t.Fatalf("unexpected output for code2:\ngot:\n%s\nexpected:\n%s", out2, expected2)
+	}
+
+	// 3. Generic function inference, explicit specialization, and constraints
+	code3 := `
+def id[T](x: T) -> T:
+    x
+
+print id(123), "\n"
+print id[String]("abc"), "\n"
+
+def add[T: Int | Float](a: T, b: T) -> T:
+    a + b
+
+print add(10, 20), "\n"
+print add(1.5, 2.5), "\n"
+`
+	out3, err := runLesCode(code3)
+	if err != nil {
+		t.Fatalf("code3 failed: %v", err)
+	}
+	expected3 := strings.Join([]string{
+		"123",
+		"abc",
+		"30",
+		"4",
+	}, "\n")
+	if out3 != expected3 {
+		t.Fatalf("unexpected output for code3:\ngot:\n%s\nexpected:\n%s", out3, expected3)
+	}
+
+	// 4. Pattern matching with generic types
+	code4 := `
+struct Container[T]:
+    item: T
+
+def inspect(c):
+    match c:
+        case Container[Int]:
+            "container of int: " + c.item.ToString()
+        case Container[String]:
+            "container of string: " + c.item
+        case _:
+            "something else"
+
+print inspect(Container(42)), "\n"
+print inspect(Container("apple")), "\n"
+print inspect(Container(true)), "\n"
+`
+	out4, err := runLesCode(code4)
+	if err != nil {
+		t.Fatalf("code4 failed: %v", err)
+	}
+	expected4 := strings.Join([]string{
+		"container of int: 42",
+		"container of string: apple",
+		"something else",
+	}, "\n")
+	if out4 != expected4 {
+		t.Fatalf("unexpected output for code4:\ngot:\n%s\nexpected:\n%s", out4, expected4)
+	}
+
+	// 5. Generic interface implementation check
+	code5 := `
+interface Iterator[T]:
+    Next(): T
+
+struct IntIter:
+    val: Int
+    def Next() -> Int:
+        self.val
+
+struct StrIter:
+    val: String
+    def Next() -> String:
+        self.val
+
+i = IntIter(100)
+s = StrIter("stream")
+
+print (i is Iterator[Int]), "\n"
+print (i is Iterator[String]), "\n"
+print (i is Iterator), "\n"
+print (s is Iterator[String]), "\n"
+print (s is Iterator[Int]), "\n"
+`
+	out5, err := runLesCode(code5)
+	if err != nil {
+		t.Fatalf("code5 failed: %v", err)
+	}
+	expected5 := strings.Join([]string{
+		"true",
+		"false",
+		"true",
+		"true",
+		"false",
+	}, "\n")
+	if out5 != expected5 {
+		t.Fatalf("unexpected output for code5:\ngot:\n%s\nexpected:\n%s", out5, expected5)
+	}
+
+	// 6. Generic struct laziness preservation
+	code6 := `
+struct LazyBox[T]:
+    val: T
+
+b = LazyBox(1 / 0)
+print (b is LazyBox), "\n"
+`
+	out6, err := runLesCode(code6)
+	if err != nil {
+		t.Fatalf("lazy generic struct failed unexpectedly: %v", err)
+	}
+	if strings.TrimSpace(out6) != "true" {
+		t.Fatalf("expected true, got %q", out6)
+	}
+
+	// 7. Generic function with self-referential / F-bounded constraint
+	code7 := `
+interface Ord[T]:
+    <=(other: T): Bool
+
+struct Item:
+    num: Int
+    def <=(other: Item) -> Bool:
+        self.num <= other.num
+
+def getMin[T: Ord[T]](a: T, b: T) -> T:
+    if a <= b:
+        a
+    else:
+        b
+
+it1 = Item(10)
+it2 = Item(20)
+m = getMin(it1, it2)
+print m.num, "\n"
+`
+	out7, err := runLesCode(code7)
+	if err != nil {
+		t.Fatalf("code7 failed: %v", err)
+	}
+	if strings.TrimSpace(out7) != "10" {
+		t.Fatalf("expected 10, got %q", out7)
+	}
+
+	// 8. Inferred generic struct method reflection and interface satisfaction
+	code8 := `
+interface Getter[T]:
+    Get(): T
+
+struct Box[T]:
+    val: T
+    def Get(): T:
+        self.val
+
+b = Box(10)
+print b.Get.Type(), "\n"
+print (b is Getter[Int]), "\n"
+print (b is Getter[String]), "\n"
+`
+	out8, err := runLesCode(code8)
+	if err != nil {
+		t.Fatalf("code8 failed: %v", err)
+	}
+	expected8 := strings.Join([]string{
+		"() -> Int",
+		"true",
+		"false",
+	}, "\n")
+	if strings.TrimSpace(out8) != strings.TrimSpace(expected8) {
+		t.Fatalf("unexpected output for code8:\ngot:\n%s\nexpected:\n%s", out8, expected8)
+	}
+
+	// 9. Embedded generic interface satisfaction
+	code9 := `
+interface Source[T]:
+    Fetch(): T
+
+interface Pipeline[T]:
+    Source[T]
+    Process(): T
+
+struct DataStream:
+    val: Int
+    def Fetch() -> Int:
+        self.val
+    def Process() -> Int:
+        self.val * 2
+
+ds = DataStream(21)
+print (ds is Pipeline[Int]), "\n"
+print (ds is Pipeline[String]), "\n"
+`
+	out9, err := runLesCode(code9)
+	if err != nil {
+		t.Fatalf("code9 failed: %v", err)
+	}
+	expected9 := strings.Join([]string{
+		"true",
+		"false",
+	}, "\n")
+	if strings.TrimSpace(out9) != strings.TrimSpace(expected9) {
+		t.Fatalf("unexpected output for code9:\ngot:\n%s\nexpected:\n%s", out9, expected9)
+	}
+}
+
+
+
+
+
+func TestGenericBoxDictAndIndexing(t *testing.T) {
+	code := `struct Box[T]:
+    val: T
+
+b = Box[{String: Int}]({ "a": 10 })
+res1 = b.val["a"]
+
+struct List[T]:
+    items: (T, ...)
+    def [](i: Int) -> T:
+        self.items[i]
+
+l = List((10, 20, 30))
+idx = 1
+res2 = l[idx]`
+	out, err := runLesCode(code + "\nprint(res1)\nprint(res2)")
+	if err != nil {
+		t.Fatalf("failed: %v", err)
+	}
+	expected := "1020"
+	if strings.TrimSpace(out) != strings.TrimSpace(expected) {
+		t.Fatalf("unexpected output:\ngot:\n%s\nexpected:\n%s", out, expected)
+	}
+}
+
+
+
+
+func TestGenericBugsFixed(t *testing.T) {
+	code1 := `
+struct Num:
+    val: Int
+    def ==(other: Num) -> Bool:
+        self.val == other.val
+    def <(other: Num) -> Bool:
+        self.val < other.val
+
+n = Num(10)
+c1 = n is Comparable[Num]
+c2 = n is Comparable[String]
+`
+	out1, err := runLesCode(code1 + "\nprint(c1)\nprint(c2)")
+	if err != nil {
+		t.Fatalf("code1 failed: %v", err)
+	}
+	if !strings.Contains(out1, "true") || !strings.Contains(out1, "false") {
+		t.Fatalf("expected true and false, got:\n%s", out1)
+	}
+
+	code2 := `
+struct Inner[T]:
+    v: T
+
+struct Outer[T]:
+    Inner[T]
+    items: (T, ...)
+
+o = Outer(items: (1, 2, 3))
+tName = o.Type()
+inner = o.Inner
+`
+	out2, err := runLesCode(code2 + "\nprint(\"OUTPUT: \", tName, \" INNER: \", inner.Type())")
+	if err != nil {
+		t.Fatalf("code2 failed: %v", err)
+	}
+	if !strings.Contains(out2, "Outer[Int]") || !strings.Contains(out2, "Inner[Int]") {
+		t.Fatalf("expected Outer[Int] and Inner[Int], got: %s", out2)
+	}
+
+	// 3. Function type param constraint call inference and nested dict type match
+	code3 := `
+def apply[F: (Int) -> Int](f: F, x: Int) -> Int:
+    f(x)
+
+def double(n: Int) -> Int:
+    n*2
+
+res = apply(double, 21)
+
+struct NestedDictHolder[T]:
+    data: T
+
+h = NestedDictHolder({ { "a": 1 }: true })
+`
+	out3, err := runLesCode(code3 + "\nprint(res)\nprint(h.Type())")
+	if err != nil {
+		t.Fatalf("code3 failed: %v", err)
+	}
+	if !strings.Contains(out3, "42") || !strings.Contains(out3, "NestedDictHolder[{{String: Int}: Bool}]") {
+		t.Fatalf("unexpected output for code3: %s", out3)
+	}
+
+	// 4. Unary operator on type parameter constraint
+	code4 := `
+def negate[T: Int](x: T) -> T:
+    -x
+
+def invert[T: Int](x: T) -> T:
+    ~x
+
+res1 = negate(10)
+res2 = invert(0)
+`
+	out4, err := runLesCode(code4 + "\nprint(res1)\nprint(res2)")
+	if err != nil {
+		t.Fatalf("code4 failed: %v", err)
+	}
+	if !strings.Contains(out4, "-10") || !strings.Contains(out4, "-1") {
+		t.Fatalf("unexpected output for code4: %s", out4)
+	}
+}

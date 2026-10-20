@@ -139,7 +139,44 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
       ToString(): String
   ```
 - All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
-- Future user-defined structs will automatically satisfy any matching interface structurally.
+- User-defined structs automatically satisfy any matching interface structurally.
+
+### 3. User-Defined Generics & Type Constraints
+- **Type Parameters (`[T]`)**: Full generic support across functions/methods (`def`), structs (`struct`), and interfaces (`interface`):
+  ```python
+  struct Box[T]:
+      val: T
+
+  def id[T](x: T) -> T:
+      x
+
+  interface Iterator[T]:
+      Next(): T
+  ```
+- **Call-Site Type Inference & Explicit Instantiation**:
+  - Automatically infers type arguments at call sites: `b = Box(10)` (inferred as `Box[Int]`).
+  - Explicit specialization syntax: `Box[String]("hello")`, `id[Int](42)`, `Pair[String, Int]("age", 30)`.
+- **Type Constraints (`[T: Constraint]`)**:
+  - Constrain type parameters to interfaces, concrete types, union types, or self-referential / F-bounded interfaces:
+  ```python
+  def add[T: Int | Float](a: T, b: T) -> T:
+      a + b
+
+  def readAll[T: @io.Reader](r: T) -> Bytes:
+      ...
+
+  interface Comparable[T]:
+      <=(other: T): Bool
+
+  def min[T: Comparable[T]](a: T, b: T) -> T:
+      if a <= b:
+          a
+      else:
+          b
+  ```
+- **Reified Runtime Reflection**:
+  - Specialized runtime type names: `Box(10).Type() == "Box[Int]"`.
+  - Type matching (`is` and `match`): matches both concrete generic types (`x is Box[Int]`, `x is Iterator[Int]`) and base types (`x is Box`, `x is Iterator`).
 
 ## Module System & Variable Scope
 
@@ -1078,13 +1115,6 @@ Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
   ```python
   displayName = user?.Name ?? "Guest"
   ```
-
-### 5. User-Defined Generics (Type Parameters `[T]`)
-
-Extending Hindley-Milner type inference to user-defined parameterized structs and functions:
-
-- Syntax: `struct Box[T]: value: T`, `def map[T, U](items: (T, ...), fn: (T) -> U): (U, ...)`
-- Complements the existing built-in type parameters like `{K: V}` and tuple stream types `(T, ...)`.
 
 ## License
 

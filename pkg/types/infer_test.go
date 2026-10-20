@@ -1670,4 +1670,182 @@ vb3 = vb1 & vb2
 	}
 }
 
+func TestGenericTypeInference(t *testing.T) {
+	code := `
+def id[T](x: T) -> T:
+    x
+
+a = id(42)
+b = id("hello")
+c = id[Int](100)
+
+struct Box[T]:
+    val: T
+    def get(self) -> T:
+        self.val
+
+box1 = Box(10)
+box2 = Box[String]("world")
+val1 = box1.get()
+val2 = box2.get()
+
+def add_numbers[T: Int | Float](x: T, y: T) -> T:
+    x + y
+
+sum1 = add_numbers(1, 2)
+sum2 = add_numbers(1.5, 2.5)
+
+interface Addable[T]:
+    +(other: T): T
+
+def add_gen[T: Addable[T]](x: T, y: T) -> T:
+    x + y
+
+sum3 = add_gen(10, 20)
+
+struct Node[T]:
+    val: T
+    next: Node[T] | Nil
+
+n1 = Node(val: 42, next: nil)
+
+def my_map[T, U](items: (T, ...), fn: (T) -> U) -> (U, ...):
+    (fn(items[0]), ...)
+
+res = my_map((1, 2, 3), |x|: x * 2)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error in generic inference: %v", err)
+	}
+
+	scope := inf.Scope()
+	// Check inferred types
+	checkType := func(name string, expected string) {
+		t.Helper()
+		typ, ok := scope.Lookup(name)
+		if !ok {
+			t.Fatalf("variable %s not found in scope", name)
+		}
+		if typ.String() != expected {
+			t.Errorf("expected %s to have type %s, got %s", name, expected, typ.String())
+		}
+	}
+
+	checkType("a", "Int")
+	checkType("b", "String")
+	checkType("c", "Int")
+	checkType("box1", "Box[Int]")
+	checkType("box2", "Box[String]")
+	checkType("val1", "Int")
+	checkType("val2", "String")
+	checkType("sum1", "Int")
+	checkType("sum2", "Float")
+	checkType("sum3", "Int")
+	checkType("n1", "Node[Int]")
+	checkType("res", "(Int, ...)")
+}
+
+func TestGenericConstraintErrors(t *testing.T) {
+	badCases := []struct {
+		code        string
+		expectedErr string
+	}{
+		{
+			code: `
+def add_num[T: Int | Float](x: T, y: T) -> T:
+    x + y
+
+a = add_num("hello", "world")
+`,
+			expectedErr: "does not satisfy constraint",
+		},
+		{
+			code: `
+struct Box[T: Int]:
+    val: T
+
+b = Box[String]("hi")
+`,
+			expectedErr: "does not satisfy constraint",
+		},
+	}
+
+	for _, tt := range badCases {
+		prog := parser.NewParser(lexer.NewLexer(tt.code)).ParseProgram()
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Errorf("expected error for %s, got nil", tt.code)
+			continue
+		}
+		if !strings.Contains(err.Error(), tt.expectedErr) {
+			t.Errorf("expected error containing %q, got %v", tt.expectedErr, err)
+		}
+	}
+}
+
+func TestGenericMethodAndBlockInference(t *testing.T) {
+	code := `
+struct Box[T]:
+    val: T
+    def Map[U](fn: (T) -> U): Box[U]:
+        Box(fn(self.val))
+
+b = Box(10)
+b2 = b.Map(|x|: x.ToString())
+
+def mapBlock[T, U](item: T, &block: (T) -> U) -> U:
+    block(item)
+
+res = mapBlock(42) do |n|:
+    n.ToString()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+}
+
+func TestSelfAndGenericIndexInference(t *testing.T) {
+	code := `
+struct Box[T]:
+    val: T
+    def Clone(): Box[T]:
+        self
+
+struct List[T]:
+    items: (T, ...)
+    def [](i: Int) -> T:
+        self.items[i]
+
+l = List((10, 20, 30))
+idx = 1
+val = l[idx]
+
+def getVal[T: Box[Int]](b: T) -> Int:
+    b.val
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	// Verify Box[Int].Type() reflection
+	bType, ok := inf.Scope().Lookup("Box")
+	if !ok {
+		t.Fatalf("Box not found in scope")
+	}
+	st := bType.(*StructType)
+	instSt := InstantiateStruct(st, []Type{TypeInt})
+	if initMethod, ok := instSt.Methods["init"]; ok {
+		if !strings.Contains(initMethod.String(), "Box[Int]") {
+			t.Fatalf("expected init return type to be Box[Int], got %s", initMethod.String())
+		}
+	}
+}
+
 
