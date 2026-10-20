@@ -3084,6 +3084,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					return &TupleValue{Elements: newElems}, nil
 				},
 			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "<<"); ok {
+				bf.FuncType = sig
+			}
 			return bf, nil
 		}
 
@@ -3099,6 +3102,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					return &TupleValue{Elements: newElems}, nil
 				},
 			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Append"); ok {
+				bf.FuncType = sig
+			}
 			return bf, nil
 		}
 
@@ -3113,6 +3119,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					newElems := append([]Value{args[0]}, tt.Elements...)
 					return &TupleValue{Elements: newElems}, nil
 				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Prepend"); ok {
+				bf.FuncType = sig
 			}
 			return bf, nil
 		}
@@ -3137,6 +3146,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					return &TupleValue{Elements: newElems}, nil
 				},
 			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Concat"); ok {
+				bf.FuncType = sig
+			}
 			return bf, nil
 		}
 
@@ -3153,11 +3165,15 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if !ok {
 						return nil, fmt.Errorf("Slice start index must be an integer, got %s", typeNameOf(startVal))
 					}
+					n := len(tt.Elements)
 					sIdx64, ok := sInt.ToInt()
 					if !ok {
-						sIdx64 = 0
+						if sInt.Cmp(NewIntValue(0)) < 0 {
+							sIdx64 = 0
+						} else {
+							sIdx64 = n
+						}
 					}
-					n := len(tt.Elements)
 					sIdx := sIdx64
 					if sIdx < 0 {
 						sIdx = n + sIdx
@@ -3178,7 +3194,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						}
 						eIdx64, ok := eInt.ToInt()
 						if !ok {
-							eIdx64 = n
+							if eInt.Cmp(NewIntValue(0)) < 0 {
+								eIdx64 = 0
+							} else {
+								eIdx64 = n
+							}
 						}
 						eIdx = eIdx64
 						if eIdx < 0 {
@@ -3196,6 +3216,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					}
 					return &TupleValue{Elements: append([]Value(nil), tt.Elements[sIdx:eIdx]...)}, nil
 				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Slice"); ok {
+				bf.FuncType = sig
 			}
 			return bf, nil
 		}

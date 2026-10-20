@@ -1881,6 +1881,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		elems := make([]Type, 0, len(e.Elements))
 		isVariadic := false
 		for _, el := range e.Elements {
+			if isVariadic {
+				return nil, inf.nodeErr(el, "elements cannot follow a spread infinite/variadic tuple")
+			}
 			if sp, ok := el.(*ast.SpreadExpr); ok {
 				spT, err := inf.inferExpr(sp.Expr)
 				if err != nil {
