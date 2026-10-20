@@ -1184,7 +1184,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if err != nil {
 			return err
 		}
-		st, ok := targetT.(*StructType)
+		effTargetT := targetT
+		if tp, ok := targetT.(*TypeParamType); ok && tp.Constraint != nil {
+			effTargetT = tp.Constraint
+		}
+		st, ok := effTargetT.(*StructType)
 		if !ok {
 			return inf.nodeErr(s, "cannot assign member '%s' on non-struct type %s", s.Member, targetT)
 		}
@@ -2379,11 +2383,15 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				if err := ValidateTypeConstraints(fnT.TypeParams, typeArgs); err != nil {
 					return nil, inf.nodeErr(e, "%s", err.Error())
 				}
+				origFnT := fnT
 				instFn := Substitute(fnT, bindings).(*FuncType)
 				instFn.TypeParams = nil
 				instFn.TypeArgs = typeArgs
 				fnT = instFn
 				calleeT = instFn
+				if inf.funcCtx != nil && (inf.funcCtx.fnType == origFnT || inf.funcCtx.fnType == fnT) {
+					inf.funcCtx.selfCalled = true
+				}
 			}
 			if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
 				inf.funcCtx.selfCalled = true

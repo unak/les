@@ -341,29 +341,44 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Equal interface definition: ==(other): Bool
+	// Built-in Equal interface definition: ==(other: T): Bool
 	ev.builtinsEnv.Set("Equal", &InterfaceDefValue{
 		Name: "Equal",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+		},
 		Methods: map[string]ast.MethodSig{
 			"==": {
-				Name:   "==",
-				Params: []ast.FuncParam{{Name: "other"}},
+				Name: "==",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
 			},
 		},
 	})
 
-	// Built-in Comparable interface definition: ==(other): Bool, <(other): Bool
+	// Built-in Comparable interface definition: ==(other: T): Bool, <(other: T): Bool
 	ev.builtinsEnv.Set("Comparable", &InterfaceDefValue{
-		Name:     "Comparable",
-		Embedded: []string{"Equal"},
+		Name: "Comparable",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+		},
+		Embedded: []string{"Equal[T]"},
 		Methods: map[string]ast.MethodSig{
 			"==": {
-				Name:   "==",
-				Params: []ast.FuncParam{{Name: "other"}},
+				Name: "==",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
 			},
 			"<": {
-				Name:   "<",
-				Params: []ast.FuncParam{{Name: "other"}},
+				Name: "<",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
 			},
 		},
 	})
@@ -527,8 +542,70 @@ func safeFieldTypeName(val Value) string {
 				return t.String()
 			}
 		}
+		if thunk.Expr != nil {
+			if litVal, ok := evalLiteral(thunk.Expr); ok {
+				return typeNameWithDepth(litVal, 0)
+			}
+			if tup, ok := thunk.Expr.(*ast.TupleLit); ok && len(tup.Elements) > 0 {
+				parts := make([]string, len(tup.Elements))
+				for i, el := range tup.Elements {
+					if lv, ok := evalLiteral(el); ok {
+						parts[i] = typeNameWithDepth(lv, 0)
+					} else {
+						parts[i] = "Unknown"
+					}
+				}
+				return "(" + strings.Join(parts, ", ") + ")"
+			}
+		}
 	}
 	return ""
+}
+
+func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings map[string]string) {
+	if declaredType == nil || valTypeStr == "" || valTypeStr == "Unknown" {
+		return
+	}
+	switch dt := declaredType.(type) {
+	case *types.TypeParamType:
+		if _, ok := bindings[dt.Name]; !ok {
+			bindings[dt.Name] = valTypeStr
+		}
+	case *types.TupleType:
+		if strings.HasPrefix(valTypeStr, "(") && strings.HasSuffix(valTypeStr, ")") {
+			inner := strings.TrimSpace(valTypeStr[1 : len(valTypeStr)-1])
+			if inner != "" {
+				parts := splitTopLevelCommas(inner)
+				if dt.IsVariadic && len(dt.Elems) > 0 {
+					varElem := dt.Elems[len(dt.Elems)-1]
+					for _, p := range parts {
+						matchTypeStringToField(varElem, p, bindings)
+					}
+				} else {
+					for i := 0; i < len(dt.Elems) && i < len(parts); i++ {
+						matchTypeStringToField(dt.Elems[i], parts[i], bindings)
+					}
+				}
+			}
+		}
+	case *types.DictType:
+		if strings.HasPrefix(valTypeStr, "{") && strings.HasSuffix(valTypeStr, "}") {
+			inner := strings.TrimSpace(valTypeStr[1 : len(valTypeStr)-1])
+			if colonIdx := strings.Index(inner, ":"); colonIdx != -1 {
+				kStr := strings.TrimSpace(inner[:colonIdx])
+				vStr := strings.TrimSpace(inner[colonIdx+1:])
+				matchTypeStringToField(dt.Key, kStr, bindings)
+				matchTypeStringToField(dt.Value, vStr, bindings)
+			}
+		}
+	case *types.StructType:
+		base, args, isGen := parseGenericTypeAnnot(valTypeStr)
+		if isGen && dt.Name == base {
+			for i := 0; i < len(dt.TypeArgs) && i < len(args); i++ {
+				matchTypeStringToField(dt.TypeArgs[i], args[i], bindings)
+			}
+		}
+	}
 }
 
 func inferStructInstanceTypeArgs(inst *StructInstance) {
@@ -542,12 +619,10 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 	if inst.Def.StructType != nil {
 		if st, ok := inst.Def.StructType.(*types.StructType); ok {
 			for fName, fType := range st.Fields {
-				if tp, ok := fType.(*types.TypeParamType); ok {
-					if fVal, ok := inst.Fields[fName]; ok {
-						tName := safeFieldTypeName(fVal)
-						if tName != "" && tName != "Unknown" {
-							bindings[tp.Name] = tName
-						}
+				if fVal, ok := inst.Fields[fName]; ok {
+					tName := safeFieldTypeName(fVal)
+					if tName != "" && tName != "Unknown" {
+						matchTypeStringToField(fType, tName, bindings)
 					}
 				}
 			}
@@ -974,7 +1049,11 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 		for _, f := range s.Fields {
 			if f.IsEmbedded {
-				sDef.EmbeddedNames = append(sDef.EmbeddedNames, f.Name)
+				embName := f.TypeAnnot
+				if embName == "" {
+					embName = f.Name
+				}
+				sDef.EmbeddedNames = append(sDef.EmbeddedNames, embName)
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
 			} else {
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
@@ -1691,7 +1770,32 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			return env.invokeClosure(fn, argValues)
 
 		case *StructDefValue:
-			return env.instantiateStruct(fn, e.Args)
+			targetDef := fn
+			if len(targetDef.TypeArgs) == 0 && len(targetDef.TypeParams) > 0 && env != nil && env.Inferencer != nil {
+				if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
+					if callT, ok := inf.ExprTypes[e]; ok {
+						if st, ok := callT.(*types.StructType); ok && len(st.TypeArgs) == len(targetDef.TypeParams) {
+							typeArgs := make([]string, len(st.TypeArgs))
+							allKnown := true
+							for i, a := range st.TypeArgs {
+								if a == types.TypeUnknown {
+									allKnown = false
+									break
+								}
+								typeArgs[i] = a.String()
+							}
+							if allKnown {
+								if sp, err := specializeGenericValue(targetDef, typeArgs, env); err == nil {
+									if spDef, ok := sp.(*StructDefValue); ok {
+										targetDef = spDef
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			return env.instantiateStruct(targetDef, e.Args)
 
 		default:
 			return nil, fmt.Errorf("cannot call non-function value: %v", calleeVal)
@@ -1903,6 +2007,9 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			isEmbeddedField[base] = true
+		}
 	}
 
 	// For any fields not yet populated:
@@ -1921,18 +2028,50 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 
 	// Populate embedded struct instances
 	for _, embName := range sDef.EmbeddedNames {
-		if fVal, ok := fields[embName]; ok {
+		lookupName := embName
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			lookupName = base
+		}
+		if fVal, ok := fields[lookupName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				embedded[lookupName] = si
+			}
+		} else if fVal, ok := fields[embName]; ok {
 			forced := Force(fVal)
 			if si, ok := forced.(*StructInstance); ok {
 				embedded[embName] = si
 			}
 		} else {
-			// Auto-instantiate embedded struct if defined in environment
-			if embDefVal, ok := env.Get(embName); ok {
+			var embTypeArgs []string
+			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+				embTypeArgs = make([]string, len(args))
+				substMap := make(map[string]string)
+				for i, tp := range sDef.TypeParams {
+					if i < len(sDef.TypeArgs) {
+						substMap[tp.Name] = sDef.TypeArgs[i]
+					}
+				}
+				for i, a := range args {
+					embTypeArgs[i] = substituteTypeString(a, substMap)
+				}
+			}
+			if embDefVal, ok := env.Get(lookupName); ok {
 				if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
-					subInst, err := env.instantiateStruct(embDef, []ast.Expr{})
+					targetDef := embDef
+					if len(embTypeArgs) > 0 {
+						if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+							if spDef, ok := sp.(*StructDefValue); ok {
+								targetDef = spDef
+							}
+						}
+					}
+					subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
 					if err == nil {
+						embedded[lookupName] = subInst
 						embedded[embName] = subInst
+						fields[lookupName] = subInst
 						fields[embName] = subInst
 					}
 				}
@@ -1949,6 +2088,30 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	if len(inst.TypeArgs) == 0 && len(sDef.TypeParams) > 0 {
 		inferStructInstanceTypeArgs(inst)
 	}
+	// Re-specialize embedded generic structs if type args were inferred
+	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
+		substMap := make(map[string]string)
+		for i, tp := range sDef.TypeParams {
+			if i < len(inst.TypeArgs) {
+				substMap[tp.Name] = inst.TypeArgs[i]
+			}
+		}
+		for _, embName := range sDef.EmbeddedNames {
+			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName := base
+				embTypeArgs := make([]string, len(args))
+				for i, a := range args {
+					embTypeArgs[i] = substituteTypeString(a, substMap)
+				}
+				if subInst, ok := inst.Embedded[lookupName]; ok && subInst != nil {
+					subInst.TypeArgs = embTypeArgs
+				}
+				if subInst, ok := inst.Embedded[embName]; ok && subInst != nil {
+					subInst.TypeArgs = embTypeArgs
+				}
+			}
+		}
+	}
 	return inst, nil
 }
 
@@ -1959,6 +2122,9 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			isEmbeddedField[base] = true
+		}
 	}
 
 	// 1. Initialize fields with default values
@@ -1975,11 +2141,36 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 
 	// 2. Auto-instantiate embedded struct instances if defined in environment
 	for _, embName := range sDef.EmbeddedNames {
-		if embDefVal, ok := env.Get(embName); ok {
+		lookupName := embName
+		var embTypeArgs []string
+		if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+			lookupName = base
+			embTypeArgs = make([]string, len(args))
+			substMap := make(map[string]string)
+			for i, tp := range sDef.TypeParams {
+				if i < len(sDef.TypeArgs) {
+					substMap[tp.Name] = sDef.TypeArgs[i]
+				}
+			}
+			for i, a := range args {
+				embTypeArgs[i] = substituteTypeString(a, substMap)
+			}
+		}
+		if embDefVal, ok := env.Get(lookupName); ok {
 			if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
-				subInst, err := env.instantiateStruct(embDef, []ast.Expr{})
+				targetDef := embDef
+				if len(embTypeArgs) > 0 {
+					if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+						if spDef, ok := sp.(*StructDefValue); ok {
+							targetDef = spDef
+						}
+					}
+				}
+				subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
 				if err == nil {
+					embedded[lookupName] = subInst
 					embedded[embName] = subInst
+					fields[lookupName] = subInst
 					fields[embName] = subInst
 				}
 			}

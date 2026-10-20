@@ -657,10 +657,8 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 	}
 
 	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
-	for _, embName := range si.Def.EmbeddedNames {
-		if emb, ok := si.Embedded[embName]; ok {
-			currentLevel = append(currentLevel, emb)
-		}
+	for _, emb := range si.Embedded {
+		currentLevel = append(currentLevel, emb)
 	}
 
 	visited := make(map[string]bool)
@@ -692,10 +690,8 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 				}
 			}
 
-			for _, subName := range emb.Def.EmbeddedNames {
-				if sub, ok := emb.Embedded[subName]; ok {
-					nextLevel = append(nextLevel, sub)
-				}
+			for _, sub := range emb.Embedded {
+				nextLevel = append(nextLevel, sub)
 			}
 		}
 
@@ -735,10 +731,8 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 
 	// 3. BFS over embedded structs
 	currentLevel := make([]*StructInstance, 0, len(si.Embedded))
-	for _, embName := range si.Def.EmbeddedNames {
-		if emb, ok := si.Embedded[embName]; ok {
-			currentLevel = append(currentLevel, emb)
-		}
+	for _, emb := range si.Embedded {
+		currentLevel = append(currentLevel, emb)
 	}
 
 	visited := make(map[string]bool)
@@ -771,10 +765,8 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 				}
 			}
 
-			for _, subName := range emb.Def.EmbeddedNames {
-				if sub, ok := emb.Embedded[subName]; ok {
-					nextLevel = append(nextLevel, sub)
-				}
+			for _, sub := range emb.Embedded {
+				nextLevel = append(nextLevel, sub)
 			}
 		}
 

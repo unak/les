@@ -4721,3 +4721,48 @@ res2 = l[idx]`
 		t.Fatalf("unexpected output:\ngot:\n%s\nexpected:\n%s", out, expected)
 	}
 }
+
+
+
+
+func TestGenericBugsFixed(t *testing.T) {
+	code1 := `
+struct Num:
+    val: Int
+    def ==(other: Num) -> Bool:
+        self.val == other.val
+    def <(other: Num) -> Bool:
+        self.val < other.val
+
+n = Num(10)
+c1 = n is Comparable[Num]
+c2 = n is Comparable[String]
+`
+	out1, err := runLesCode(code1 + "\nprint(c1)\nprint(c2)")
+	if err != nil {
+		t.Fatalf("code1 failed: %v", err)
+	}
+	if !strings.Contains(out1, "true") || !strings.Contains(out1, "false") {
+		t.Fatalf("expected true and false, got:\n%s", out1)
+	}
+
+	code2 := `
+struct Inner[T]:
+    v: T
+
+struct Outer[T]:
+    Inner[T]
+    items: (T, ...)
+
+o = Outer(items: (1, 2, 3))
+tName = o.Type()
+inner = o.Inner
+`
+	out2, err := runLesCode(code2 + "\nprint(\"OUTPUT: \", tName, \" INNER: \", inner.Type())")
+	if err != nil {
+		t.Fatalf("code2 failed: %v", err)
+	}
+	if !strings.Contains(out2, "Outer[Int]") || !strings.Contains(out2, "Inner[Int]") {
+		t.Fatalf("expected Outer[Int] and Inner[Int], got: %s", out2)
+	}
+}
