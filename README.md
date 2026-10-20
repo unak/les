@@ -872,7 +872,8 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `n.ToString(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (integer division; division by zero raises a runtime error), `%` (modulo).
-  - Unary: `-n` (negation), `+n`.
+  - Unary: `-n` (negation), `+n`, `~n` (bitwise NOT).
+  - Bitwise: `&` (AND), `|` (OR), `^` (XOR), `<<` (arithmetic left shift), `>>` (arithmetic right shift). Shifts follow Ruby semantics (negative shift reverses direction; shifts exceeding $2^{26}$ bits raise a runtime error).
   - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
 
 #### `Float`
