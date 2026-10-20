@@ -4631,6 +4631,66 @@ print m.num, "\n"
 	if strings.TrimSpace(out7) != "10" {
 		t.Fatalf("expected 10, got %q", out7)
 	}
+
+	// 8. Inferred generic struct method reflection and interface satisfaction
+	code8 := `
+interface Getter[T]:
+    Get(): T
+
+struct Box[T]:
+    val: T
+    def Get(): T:
+        self.val
+
+b = Box(10)
+print b.Get.Type(), "\n"
+print (b is Getter[Int]), "\n"
+print (b is Getter[String]), "\n"
+`
+	out8, err := runLesCode(code8)
+	if err != nil {
+		t.Fatalf("code8 failed: %v", err)
+	}
+	expected8 := strings.Join([]string{
+		"() -> Int",
+		"true",
+		"false",
+	}, "\n")
+	if strings.TrimSpace(out8) != strings.TrimSpace(expected8) {
+		t.Fatalf("unexpected output for code8:\ngot:\n%s\nexpected:\n%s", out8, expected8)
+	}
+
+	// 9. Embedded generic interface satisfaction
+	code9 := `
+interface Source[T]:
+    Fetch(): T
+
+interface Pipeline[T]:
+    Source[T]
+    Process(): T
+
+struct DataStream:
+    val: Int
+    def Fetch() -> Int:
+        self.val
+    def Process() -> Int:
+        self.val * 2
+
+ds = DataStream(21)
+print (ds is Pipeline[Int]), "\n"
+print (ds is Pipeline[String]), "\n"
+`
+	out9, err := runLesCode(code9)
+	if err != nil {
+		t.Fatalf("code9 failed: %v", err)
+	}
+	expected9 := strings.Join([]string{
+		"true",
+		"false",
+	}, "\n")
+	if strings.TrimSpace(out9) != strings.TrimSpace(expected9) {
+		t.Fatalf("unexpected output for code9:\ngot:\n%s\nexpected:\n%s", out9, expected9)
+	}
 }
 
 

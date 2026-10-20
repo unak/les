@@ -464,6 +464,11 @@ type InterfaceType struct {
 	GenericOrigin *InterfaceType
 	Methods       map[string]*FuncType
 	Embedded      []*InterfaceType
+	instCache     map[string]*InterfaceType
+}
+
+func (i *InterfaceType) ClearInstCache() {
+	i.instCache = nil
 }
 
 func (i *InterfaceType) String() string {
@@ -922,6 +927,11 @@ type StructType struct {
 	FieldOrder    []string
 	Embedded      []*StructType
 	Methods       map[string]*FuncType
+	instCache     map[string]*StructType
+}
+
+func (s *StructType) ClearInstCache() {
+	s.instCache = nil
 }
 
 func (s *StructType) String() string {
@@ -1106,9 +1116,6 @@ func Substitute(t Type, bindings map[string]Type) Type {
 	}
 }
 
-var structInstCache = make(map[string]*StructType)
-var ifaceInstCache = make(map[string]*InterfaceType)
-
 // InstantiateStruct specializes a generic StructType with concrete type arguments.
 func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
 	if s == nil || len(typeArgs) == 0 {
@@ -1122,9 +1129,11 @@ func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
 	for _, a := range typeArgs {
 		argStrs = append(argStrs, a.String())
 	}
-	cacheKey := origin.Name + "[" + strings.Join(argStrs, ", ") + "]"
-	if cached, ok := structInstCache[cacheKey]; ok {
-		return cached
+	cacheKey := strings.Join(argStrs, ", ")
+	if origin.instCache != nil {
+		if cached, ok := origin.instCache[cacheKey]; ok {
+			return cached
+		}
 	}
 
 	inst := &StructType{
@@ -1136,7 +1145,10 @@ func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
 		Fields:        make(map[string]Type),
 		Methods:       make(map[string]*FuncType),
 	}
-	structInstCache[cacheKey] = inst
+	if origin.instCache == nil {
+		origin.instCache = make(map[string]*StructType)
+	}
+	origin.instCache[cacheKey] = inst
 
 	bindings := make(map[string]Type)
 	for i, tp := range origin.TypeParams {
@@ -1171,9 +1183,11 @@ func InstantiateInterface(i *InterfaceType, typeArgs []Type) *InterfaceType {
 	for _, a := range typeArgs {
 		argStrs = append(argStrs, a.String())
 	}
-	cacheKey := origin.Name + "[" + strings.Join(argStrs, ", ") + "]"
-	if cached, ok := ifaceInstCache[cacheKey]; ok {
-		return cached
+	cacheKey := strings.Join(argStrs, ", ")
+	if origin.instCache != nil {
+		if cached, ok := origin.instCache[cacheKey]; ok {
+			return cached
+		}
 	}
 
 	inst := &InterfaceType{
@@ -1183,7 +1197,10 @@ func InstantiateInterface(i *InterfaceType, typeArgs []Type) *InterfaceType {
 		GenericOrigin: origin,
 		Methods:       make(map[string]*FuncType),
 	}
-	ifaceInstCache[cacheKey] = inst
+	if origin.instCache == nil {
+		origin.instCache = make(map[string]*InterfaceType)
+	}
+	origin.instCache[cacheKey] = inst
 
 	bindings := make(map[string]Type)
 	for j, tp := range origin.TypeParams {

@@ -1786,4 +1786,27 @@ b = Box[String]("hi")
 	}
 }
 
+func TestGenericMethodAndBlockInference(t *testing.T) {
+	code := `
+struct Box[T]:
+    val: T
+    def Map[U](fn: (T) -> U): Box[U]:
+        Box(fn(self.val))
+
+b = Box(10)
+b2 = b.Map(|x|: x.ToString())
+
+def mapBlock[T, U](item: T, &block: (T) -> U) -> U:
+    block(item)
+
+res = mapBlock(42) do |n|:
+    n.ToString()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+}
+
 

@@ -558,6 +558,7 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	}
 
 	closure := &Closure{
+		TypeParams:      m.TypeParams,
 		Params:          params,
 		BlockParam:      m.BlockParam,
 		Body:            m.Body,
@@ -569,6 +570,19 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[m.Name]; ok {
 				closure.FuncType = mType
+				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
+					bindings := make(map[string]types.Type)
+					for i, argStr := range si.TypeArgs {
+						if i < len(si.Def.TypeParams) {
+							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+								bindings[si.Def.TypeParams[i].Name] = t
+							}
+						}
+					}
+					if len(bindings) > 0 {
+						closure.FuncType = types.Substitute(mType, bindings)
+					}
+				}
 			}
 		}
 	}
@@ -609,6 +623,19 @@ func (si *StructInstance) makeDispatcher(name string, methods []*ast.FuncDef) Va
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[name]; ok {
 				bf.FuncType = mType
+				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
+					bindings := make(map[string]types.Type)
+					for i, argStr := range si.TypeArgs {
+						if i < len(si.Def.TypeParams) {
+							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+								bindings[si.Def.TypeParams[i].Name] = t
+							}
+						}
+					}
+					if len(bindings) > 0 {
+						bf.FuncType = types.Substitute(mType, bindings)
+					}
+				}
 			}
 		}
 	}

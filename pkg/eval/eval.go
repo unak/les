@@ -645,12 +645,28 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 	if !strings.HasSuffix(annot, "]") {
 		return annot, nil, false
 	}
-	bracketIdx := strings.Index(annot, "[")
+	depth := 0
+	bracketIdx := -1
+	runes := []rune(annot)
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] == ']' {
+			depth++
+		} else if runes[i] == '[' {
+			depth--
+			if depth == 0 {
+				bracketIdx = i
+				break
+			}
+		}
+	}
 	if bracketIdx <= 0 {
 		return annot, nil, false
 	}
-	base := strings.TrimSpace(annot[:bracketIdx])
-	inner := strings.TrimSpace(annot[bracketIdx+1 : len(annot)-1])
+	base := strings.TrimSpace(string(runes[:bracketIdx]))
+	if strings.Contains(base, "->") || strings.HasPrefix(base, "(") || strings.HasPrefix(base, "{") {
+		return annot, nil, false
+	}
+	inner := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
 	if inner == "" {
 		return annot, nil, false
 	}
@@ -659,19 +675,23 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 }
 
 func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string) *InterfaceDefValue {
-	res := &InterfaceDefValue{
-		Name:       iface.Name,
-		ModuleName: iface.ModuleName,
-		TypeParams: iface.TypeParams,
-		TypeArgs:   append([]string(nil), typeArgs...),
-		Embedded:   iface.Embedded,
-		Methods:    make(map[string]ast.MethodSig),
-	}
 	substMap := make(map[string]string)
 	for i, tp := range iface.TypeParams {
 		if i < len(typeArgs) {
 			substMap[tp.Name] = typeArgs[i]
 		}
+	}
+	var newEmbedded []string
+	for _, emb := range iface.Embedded {
+		newEmbedded = append(newEmbedded, substituteTypeString(emb, substMap))
+	}
+	res := &InterfaceDefValue{
+		Name:       iface.Name,
+		ModuleName: iface.ModuleName,
+		TypeParams: iface.TypeParams,
+		TypeArgs:   append([]string(nil), typeArgs...),
+		Embedded:   newEmbedded,
+		Methods:    make(map[string]ast.MethodSig),
 	}
 	for mName, sig := range iface.Methods {
 		newSig := sig
@@ -3166,10 +3186,16 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					if len(si.TypeArgs) == len(typeArgs) {
 						allMatch := true
 						for i, ta := range typeArgs {
-							if si.TypeArgs[i] != ta {
-								allMatch = false
-								break
+							if si.TypeArgs[i] == ta {
+								continue
 							}
+							actualT, err1 := types.ParseTypeAnnot(si.TypeArgs[i])
+							targetT, err2 := types.ParseTypeAnnot(ta)
+							if err1 == nil && err2 == nil && types.IsAssignableTo(actualT, targetT) {
+								continue
+							}
+							allMatch = false
+							break
 						}
 						if allMatch {
 							return true
@@ -3520,11 +3546,16 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 	// Check embedded interfaces
 	for _, embName := range iface.Embedded {
 		var embDef *InterfaceDefValue
+		embBase, embArgs, isGen := parseGenericTypeAnnot(embName)
+		lookupName := embName
+		if isGen {
+			lookupName = embBase
+		}
 		if env != nil {
 			// If iface belongs to a specific module, resolve embedded interface from that owning module first
 			if iface.ModuleName != "" {
 				if mod, found := env.GetModule(iface.ModuleName); found {
-					if expVal, exists := mod.Exports[embName]; exists {
+					if expVal, exists := mod.Exports[lookupName]; exists {
 						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
 							embDef = ed
 						}
@@ -3532,7 +3563,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 			}
 			if embDef == nil {
-				if embVal, found := env.Get(embName); found {
+				if embVal, found := env.Get(lookupName); found {
 					if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
 						embDef = ed
 					}
@@ -3542,7 +3573,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				// Try finding in imported modules across environment hierarchy
 				for cur := env; cur != nil; cur = cur.parent {
 					for _, mod := range cur.modules {
-						if expVal, exists := mod.Exports[embName]; exists {
+						if expVal, exists := mod.Exports[lookupName]; exists {
 							if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
 								embDef = ed
 								break
@@ -3555,7 +3586,14 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 			}
 		}
-		if embDef == nil || !valueImplementsInterfaceValue(val, embDef, env) {
+		if embDef == nil {
+			return false
+		}
+		targetDef := embDef
+		if isGen {
+			targetDef = substituteInterfaceDef(embDef, embArgs)
+		}
+		if !valueImplementsInterfaceValue(val, targetDef, env) {
 			return false
 		}
 	}
