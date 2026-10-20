@@ -241,10 +241,7 @@ func (v IntValue) Lsh(shift IntValue) (IntValue, error) {
 	if shift.big != nil || shift.small > 1<<26 {
 		return IntValue{}, fmt.Errorf("shift count too large: %s", shift.String())
 	}
-	vBitLen := int64(64)
-	if v.big != nil {
-		vBitLen = int64(v.big.BitLen())
-	}
+	vBitLen := int64(v.ToBig().BitLen())
 	if vBitLen+shift.small > 1<<26 {
 		return IntValue{}, fmt.Errorf("shift count too large: %s", shift.String())
 	}

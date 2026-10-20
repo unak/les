@@ -122,12 +122,12 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 	}
 	forced := Force(resVal)
 	if iv, ok := forced.(IntValue); ok {
-		nVal, ok := iv.ToInt()
-		if !ok || nVal < 0 {
+		if iv.Cmp(NewIntValue(0)) < 0 {
 			return 0, fmt.Errorf("Write returned negative count %s", iv.String())
 		}
-		if nVal > len(p) {
-			return 0, fmt.Errorf("Write returned count %d exceeding buffer length %d", nVal, len(p))
+		nVal, ok := iv.ToInt()
+		if !ok || nVal > len(p) {
+			return 0, fmt.Errorf("Write returned count %s exceeding buffer length %d", iv.String(), len(p))
 		}
 		if nVal < len(p) {
 			return nVal, io.ErrShortWrite
