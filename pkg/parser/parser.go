@@ -1186,23 +1186,44 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	return prefix
 }
 
+func (p *Parser) isUnaryMinusOrPlusArg() bool {
+	// Must have whitespace after curToken (callee)
+	if p.peekToken.Col <= p.curToken.Col+len(p.curToken.Literal) {
+		return false
+	}
+	// Must not have whitespace after peekToken ('-' or '+')
+	rest := p.l.PeekRestOfLine()
+	if len(rest) == 0 || rest[0] == ' ' || rest[0] == '\t' {
+		return false
+	}
+	r := rune(rest[0])
+	// Operand following '-' or '+' must be a valid expression starter
+	if unicode.IsDigit(r) || unicode.IsLetter(r) || r == '_' || r == '(' || r == '[' || r == '{' || r == '@' || r == '!' || r == '~' {
+		return true
+	}
+	return false
+}
+
 func (p *Parser) canStartArgument() bool {
 	// If peek is on the same line and can start an argument expression
-	// Exclude '(' because 'f(...)' is standard call handled by parseInfix
+	if p.peekToken.Line != p.curToken.Line {
+		return false
+	}
+	hasSpace := p.peekToken.Col > p.curToken.Col+len(p.curToken.Literal)
+
 	t := p.peekToken.Type
 	switch t {
 	case lexer.TokenLBracket:
 		// If there is no whitespace between identifier and '[', it's an indexing expression target[idx], not a call argument
-		if p.peekToken.Line == p.curToken.Line && p.peekToken.Col == p.curToken.Col+len(p.curToken.Literal) {
-			return false
-		}
-		return true
+		return hasSpace
 	case lexer.TokenLParen:
 		// If there is whitespace between identifier and '(', it's a call argument: print (42).Type(), not a standard f(...) call
-		if p.peekToken.Line == p.curToken.Line && p.peekToken.Col > p.curToken.Col+len(p.curToken.Literal) {
-			return true
-		}
-		return false
+		return hasSpace
+	case lexer.TokenNot, lexer.TokenTilde:
+		// Dedicated unary operators: if separated by whitespace, starts call argument
+		return hasSpace
+	case lexer.TokenMinus, lexer.TokenPlus:
+		return p.isUnaryMinusOrPlusArg()
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil,
 		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch, lexer.TokenForce:
 		return true

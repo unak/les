@@ -1193,7 +1193,116 @@ print "done2\n"
 	}
 }
 
+func TestParserParenOmissionUnaryCall(t *testing.T) {
+	// 1. print -1
+	p1 := NewParser(lexer.NewLexer("print -1")).ParseProgram()
+	if len(p1.Body) != 1 {
+		t.Fatalf("expected 1 stmt for 'print -1', got %d", len(p1.Body))
+	}
+	es1, ok := p1.Body[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected ExprStmt, got %T", p1.Body[0])
+	}
+	c1, ok := es1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", es1.Value)
+	}
+	if len(c1.Args) != 1 {
+		t.Fatalf("expected 1 arg, got %d", len(c1.Args))
+	}
+	u1, ok := c1.Args[0].(*ast.UnaryExpr)
+	if !ok || u1.Op != "-" {
+		t.Fatalf("expected UnaryExpr '-', got %+v", c1.Args[0])
+	}
+	if il, ok := u1.Expr.(*ast.IntLit); !ok || il.Value != 1 {
+		t.Fatalf("expected IntLit 1, got %+v", u1.Expr)
+	}
+
+	// 2. a   -b
+	p2 := NewParser(lexer.NewLexer("a   -b")).ParseProgram()
+	c2, ok := p2.Body[0].(*ast.ExprStmt).Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for 'a   -b', got %T", p2.Body[0].(*ast.ExprStmt).Value)
+	}
+	u2, ok := c2.Args[0].(*ast.UnaryExpr)
+	if !ok || u2.Op != "-" {
+		t.Fatalf("expected UnaryExpr '-', got %+v", c2.Args[0])
+	}
+	if id, ok := u2.Expr.(*ast.Identifier); !ok || id.Name != "b" {
+		t.Fatalf("expected Identifier 'b', got %+v", u2.Expr)
+	}
+
+	// 3. print +42
+	p3 := NewParser(lexer.NewLexer("print +42")).ParseProgram()
+	c3, ok := p3.Body[0].(*ast.ExprStmt).Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for 'print +42', got %T", p3.Body[0].(*ast.ExprStmt).Value)
+	}
+	u3, ok := c3.Args[0].(*ast.UnaryExpr)
+	if !ok || u3.Op != "+" {
+		t.Fatalf("expected UnaryExpr '+', got %+v", c3.Args[0])
+	}
+
+	// 4. print !true
+	p4 := NewParser(lexer.NewLexer("print !true")).ParseProgram()
+	c4, ok := p4.Body[0].(*ast.ExprStmt).Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for 'print !true', got %T", p4.Body[0].(*ast.ExprStmt).Value)
+	}
+	u4, ok := c4.Args[0].(*ast.UnaryExpr)
+	if !ok || u4.Op != "!" {
+		t.Fatalf("expected UnaryExpr '!', got %+v", c4.Args[0])
+	}
+
+	// 5. print ~0
+	p5 := NewParser(lexer.NewLexer("print ~0")).ParseProgram()
+	c5, ok := p5.Body[0].(*ast.ExprStmt).Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr for 'print ~0', got %T", p5.Body[0].(*ast.ExprStmt).Value)
+	}
+	u5, ok := c5.Args[0].(*ast.UnaryExpr)
+	if !ok || u5.Op != "~" {
+		t.Fatalf("expected UnaryExpr '~', got %+v", c5.Args[0])
+	}
+
+	// 6. a - b (binary minus)
+	p6 := NewParser(lexer.NewLexer("a - b")).ParseProgram()
+	b6, ok := p6.Body[0].(*ast.ExprStmt).Value.(*ast.BinaryExpr)
+	if !ok || b6.Op != "-" {
+		t.Fatalf("expected BinaryExpr '-' for 'a - b', got %T (%+v)", p6.Body[0].(*ast.ExprStmt).Value, p6.Body[0].(*ast.ExprStmt).Value)
+	}
+
+	// 7. a-b (binary minus)
+	p7 := NewParser(lexer.NewLexer("a-b")).ParseProgram()
+	b7, ok := p7.Body[0].(*ast.ExprStmt).Value.(*ast.BinaryExpr)
+	if !ok || b7.Op != "-" {
+		t.Fatalf("expected BinaryExpr '-' for 'a-b', got %T (%+v)", p7.Body[0].(*ast.ExprStmt).Value, p7.Body[0].(*ast.ExprStmt).Value)
+	}
+
+	// 8. a- b (binary minus)
+	p8 := NewParser(lexer.NewLexer("a- b")).ParseProgram()
+	b8, ok := p8.Body[0].(*ast.ExprStmt).Value.(*ast.BinaryExpr)
+	if !ok || b8.Op != "-" {
+		t.Fatalf("expected BinaryExpr '-' for 'a- b', got %T (%+v)", p8.Body[0].(*ast.ExprStmt).Value, p8.Body[0].(*ast.ExprStmt).Value)
+	}
+
+	// 9. 1 - 2 and 1 -2 (binary minus on number literal)
+	p9 := NewParser(lexer.NewLexer("1 -2")).ParseProgram()
+	b9, ok := p9.Body[0].(*ast.ExprStmt).Value.(*ast.BinaryExpr)
+	if !ok || b9.Op != "-" {
+		t.Fatalf("expected BinaryExpr '-' for '1 -2', got %T (%+v)", p9.Body[0].(*ast.ExprStmt).Value, p9.Body[0].(*ast.ExprStmt).Value)
+	}
+
+	// 10. (a -b) inside parens (binary minus)
+	p10 := NewParser(lexer.NewLexer("(a -b)")).ParseProgram()
+	b10, ok := p10.Body[0].(*ast.ExprStmt).Value.(*ast.BinaryExpr)
+	if !ok || b10.Op != "-" {
+		t.Fatalf("expected BinaryExpr '-' for '(a -b)', got %T (%+v)", p10.Body[0].(*ast.ExprStmt).Value, p10.Body[0].(*ast.ExprStmt).Value)
+	}
+}
+
 func TestParseMemberAssignStmt(t *testing.T) {
+
 	input := `self.x = 100 + y`
 	l := lexer.NewLexer(input)
 	p := NewParser(l)

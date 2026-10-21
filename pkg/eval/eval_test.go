@@ -5291,3 +5291,64 @@ print t.Inspect()
 	}
 }
 
+func TestEvalParenOmissionUnaryCall(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     string
+		expected string
+	}{
+		{
+			name:     "print negative int",
+			code:     "print -1",
+			expected: "-1",
+		},
+		{
+			name:     "print positive int",
+			code:     "print +42",
+			expected: "42",
+		},
+		{
+			name:     "print logical not",
+			code:     "print !false",
+			expected: "true",
+		},
+		{
+			name:     "print bitwise not",
+			code:     "print ~0",
+			expected: "-1",
+		},
+		{
+			name: "print binary minus",
+			code: "a = 10\nb = 3\nprint a - b\n",
+			expected: "7",
+		},
+		{
+			name: "multiple args with unary",
+			code: "a = 5\nprint a, -1, +2\n",
+			expected: "5-12",
+		},
+		{
+			name: "call user function with unary minus",
+			code: "def negate(x):\n    return -x\nnegate -5\nprint negate(-5)\n",
+			expected: "5",
+		},
+		{
+			name: "call user function with unary plus",
+			code: "def add_one(x):\n    return x + 1\nadd_one +9\nprint add_one(+9)\n",
+			expected: "10",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runLesCode(tt.code)
+			if err != nil {
+				t.Fatalf("unexpected error for %s: %v", tt.name, err)
+			}
+			if strings.TrimSpace(out) != tt.expected {
+				t.Fatalf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
+			}
+		})
+	}
+}
+
