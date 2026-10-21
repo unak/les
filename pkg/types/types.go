@@ -685,7 +685,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			}
 			return LookupBuiltinTypeMethod(tp.Constraint, mName)
 		}
-		if mName == "Type" || mName == "ToString" {
+		if mName == "Type" || mName == "Inspect" {
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{}},
 				Ret: TypeString,
@@ -694,7 +694,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		return nil, false
 	}
 
-	if mName == "ToString" {
+	if mName == "Inspect" {
 		switch t.(type) {
 		case PrimType, *TupleType, *DictType, *FuncType, *TypeVar, *UnionType:
 			return &FuncType{

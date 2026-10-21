@@ -549,25 +549,25 @@ s = @calc.Stdout
 	}
 }
 
-func TestBuiltinToStringAndShowInterfaceTypeInference(t *testing.T) {
+func TestBuiltinInspectAndShowInterfaceTypeInference(t *testing.T) {
 	code := `
-# 1. Primitives have ToString(): String
-s1: String = 42.ToString()
-s2: String = "hello".ToString()
-s3: String = (1, 2).ToString()
+# 1. Primitives have Inspect(): String
+s1: String = 42.Inspect()
+s2: String = "hello".Inspect()
+s3: String = (1, 2).Inspect()
 
 # 2. Built-in types satisfy Show interface
 def format_item(item: Show): String:
-    item.ToString()
+    item.Inspect()
 
 res1: String = format_item(42)
 res2: String = format_item("test")
 res3: String = format_item([1, 2, 3])
 
-# 3. Custom struct with ToString satisfies Show
+# 3. Custom struct with Inspect satisfies Show
 struct Item:
     id: Int
-    def ToString():
+    def Inspect():
         "Item"
 
 item = Item(id: 1)
@@ -597,7 +597,7 @@ func TestPrintRequiresShowStaticTypeCheck(t *testing.T) {
 	// 1. Valid print with Show types
 	codeOk := `
 struct Item:
-    def ToString():
+    def Inspect():
         "item"
 
 print 42, "hello", (1, 2), Item()
@@ -608,7 +608,7 @@ print 42, "hello", (1, 2), Item()
 		t.Fatalf("unexpected type error: %v", err)
 	}
 
-	// 2. Invalid print with non-Show type (struct without ToString)
+	// 2. Invalid print with non-Show type (struct without Inspect)
 	codeErr := `
 struct NoShow:
     x: Int
@@ -683,11 +683,11 @@ def inc(x: Int): Int:
 def double(x: Int): Int:
     x * 2
 
-def toString(x: Int): String:
-    x.ToString()
+def toInspect(x: Int): String:
+    x.Inspect()
 
 a: Int = 10 |> inc |> double
-b: String = 10 |> inc |> toString
+b: String = 10 |> inc |> toInspect
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()
@@ -908,7 +908,7 @@ b_cat: Bytes = b1 + b2
 first_byte: Int = b1[0]
 text: String = b1.String()
 valid: Bool = b1.IsValidString()
-hex_str: String = b1.ToString()
+hex_str: String = b1.Inspect()
 is_eq: Bool = b1 == b2
 is_lt: Bool = b1 < b2
 length: Int = len(b1)
@@ -1794,13 +1794,13 @@ struct Box[T]:
         Box(fn(self.val))
 
 b = Box(10)
-b2 = b.Map(|x|: x.ToString())
+b2 = b.Map(|x|: x.Inspect())
 
 def mapBlock[T, U](item: T, &block: (T) -> U) -> U:
     block(item)
 
 res = mapBlock(42) do |n|:
-    n.ToString()
+    n.Inspect()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()

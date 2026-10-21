@@ -168,7 +168,7 @@ var BuiltinComparableIface = &InterfaceType{
 var BuiltinShowIface = &InterfaceType{
 	Name: "Show",
 	Methods: map[string]*FuncType{
-		"ToString": {
+		"Inspect": {
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeString,
 		},
@@ -187,7 +187,7 @@ var BuiltinErrorIface = &InterfaceType{
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeString,
 		},
-		"ToString": {
+		"Inspect": {
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeString,
 		},
@@ -198,10 +198,10 @@ var BuiltinErrorIface = &InterfaceType{
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
-	// Built-in Error interface: Message(): String, ToString(): String
+	// Built-in Error interface: Message(): String, Inspect(): String
 	_ = rootScope.Declare("Error", BuiltinErrorIface)
 
-	// Built-in Show interface: ToString(): String, Type(): String
+	// Built-in Show interface: Inspect(): String, Type(): String
 	_ = rootScope.Declare("Show", BuiltinShowIface)
 
 	// Built-in Equal & Comparable interfaces

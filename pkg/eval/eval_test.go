@@ -1596,7 +1596,7 @@ struct MyCustomError:
     def Message():
         "custom: " + detail
 
-    def ToString():
+    def Inspect():
         "MyCustomError(custom: " + detail + ")"
 
 custom = MyCustomError(detail: "not found")
@@ -1614,21 +1614,22 @@ print isErr, " ", msg, " ", match1, " ", match2, " ", customIsError, " ", custom
 	}
 }
 
-func TestBuiltinToStringAndShowInterface(t *testing.T) {
+func TestBuiltinInspectAndShowInterface(t *testing.T) {
 	code := `
-# 1. Direct ToString on primitive literals & expressions
-s_int = 42.ToString()
-s_float = 3.14.ToString()
-s_str = "hello".ToString()
-s_bool1 = true.ToString()
-s_bool2 = false.ToString()
-s_nil = nil.ToString()
-s_tuple = (1, 2).ToString()
-s_list = [1, 2, 3].ToString()
-s_dict = {"k": 99}.ToString()
+# 1. Direct Inspect on primitive literals & expressions
+s_int = 42.Inspect()
+s_float = 3.14.Inspect()
+s_str = "hello".Inspect()
+s_bool1 = true.Inspect()
+s_bool2 = false.Inspect()
+s_nil = nil.Inspect()
+s_tuple = (1, 2).Inspect()
+s_list = [1, 2, 3].Inspect()
+s_dict = {"k": 99}.Inspect()
+s_esc = "line1\nline2\t\"quoted\"\\".Inspect()
 
 # 2. Method tear-off (binding to variable)
-f = 100.ToString
+f = 100.Inspect
 s_bound = f()
 
 # 3. is Show interface satisfaction
@@ -1638,23 +1639,23 @@ nilIsShow = nil is Show
 tupleIsShow = (1, 2) is Show
 intIsError = 42 is Error
 
-# 4. Custom struct with ToString satisfies Show
+# 4. Custom struct with Inspect satisfies Show
 struct Person:
     name: String
-    def ToString():
+    def Inspect():
         "Person(" + name + ")"
 
 p = Person(name: "Alice")
 pIsShow = p is Show
-pStr = p.ToString()
+pStr = p.Inspect()
 
-print s_int, "\n", s_float, "\n", s_str, "\n", s_bool1, "\n", s_bool2, "\n", s_nil, "\n", s_tuple, "\n", s_list, "\n", s_dict, "\n", s_bound, "\n", intIsShow, "\n", strIsShow, "\n", nilIsShow, "\n", tupleIsShow, "\n", intIsError, "\n", pIsShow, "\n", pStr
+print s_int, "\n", s_float, "\n", s_str, "\n", s_bool1, "\n", s_bool2, "\n", s_nil, "\n", s_tuple, "\n", s_list, "\n", s_dict, "\n", s_bound, "\n", intIsShow, "\n", strIsShow, "\n", nilIsShow, "\n", tupleIsShow, "\n", intIsError, "\n", pIsShow, "\n", pStr, "\n", s_esc
 `
 	out, err := runLesCode(code)
 	if err != nil {
 		t.Fatalf("eval error: %v", err)
 	}
-	expected := "42\n3.14\nhello\ntrue\nfalse\nnil\n(1, 2)\n(1, 2, 3)\n{\"k\": 99}\n100\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nPerson(Alice)"
+	expected := "42\n3.14\n\"hello\"\ntrue\nfalse\nnil\n(1, 2)\n(1, 2, 3)\n{\"k\": 99}\n100\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nPerson(Alice)\n\"line1\\nline2\\t\\\"quoted\\\"\\\\\""
 	if strings.TrimSpace(out) != expected {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
 	}
@@ -3060,11 +3061,11 @@ if b1[-1] != 111:
     1 / 0
 if b1.String() != "hello":
     1 / 0
-if b1.ToString() != "68656c6c6f":
+if b1.Inspect() != "68656c6c6f":
     1 / 0
-if b1.Bytes().ToString() != "68656c6c6f":
+if b1.Bytes().Inspect() != "68656c6c6f":
     1 / 0
-if Bytes(b1).ToString() != "68656c6c6f":
+if Bytes(b1).Inspect() != "68656c6c6f":
     1 / 0
 if !b1.IsValidString():
     1 / 0
@@ -3151,7 +3152,7 @@ if bad[0] != 255:
     1 / 0
 if bad[-1] != 253:
     1 / 0
-if bad.ToString() != "fffefd":
+if bad.Inspect() != "fffefd":
     1 / 0
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -3211,7 +3212,7 @@ if read_bin[2] != 0:
     1 / 0
 if read_bin[3] != 1:
     1 / 0
-if read_bin.ToString() != "fffe0001":
+if read_bin.Inspect() != "fffe0001":
     1 / 0
 `
 	progRead := parser.NewParser(lexer.NewLexer(codeRead)).ParseProgram()
@@ -4314,7 +4315,7 @@ interface StrBitAnd:
     &(other: String): Int
 
 interface MyShow:
-    ToString(self): String
+    Inspect(self): String
 
 print (10 is Negatable), " "
 print (10 is Adder), " "
@@ -4525,7 +4526,7 @@ struct Container[T]:
 def inspect(c):
     match c:
         case Container[Int]:
-            "container of int: " + c.item.ToString()
+            "container of int: " + c.item.Inspect()
         case Container[String]:
             "container of string: " + c.item
         case _:
@@ -5004,6 +5005,44 @@ print("CMP_OK:", test_cmp())
 	}
 	if !strings.Contains(out8, "CMP_OK:true") {
 		t.Errorf("expected CMP_OK:true, got: %s", out8)
+	}
+}
+
+func TestStringInspectEscapingAndNoToStringAlias(t *testing.T) {
+	code := `
+s1 = "simple".Inspect()
+s2 = "hello\nworld".Inspect()
+s3 = "tab\there\r\nand backslash\\".Inspect()
+s4 = "say \"hello\"".Inspect()
+s5 = "single'quote".Inspect()
+s6 = "日本語テスト".Inspect()
+
+print s1, "\n"
+print s2, "\n"
+print s3, "\n"
+print s4, "\n"
+print s5, "\n"
+print s6, "\n"
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "\"simple\"\n\"hello\\nworld\"\n\"tab\\there\\r\\nand backslash\\\\\"\n\"say \\\"hello\\\"\"\n\"single'quote\"\n\"日本語テスト\""
+	if strings.TrimSpace(out) != expected {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected, out)
+	}
+
+	// Verify .ToString() is rejected on String
+	_, errStr := runLesCode(`"hello".ToString()`)
+	if errStr == nil {
+		t.Fatalf("expected error calling .ToString() on String, got nil")
+	}
+
+	// Verify .ToString() is rejected on Int
+	_, errInt := runLesCode(`42.ToString()`)
+	if errInt == nil {
+		t.Fatalf("expected error calling .ToString() on Int, got nil")
 	}
 }
 

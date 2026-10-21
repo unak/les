@@ -136,7 +136,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
 - Ad-hoc polymorphism: Built-in functions like `print` accept any type implementing the `Show` / stringifiable interface:
   ```python
   interface Show:
-      ToString(): String
+      Inspect(): String
   ```
 - All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
 - User-defined structs automatically satisfy any matching interface structurally.
@@ -738,14 +738,14 @@ In accordance with Go-style visibility conventions (uppercase letter indicates e
 ```python
 interface Error:
     Message(): String
-    ToString(): String
+    Inspect(): String
 ```
 
 #### Built-in `Error(msg)` Constructor
 A convenient built-in `Error` constructor generates standard error instances satisfying `interface Error`:
 ```python
 err = Error("file not found")
-print err           # "Error: file not found" (formatted via ToString)
+print err           # "Error: file not found" (formatted via Inspect)
 print err.Message() # "file not found"
 print err is Error  # true
 ```
@@ -777,7 +777,7 @@ struct ParseError:
     def Message():
         "line " + line + ": " + detail
 
-    def ToString():
+    def Inspect():
         "ParseError(" + detail + ")"
 
 # Automatically matches `case Error:` and `is Error`!
@@ -791,7 +791,7 @@ struct ParseError:
 Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
 
 - **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
-- **Arguments**: `*args: Show` — variable number of values satisfying the `Show` interface (`ToString(): String`).
+- **Arguments**: `*args: Show` — variable number of values satisfying the `Show` interface (`Inspect(): String`).
 - **Returns**: `()` (empty tuple).
 - **Usage**:
   ```python
@@ -882,7 +882,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
     ```python
     b = "hello".Bytes()  # Bytes with 5 bytes
     ```
-  - `s.ToString(): String`: Returns `s` itself. Satisfies `interface Show`.
+  - `s.Inspect(): String`: Returns `s` enclosed in double quotes with escape sequences according to LES string literal syntax (e.g., `"\"hello\""`). Satisfies `interface Show`.
 - **Index Access**:
   - `s[i]: String`: 0-based Unicode rune (code point) indexing, returning a 1-rune `String`. Supports negative indexing (`s[-1]` is the last rune). Out-of-bounds index raises a runtime error.
 - **Operators**:
@@ -906,7 +906,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
     493.String(8)      # "755"
     (-42).String()     # "-42"
     ```
-  - `n.ToString(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
+  - `n.Inspect(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (integer division; division by zero raises a runtime error), `%` (modulo).
   - Unary: `-n` (negation), `+n`, `~n` (bitwise NOT).
@@ -916,7 +916,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 #### `Float`
 - **Methods**:
   - `f.Type(): String`: Returns `"Float"`. Satisfies `interface Show`.
-  - `f.ToString(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
+  - `f.Inspect(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (IEEE 754 floating-point operations).
   - Unary: `-f`, `+f`.
@@ -925,7 +925,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 #### `Bool`
 - **Methods**:
   - `b.Type(): String`: Returns `"Bool"`. Satisfies `interface Show`.
-  - `b.ToString(): String`: Returns `"true"` or `"false"`. Satisfies `interface Show`.
+  - `b.Inspect(): String`: Returns `"true"` or `"false"`. Satisfies `interface Show`.
 - **Operators**:
   - Logical: `&&` (short-circuit logical AND), `||` (short-circuit logical OR), `!` (logical NOT).
   - Comparison: `==`, `!=`.
@@ -934,7 +934,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 #### `Nil`
 - **Methods**:
   - `nil.Type(): String`: Returns `"Nil"`. Satisfies `interface Show`.
-  - `nil.ToString(): String`: Returns `"nil"`. Satisfies `interface Show`.
+  - `nil.Inspect(): String`: Returns `"nil"`. Satisfies `interface Show`.
 - **Operators**:
   - Comparison: `==`, `!=` (commonly used for nullable union types, e.g. `val == nil` or `val is Nil`).
 
@@ -945,7 +945,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `b.Bytes(): Bytes`: Returns the byte sequence itself (identity conversion).
   - `b.String(): String`: Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
   - `b.IsValidString(): Bool`: Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
-  - `b.ToString(): String`: Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
+  - `b.Inspect(): String`: Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
 - **Index Access**:
   - `b[i]: Int`: Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
 - **Operators**:
@@ -966,7 +966,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping).
   - `t.Len(): Int`: Returns the number of elements in `t`.
   - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
-  - `t.ToString(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
+  - `t.Inspect(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
 - **Index Access**:
   - `t[i]`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
 - **Operators & Destructuring**:
@@ -981,7 +981,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 - **Methods**:
   - `d.Len(): Int`: Returns the number of key-value pairs in `d`.
   - `d.Type(): String`: Returns the string representation of dict type (e.g., `"{String: Int}"`, `"{Unknown: Unknown}"`). Satisfies `interface Show`.
-  - `d.ToString(): String`: Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
+  - `d.Inspect(): String`: Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
 - **Key Access**:
   - `d[key]: Value`: Returns the value associated with `key`. Non-existent key lookup raises a runtime error.
 - **Operators**:
@@ -995,19 +995,19 @@ Les provides predefined standard interfaces in the global scope for polymorphism
 Declares the contract for converting values to human-readable string representations and inspecting their runtime type:
 ```python
 interface Show:
-    def ToString(): String
+    def Inspect(): String
     def Type(): String
 ```
 - **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`), functions, and struct instances implicitly satisfy `interface Show`.
 
-- **Usage**: Built-in functions like `print` accept any value satisfying `Show` (`*args: Show`). Any user-defined `struct` implementing `ToString(): String` automatically satisfies `Show`.
+- **Usage**: Built-in functions like `print` accept any value satisfying `Show` (`*args: Show`). Any user-defined `struct` implementing `Inspect(): String` automatically satisfies `Show`.
 
 #### `interface Error`
 Declares the contract for error values:
 ```python
 interface Error:
     def Message(): String
-    def ToString(): String
+    def Inspect(): String
 ```
 - **Implicit Satisfaction**: Standard error instances created via the built-in `Error(msg)` function satisfy `Error`. In addition, any user-defined `struct` implementing `Message(): String` (or `Error(): String`) automatically satisfies `Error` structurally without explicit declarations.
 - **Usage**: Extensively used in union return types (`Type | Error`) and type-narrowing expressions (`val is Error` or `match val: case Error:`).
@@ -1093,14 +1093,14 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
   - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
   - Disambiguation strategy: Since built-in types have a closed set of methods (no user monkey-patching), the lexer attempts to interpret `0x...` followed by `.` as a floating-point literal first. If it satisfies float syntax, it is treated as a float; otherwise, it falls back to integer dot/method access.
 - **Built-in Methods on Numeric Literals & Disambiguation**:
-  - Direct method invocation on literals (e.g., `42.ToString()`, `3.14.ToString()`).
-  - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.ToString()`) is disambiguated as a method call on integer `42`.
+  - Direct method invocation on literals (e.g., `42.Inspect()`, `3.14.Inspect()`).
+  - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.Inspect()`) is disambiguated as a method call on integer `42`.
 
 ### 3. String Interpolation (`#{}`)
 
 Ruby-style string interpolation within double-quoted strings:
 
-- **Double-quoted Strings (`"..."`)**: Expressions inside `#{...}` are evaluated and converted to strings via their `ToString()` method (satisfying `Show`):
+- **Double-quoted Strings (`"..."`)**: Expressions inside `#{...}` are evaluated and converted to strings via their `Inspect()` method (satisfying `Show`):
   ```python
   name = "Alice"
   age = 30

@@ -505,7 +505,7 @@ type StructInstance struct {
 }
 
 func (si *StructInstance) String() string {
-	if m, err := si.LookupMember("ToString"); err == nil {
+	if m, err := si.LookupMember("Inspect"); err == nil {
 		if fn, isClosure := Force(m).(*Closure); isClosure {
 			if res, err := fn.Env.invokeClosure(fn, nil); err == nil {
 				return Force(res).String()
