@@ -15,3 +15,6 @@ Thumbs.db
 
 # Owner's temporary test
 test.les
+
+# Temporary files
+tmp/

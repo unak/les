@@ -5046,3 +5046,248 @@ print s6, "\n"
 	}
 }
 
+func TestTupleAndDictInspectAndCycleDetection(t *testing.T) {
+	// 1. Recursive Inspect on Tuple with string elements
+	code1 := `
+t1 = ("hello", 42).Inspect()
+t2 = ("hello",).Inspect()
+t3 = (("a", "b"), 1).Inspect()
+t4 = ().Inspect()
+print t1, "\n", t2, "\n", t3, "\n", t4
+`
+	out1, err := runLesCode(code1)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code1: %v", err)
+	}
+	expected1 := "(\"hello\", 42)\n(\"hello\",)\n((\"a\", \"b\"), 1)\n()"
+	if strings.TrimSpace(out1) != expected1 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected1, out1)
+	}
+
+	// 2. Recursive Inspect on Dict with keys and values
+	code2 := `
+d1 = {"name": "Alice"}.Inspect()
+d2 = {1: "one", "two": 2}.Inspect()
+d3 = {"nested": (1, "x")}.Inspect()
+d4 = {}.Inspect()
+print d1, "\n", d2, "\n", d3, "\n", d4
+`
+	out2, err := runLesCode(code2)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code2: %v", err)
+	}
+	expected2 := "{\"name\": \"Alice\"}\n{1: \"one\", \"two\": 2}\n{\"nested\": (1, \"x\")}\n{}"
+	if strings.TrimSpace(out2) != expected2 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected2, out2)
+	}
+
+	// 3. Direct self-referential Tuple: a = (1, a)
+	code3 := `
+a = (1, a)
+print a.Inspect()
+`
+	out3, err := runLesCode(code3)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code3: %v", err)
+	}
+	expected3 := "(1, (...))"
+	if strings.TrimSpace(out3) != expected3 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected3, out3)
+	}
+
+	// 4. Indirect self-referential Tuple: a = (1, b); b = (2, a)
+	code4 := `
+a = (1, b)
+b = (2, a)
+print a.Inspect()
+`
+	out4, err := runLesCode(code4)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code4: %v", err)
+	}
+	expected4 := "(1, (2, (...)))"
+	if strings.TrimSpace(out4) != expected4 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected4, out4)
+	}
+
+	// 5. Direct self-referential Dict: d = {"self": d}
+	code5 := `
+d = {"self": d}
+print d.Inspect()
+`
+	out5, err := runLesCode(code5)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code5: %v", err)
+	}
+	expected5 := "{\"self\": {...}}"
+	if strings.TrimSpace(out5) != expected5 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected5, out5)
+	}
+
+	// 6. Indirect self-referential Dict: d1 = {"next": d2}; d2 = {"prev": d1}
+	code6 := `
+d1 = {"next": d2}
+d2 = {"prev": d1}
+print d1.Inspect()
+`
+	out6, err := runLesCode(code6)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code6: %v", err)
+	}
+	expected6 := "{\"next\": {\"prev\": {...}}}"
+	if strings.TrimSpace(out6) != expected6 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected6, out6)
+	}
+
+	// 7. Mixed self-referential Tuple & Dict
+	code7 := `
+t = (1, d)
+d = {"t": t}
+print t.Inspect(), "\n", d.Inspect()
+`
+	out7, err := runLesCode(code7)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code7: %v", err)
+	}
+	expected7 := "(1, {\"t\": (...)})\n{\"t\": (1, {...})}"
+	if strings.TrimSpace(out7) != expected7 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected7, out7)
+	}
+
+	// 8. DAG / Diamond reference is NOT treated as cycle
+	code8 := `
+x = (1, "a")
+y = (x, x)
+print y.Inspect()
+`
+	out8, err := runLesCode(code8)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code8: %v", err)
+	}
+	expected8 := "((1, \"a\"), (1, \"a\"))"
+	if strings.TrimSpace(out8) != expected8 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected8, out8)
+	}
+
+	// 9. Self-reference via struct initialization and cycle detection
+	code9 := `
+struct Node:
+    t: Tuple
+    d: Dict
+    def init(self):
+        self.t = (self,)
+        self.d = {"node": self}
+
+n = Node()
+print n.t.Inspect(), "\n", n.d.Inspect()
+`
+	out9, err := runLesCode(code9)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code9: %v", err)
+	}
+	expected9 := "(Node(t: (...), d: {\"node\": Node(...)}),)\n{\"node\": Node(t: (Node(...),), d: {...})}"
+	if strings.TrimSpace(out9) != expected9 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected9, out9)
+	}
+
+	// 10. Direct and indirect cyclic structures printed via print (String()) safely terminate
+	code10 := `
+a = (1, a)
+d = {"k": d}
+print a, "\n", d
+`
+	out10, err := runLesCode(code10)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code10: %v", err)
+	}
+	expected10 := "(1, (...))\n{\"k\": {...}}"
+	if strings.TrimSpace(out10) != expected10 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected10, out10)
+	}
+
+	// 11. Cyclic tuple used as Dict key safely hashes and inspects
+	code11 := `
+a = (1, a)
+d = {a: "cyclic_key"}
+print d.Inspect()
+`
+	out11, err := runLesCode(code11)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code11: %v", err)
+	}
+	expected11 := "{(1, (...)): \"cyclic_key\"}"
+	if strings.TrimSpace(out11) != expected11 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected11, out11)
+	}
+
+	// 12. Cyclic tuple equality check terminates safely
+	code12 := `
+a = (1, a)
+print a == a
+`
+	out12, err := runLesCode(code12)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code12: %v", err)
+	}
+	expected12 := "true"
+	if strings.TrimSpace(out12) != expected12 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected12, out12)
+	}
+
+	// 13. Mutual cyclic tuple equality terminates safely with true
+	code13 := `
+a = (1, b)
+b = (1, a)
+print a == b, "\n", a != b
+`
+	out13, err := runLesCode(code13)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code13: %v", err)
+	}
+	expected13 := "true\nfalse"
+	if strings.TrimSpace(out13) != expected13 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected13, out13)
+	}
+
+	// 14. Mutual cyclic tuple with different values returns false
+	code14 := `
+a = (1, b)
+b = (2, a)
+print a == b
+`
+	out14, err := runLesCode(code14)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code14: %v", err)
+	}
+	expected14 := "false"
+	if strings.TrimSpace(out14) != expected14 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected14, out14)
+	}
+
+	// 15. Method lookup / tear-off on cyclic tuple
+	code15 := `
+a = (1, a)
+f = a.Append
+t = f(99)
+print t.Inspect()
+`
+	out15, err := runLesCode(code15)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code15: %v", err)
+	}
+	expected15 := "(1, (1, (...)), 99)"
+	if strings.TrimSpace(out15) != expected15 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected15, out15)
+	}
+
+	// 16. NewDictValue without keyValues fallback with non-string keys
+	nv := NewDictValue(map[DictKey]Value{
+		{Type: "Int", Key: "123"}: NewIntValue(456),
+	}, nil)
+	out16 := nv.Inspect()
+	expected16 := "{123: 456}"
+	if out16 != expected16 {
+		t.Fatalf("expected %s, got %s", expected16, out16)
+	}
+}
+

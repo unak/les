@@ -2368,7 +2368,16 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	return inst, nil
 }
 
+type eqPair struct {
+	p1 any
+	p2 any
+}
+
 func evalBinary(op string, left, right Value) (Value, error) {
+	return evalBinaryWithVisited(op, left, right, make(map[eqPair]bool), 0)
+}
+
+func evalBinaryWithVisited(op string, left, right Value, visitedPairs map[eqPair]bool, depth int) (Value, error) {
 	// Nil comparison
 	_, leftIsNil := left.(NilValue)
 	_, rightIsNil := right.(NilValue)
@@ -2383,7 +2392,7 @@ func evalBinary(op string, left, right Value) (Value, error) {
 
 	// != is always desugared to !(x == y)
 	if op == "!=" {
-		eqVal, err := evalBinary("==", left, right)
+		eqVal, err := evalBinaryWithVisited("==", left, right, visitedPairs, depth)
 		if err != nil {
 			return nil, err
 		}
@@ -2411,8 +2420,19 @@ func evalBinary(op string, left, right Value) (Value, error) {
 			if !ok || len(lt.Elements) != len(rt.Elements) {
 				return BoolValue(false), nil
 			}
+			if lt == rt {
+				return BoolValue(true), nil
+			}
+			pair := eqPair{p1: lt, p2: rt}
+			revPair := eqPair{p1: rt, p2: lt}
+			if visitedPairs[pair] || visitedPairs[revPair] || depth > maxInspectDepth {
+				return BoolValue(true), nil
+			}
+			visitedPairs[pair] = true
+			defer delete(visitedPairs, pair)
+
 			for i := range lt.Elements {
-				eqVal, err := evalBinary("==", Force(lt.Elements[i]), Force(rt.Elements[i]))
+				eqVal, err := evalBinaryWithVisited("==", Force(lt.Elements[i]), Force(rt.Elements[i]), visitedPairs, depth+1)
 				if err != nil {
 					return nil, err
 				}
@@ -2634,11 +2654,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				if len(args) != 0 {
 					return nil, fmt.Errorf("Inspect() takes 0 arguments, got %d", len(args))
 				}
-				v := Force(val)
-				if sv, ok := v.(StringValue); ok {
-					return StringValue(inspectString(string(sv))), nil
-				}
-				return StringValue(v.String()), nil
+				return StringValue(InspectValue(val)), nil
 			},
 		}, nil
 	}
@@ -2904,8 +2920,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		}
 	}
 
-	var typeOfVal func(v Value) types.Type
-	typeOfVal = func(v Value) types.Type {
+	visitedTypes := make(map[any]bool)
+	var typeOfValWithDepth func(v Value, depth int) types.Type
+	typeOfValWithDepth = func(v Value, depth int) types.Type {
 		if thunk, ok := v.(*Thunk); ok {
 			if evaluated, isEval := PeekEvaluated(thunk); isEval {
 				v = evaluated
@@ -2929,9 +2946,14 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		case NilValue:
 			return types.TypeNil
 		case *TupleValue:
+			if visitedTypes[val] || depth > 20 {
+				return &types.TupleType{Elems: []types.Type{}}
+			}
+			visitedTypes[val] = true
+			defer delete(visitedTypes, val)
 			elems := make([]types.Type, len(val.Elements))
 			for i, el := range val.Elements {
-				elems[i] = typeOfVal(el)
+				elems[i] = typeOfValWithDepth(el, depth+1)
 			}
 			return &types.TupleType{Elems: elems}
 		case *DictValue:
@@ -2939,6 +2961,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		default:
 			return types.TypeUnknown
 		}
+	}
+	typeOfVal := func(v Value) types.Type {
+		return typeOfValWithDepth(v, 0)
 	}
 
 	// Operator methods on built-in types
