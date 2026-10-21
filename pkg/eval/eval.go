@@ -2411,6 +2411,9 @@ func evalBinary(op string, left, right Value) (Value, error) {
 			if !ok || len(lt.Elements) != len(rt.Elements) {
 				return BoolValue(false), nil
 			}
+			if lt == rt {
+				return BoolValue(true), nil
+			}
 			for i := range lt.Elements {
 				eqVal, err := evalBinary("==", Force(lt.Elements[i]), Force(rt.Elements[i]))
 				if err != nil {

@@ -5204,5 +5204,34 @@ print a, "\n", d
 	if strings.TrimSpace(out10) != expected10 {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expected10, out10)
 	}
+
+	// 11. Cyclic tuple used as Dict key safely hashes and inspects
+	code11 := `
+a = (1, a)
+d = {a: "cyclic_key"}
+print d.Inspect()
+`
+	out11, err := runLesCode(code11)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code11: %v", err)
+	}
+	expected11 := "{(1, (...)): \"cyclic_key\"}"
+	if strings.TrimSpace(out11) != expected11 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected11, out11)
+	}
+
+	// 12. Cyclic tuple equality check terminates safely
+	code12 := `
+a = (1, a)
+print a == a
+`
+	out12, err := runLesCode(code12)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code12: %v", err)
+	}
+	expected12 := "true"
+	if strings.TrimSpace(out12) != expected12 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected12, out12)
+	}
 }
 

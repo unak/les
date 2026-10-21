@@ -391,8 +391,13 @@ func inspectValueWithContext(v Value, visited map[any]bool, depth int) string {
 		defer delete(visited, val)
 
 		if m, err := val.LookupMember("Inspect"); err == nil {
-			if fn, isClosure := Force(m).(*Closure); isClosure {
+			forced := Force(m)
+			if fn, isClosure := forced.(*Closure); isClosure {
 				if res, err := fn.Env.invokeClosure(fn, nil); err == nil {
+					return Force(res).String()
+				}
+			} else if bf, isBF := forced.(*BuiltinFunc); isBF {
+				if res, err := bf.Fn(nil); err == nil {
 					return Force(res).String()
 				}
 			}
@@ -473,6 +478,11 @@ type DictKey struct {
 
 // MakeDictKey converts a runtime Value into a typed DictKey.
 func MakeDictKey(v Value) DictKey {
+	visited := make(map[any]bool)
+	return makeDictKeyWithVisited(v, visited, 0)
+}
+
+func makeDictKeyWithVisited(v Value, visited map[any]bool, depth int) DictKey {
 	v = Force(v)
 	switch val := v.(type) {
 	case IntValue:
@@ -491,13 +501,19 @@ func MakeDictKey(v Value) DictKey {
 	case NilValue:
 		return DictKey{Type: "Nil", Key: "nil"}
 	case *TupleValue:
+		if visited[val] || depth > maxInspectDepth {
+			return DictKey{Type: "Tuple", Key: "(...)"}
+		}
+		visited[val] = true
+		defer delete(visited, val)
+
 		var sb strings.Builder
 		sb.WriteString("(")
 		for i, el := range val.Elements {
 			if i > 0 {
 				sb.WriteString(",")
 			}
-			elemKey := MakeDictKey(el)
+			elemKey := makeDictKeyWithVisited(el, visited, depth+1)
 			sb.WriteString(elemKey.Type)
 			sb.WriteString(":")
 			sb.WriteString(elemKey.Key)
@@ -689,8 +705,13 @@ func (si *StructInstance) stringWithVisited(visited map[any]bool, depth int) str
 	defer delete(visited, si)
 
 	if m, err := si.LookupMember("Inspect"); err == nil {
-		if fn, isClosure := Force(m).(*Closure); isClosure {
+		forced := Force(m)
+		if fn, isClosure := forced.(*Closure); isClosure {
 			if res, err := fn.Env.invokeClosure(fn, nil); err == nil {
+				return Force(res).String()
+			}
+		} else if bf, isBF := forced.(*BuiltinFunc); isBF {
+			if res, err := bf.Fn(nil); err == nil {
 				return Force(res).String()
 			}
 		}
