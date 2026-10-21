@@ -946,12 +946,29 @@ func (p *Parser) hasAssignOnCurrentLine() bool {
 
 func (p *Parser) isUnpackParenDeclStart() bool {
 	rest := p.l.PeekRestOfLine()
-	idxClose := strings.Index(rest, ")")
-	if idxClose == -1 {
-		return false
+	depth := 1
+	runes := []rune(rest)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '(' {
+			depth++
+		} else if runes[i] == ')' {
+			depth--
+			if depth == 0 {
+				j := i + 1
+				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
+					j++
+				}
+				if j < len(runes) && runes[j] == '=' {
+					if j+1 < len(runes) && (runes[j+1] == '=' || runes[j+1] == '>') {
+						return false
+					}
+					return true
+				}
+				return false
+			}
+		}
 	}
-	idxAssign := strings.Index(rest[idxClose:], "=")
-	return idxAssign != -1
+	return false
 }
 
 func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {

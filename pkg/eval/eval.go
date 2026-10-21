@@ -547,15 +547,24 @@ func safeFieldTypeName(val Value) string {
 				return typeNameWithDepth(litVal, 0)
 			}
 			if tup, ok := thunk.Expr.(*ast.TupleLit); ok && len(tup.Elements) > 0 {
-				parts := make([]string, len(tup.Elements))
-				for i, el := range tup.Elements {
-					if lv, ok := evalLiteral(el); ok {
-						parts[i] = typeNameWithDepth(lv, 0)
-					} else {
-						parts[i] = "Unknown"
+				hasSpread := false
+				for _, el := range tup.Elements {
+					if _, isSp := el.(*ast.SpreadExpr); isSp {
+						hasSpread = true
+						break
 					}
 				}
-				return "(" + strings.Join(parts, ", ") + ")"
+				if !hasSpread {
+					parts := make([]string, len(tup.Elements))
+					for i, el := range tup.Elements {
+						if lv, ok := evalLiteral(el); ok {
+							parts[i] = typeNameWithDepth(lv, 0)
+						} else {
+							parts[i] = "Unknown"
+						}
+					}
+					return "(" + strings.Join(parts, ", ") + ")"
+				}
 			}
 		}
 	}
@@ -2868,8 +2877,18 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		}
 	}
 
-	typeOfVal := func(v Value) types.Type {
-		switch v.(type) {
+	var typeOfVal func(v Value) types.Type
+	typeOfVal = func(v Value) types.Type {
+		if thunk, ok := v.(*Thunk); ok {
+			if evaluated, isEval := PeekEvaluated(thunk); isEval {
+				v = evaluated
+			} else if thunk.InferredType != nil {
+				if t, ok := thunk.InferredType.(types.Type); ok && t != nil && t != types.TypeUnknown {
+					return t
+				}
+			}
+		}
+		switch val := v.(type) {
 		case IntValue:
 			return types.TypeInt
 		case FloatValue:
@@ -2883,10 +2902,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		case NilValue:
 			return types.TypeNil
 		case *TupleValue:
-			if t, err := types.ParseTypeAnnot(typeNameOf(v)); err == nil {
-				return t
+			elems := make([]types.Type, len(val.Elements))
+			for i, el := range val.Elements {
+				elems[i] = typeOfVal(el)
 			}
-			return &types.TupleType{Elems: []types.Type{}}
+			return &types.TupleType{Elems: elems}
 		case *DictValue:
 			return &types.DictType{Key: types.TypeUnknown, Value: types.TypeUnknown}
 		default:

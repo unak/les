@@ -4979,4 +4979,31 @@ print("APP_TYPE:", app_type)
 	if !strings.Contains(out7, "APP_TYPE:(Unknown) -> (Int, Int, Unknown)") {
 		t.Errorf("expected accurate method Type reflection, got: %s", out7)
 	}
+
+	// 8. 1-element tuple method Type reflection and unpack vs comparison
+	code8 := `
+single_app_type = ((42,).Append).Type()
+single_shift_type = ((42,).<<).Type()
+print("SINGLE_APP:", single_app_type)
+print("SINGLE_SHIFT:", single_shift_type)
+
+def test_cmp() -> Bool:
+    (1, 2) + (3, 4) == (1, 2, 3, 4)
+
+print("CMP_OK:", test_cmp())
+`
+	out8, err := runLesCode(code8)
+	if err != nil {
+		t.Fatalf("code8 failed: %v", err)
+	}
+	if !strings.Contains(out8, "SINGLE_APP:(Unknown) -> (Int, Unknown)") {
+		t.Errorf("expected 1-element tuple Append reflection, got: %s", out8)
+	}
+	if !strings.Contains(out8, "SINGLE_SHIFT:(Unknown) -> (Int, Unknown)") {
+		t.Errorf("expected 1-element tuple << reflection, got: %s", out8)
+	}
+	if !strings.Contains(out8, "CMP_OK:true") {
+		t.Errorf("expected CMP_OK:true, got: %s", out8)
+	}
 }
+
