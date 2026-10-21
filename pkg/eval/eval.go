@@ -2634,11 +2634,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 				if len(args) != 0 {
 					return nil, fmt.Errorf("Inspect() takes 0 arguments, got %d", len(args))
 				}
-				v := Force(val)
-				if sv, ok := v.(StringValue); ok {
-					return StringValue(inspectString(string(sv))), nil
-				}
-				return StringValue(v.String()), nil
+				return StringValue(InspectValue(val)), nil
 			},
 		}, nil
 	}

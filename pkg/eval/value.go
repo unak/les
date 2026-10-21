@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -299,19 +300,147 @@ type NilValue struct{}
 
 func (v NilValue) String() string { return "nil" }
 
+// maxInspectDepth defines maximum recursion depth for Inspect and String to prevent
+// infinite recursion in infinite acyclic streams or generator structures.
+const maxInspectDepth = 100
+
+// InspectValue returns the LES inspect string representation of val,
+// recursively inspecting elements of tuples and dicts, and detecting cycles.
+func InspectValue(val Value) string {
+	visited := make(map[any]bool)
+	return inspectValueWithContext(val, visited, 0)
+}
+
+func inspectValueWithContext(v Value, visited map[any]bool, depth int) string {
+	v = Force(v)
+	if v == nil {
+		return "nil"
+	}
+
+	switch val := v.(type) {
+	case StringValue:
+		return inspectString(string(val))
+
+	case *TupleValue:
+		if visited[val] || depth > maxInspectDepth {
+			return "(...)"
+		}
+		visited[val] = true
+		defer delete(visited, val)
+
+		var sb strings.Builder
+		sb.WriteString("(")
+		for i, el := range val.Elements {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(inspectValueWithContext(el, visited, depth+1))
+		}
+		if len(val.Elements) == 1 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(")")
+		return sb.String()
+
+	case *DictValue:
+		if visited[val] || depth > maxInspectDepth {
+			return "{...}"
+		}
+		visited[val] = true
+		defer delete(visited, val)
+
+		keys := make([]DictKey, 0, len(val.Entries))
+		for k := range val.Entries {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].Type != keys[j].Type {
+				return keys[i].Type < keys[j].Type
+			}
+			return keys[i].Key < keys[j].Key
+		})
+
+		var sb strings.Builder
+		sb.WriteString("{")
+		for i, dk := range keys {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			var kStr string
+			if origKey, ok := val.KeyValues[dk]; ok && origKey != nil {
+				kStr = inspectValueWithContext(origKey, visited, depth+1)
+			} else {
+				if dk.Type == "String" {
+					kStr = inspectString(dk.Key)
+				} else {
+					kStr = dk.Key
+				}
+			}
+			vVal := val.Entries[dk]
+			vStr := inspectValueWithContext(vVal, visited, depth+1)
+			sb.WriteString(fmt.Sprintf("%s: %s", kStr, vStr))
+		}
+		sb.WriteString("}")
+		return sb.String()
+
+	case *StructInstance:
+		if visited[val] || depth > maxInspectDepth {
+			return fmt.Sprintf("%s(...)", val.Def.Name)
+		}
+		visited[val] = true
+		defer delete(visited, val)
+
+		if m, err := val.LookupMember("Inspect"); err == nil {
+			if fn, isClosure := Force(m).(*Closure); isClosure {
+				if res, err := fn.Env.invokeClosure(fn, nil); err == nil {
+					return Force(res).String()
+				}
+			}
+		}
+
+		var sb strings.Builder
+		sb.WriteString(val.Def.Name)
+		sb.WriteString("(")
+		for i, fName := range val.Def.FieldOrder {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			fVal := val.Fields[fName]
+			if fVal != nil {
+				sb.WriteString(fmt.Sprintf("%s: %s", fName, inspectValueWithContext(fVal, visited, depth+1)))
+			} else {
+				sb.WriteString(fmt.Sprintf("%s: ()", fName))
+			}
+		}
+		sb.WriteString(")")
+		return sb.String()
+
+	default:
+		return val.String()
+	}
+}
+
 // TupleValue holds lazy values (Thunks or direct values).
 type TupleValue struct {
 	Elements []Value
 }
 
-func (t *TupleValue) String() string {
-	return t.stringWithDepth(0)
+func (t *TupleValue) Inspect() string {
+	return InspectValue(t)
 }
 
-func (t *TupleValue) stringWithDepth(depth int) string {
-	if depth > 10 {
+func (t *TupleValue) String() string {
+	visited := make(map[any]bool)
+	return t.stringWithVisited(visited, 0)
+}
+
+func (t *TupleValue) stringWithVisited(visited map[any]bool, depth int) string {
+	if visited[t] || depth > maxInspectDepth {
 		return "(...)"
 	}
+	visited[t] = true
+	defer delete(visited, t)
+
 	var sb strings.Builder
 	sb.WriteString("(")
 	for i, el := range t.Elements {
@@ -320,7 +449,11 @@ func (t *TupleValue) stringWithDepth(depth int) string {
 		}
 		val := Force(el)
 		if innerT, ok := val.(*TupleValue); ok {
-			sb.WriteString(innerT.stringWithDepth(depth + 1))
+			sb.WriteString(innerT.stringWithVisited(visited, depth+1))
+		} else if innerD, ok := val.(*DictValue); ok {
+			sb.WriteString(innerD.stringWithVisited(visited, depth+1))
+		} else if innerS, ok := val.(*StructInstance); ok {
+			sb.WriteString(innerS.stringWithVisited(visited, depth+1))
 		} else {
 			sb.WriteString(val.String())
 		}
@@ -401,11 +534,36 @@ func NewDictValue(entries map[DictKey]Value, keyValues ...map[DictKey]Value) *Di
 	}
 }
 
+func (d *DictValue) Inspect() string {
+	return InspectValue(d)
+}
+
 func (d *DictValue) String() string {
+	visited := make(map[any]bool)
+	return d.stringWithVisited(visited, 0)
+}
+
+func (d *DictValue) stringWithVisited(visited map[any]bool, depth int) string {
+	if visited[d] || depth > maxInspectDepth {
+		return "{...}"
+	}
+	visited[d] = true
+	defer delete(visited, d)
+
+	keys := make([]DictKey, 0, len(d.Entries))
+	for k := range d.Entries {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Type != keys[j].Type {
+			return keys[i].Type < keys[j].Type
+		}
+		return keys[i].Key < keys[j].Key
+	})
+
 	var sb strings.Builder
 	sb.WriteString("{")
-	idx := 0
-	for dk, v := range d.Entries {
+	for idx, dk := range keys {
 		if idx > 0 {
 			sb.WriteString(", ")
 		}
@@ -423,8 +581,18 @@ func (d *DictValue) String() string {
 				kStr = dk.Key
 			}
 		}
-		sb.WriteString(fmt.Sprintf("%s: %s", kStr, Force(v).String()))
-		idx++
+		v := Force(d.Entries[dk])
+		var vStr string
+		if innerT, ok := v.(*TupleValue); ok {
+			vStr = innerT.stringWithVisited(visited, depth+1)
+		} else if innerD, ok := v.(*DictValue); ok {
+			vStr = innerD.stringWithVisited(visited, depth+1)
+		} else if innerS, ok := v.(*StructInstance); ok {
+			vStr = innerS.stringWithVisited(visited, depth+1)
+		} else {
+			vStr = v.String()
+		}
+		sb.WriteString(fmt.Sprintf("%s: %s", kStr, vStr))
 	}
 	sb.WriteString("}")
 	return sb.String()
@@ -504,7 +672,22 @@ type StructInstance struct {
 	IsInitializing bool
 }
 
+func (si *StructInstance) Inspect() string {
+	return InspectValue(si)
+}
+
 func (si *StructInstance) String() string {
+	visited := make(map[any]bool)
+	return si.stringWithVisited(visited, 0)
+}
+
+func (si *StructInstance) stringWithVisited(visited map[any]bool, depth int) string {
+	if visited[si] || depth > maxInspectDepth {
+		return fmt.Sprintf("%s(...)", si.Def.Name)
+	}
+	visited[si] = true
+	defer delete(visited, si)
+
 	if m, err := si.LookupMember("Inspect"); err == nil {
 		if fn, isClosure := Force(m).(*Closure); isClosure {
 			if res, err := fn.Env.invokeClosure(fn, nil); err == nil {
@@ -522,7 +705,18 @@ func (si *StructInstance) String() string {
 		}
 		val := si.Fields[fName]
 		if val != nil {
-			sb.WriteString(fmt.Sprintf("%s: %s", fName, Force(val).String()))
+			fVal := Force(val)
+			var fStr string
+			if innerT, ok := fVal.(*TupleValue); ok {
+				fStr = innerT.stringWithVisited(visited, depth+1)
+			} else if innerD, ok := fVal.(*DictValue); ok {
+				fStr = innerD.stringWithVisited(visited, depth+1)
+			} else if innerS, ok := fVal.(*StructInstance); ok {
+				fStr = innerS.stringWithVisited(visited, depth+1)
+			} else {
+				fStr = fVal.String()
+			}
+			sb.WriteString(fmt.Sprintf("%s: %s", fName, fStr))
 		} else {
 			sb.WriteString(fmt.Sprintf("%s: ()", fName))
 		}
