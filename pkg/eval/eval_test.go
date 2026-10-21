@@ -4808,3 +4808,202 @@ res2 = invert(0)
 		t.Fatalf("unexpected output for code4: %s", out4)
 	}
 }
+
+func TestTupleOperationsAndExtension(t *testing.T) {
+	// 1. Basic operations: +, <<, Append, Prepend, Concat, Slice
+	code1 := `
+t = (1, 2)
+t_plus = t + (3, 4)
+t_shift = t << 5
+t_app = t.Append(6)
+t_prep = t.Prepend(0)
+t_concat = t.Concat((7, 8), (9,))
+t_slice1 = (10, 20, 30, 40).Slice(1, 3)
+t_slice2 = (10, 20, 30, 40).Slice(2)
+t_slice_neg = (10, 20, 30, 40).Slice(-2, -1)
+`
+	prog1 := code1 + `
+print(t)
+print(t_plus)
+print(t_shift)
+print(t_app)
+print(t_prep)
+print(t_concat)
+print(t_slice1)
+print(t_slice2)
+print(t_slice_neg)
+`
+	out1, err := runLesCode(prog1)
+	if err != nil {
+		t.Fatalf("code1 failed: %v", err)
+	}
+	expected := []string{
+		"(1, 2)",
+		"(1, 2, 3, 4)",
+		"(1, 2, 5)",
+		"(1, 2, 6)",
+		"(0, 1, 2)",
+		"(1, 2, 7, 8, 9)",
+		"(20, 30)",
+		"(30, 40)",
+		"(30,)",
+	}
+	for _, exp := range expected {
+		if !strings.Contains(out1, exp) {
+			t.Errorf("expected output to contain %q, got: %s", exp, out1)
+		}
+	}
+
+	// 2. Append/Prepend tuple without flattening (nesting)
+	code2 := `
+t = (1, 2)
+nested_app = t.Append((3, 4))
+nested_shift = t << (3, 4)
+nested_prep = t.Prepend((0, 0))
+`
+	prog2 := code2 + `
+print(nested_app)
+print(nested_shift)
+print(nested_prep)
+`
+	out2, err := runLesCode(prog2)
+	if err != nil {
+		t.Fatalf("code2 failed: %v", err)
+	}
+	if !strings.Contains(out2, "(1, 2, (3, 4))") {
+		t.Errorf("expected nested append, got: %s", out2)
+	}
+	if !strings.Contains(out2, "((0, 0), 1, 2)") {
+		t.Errorf("expected nested prepend, got: %s", out2)
+	}
+
+	// 3. Spread syntax in tuple literals
+	code3 := `
+t = (2, 3)
+spread1 = (1, ...t, 4)
+spread_empty = (...(), 42)
+spread_single = (10, ...(20,))
+`
+	prog3 := code3 + `
+print(spread1)
+print(spread_empty)
+print(spread_single)
+`
+	out3, err := runLesCode(prog3)
+	if err != nil {
+		t.Fatalf("code3 failed: %v", err)
+	}
+	if !strings.Contains(out3, "(1, 2, 3, 4)") || !strings.Contains(out3, "(42,)") || !strings.Contains(out3, "(10, 20)") {
+		t.Errorf("unexpected output for spread: %s", out3)
+	}
+
+	// 4. Immutability & Laziness preservation (thunks not forced prematurely)
+	// Passing an expression that would cause a runtime panic (division by zero)
+	// proves that creating, appending, and slicing tuples does not force the thunk.
+	code4 := `
+t = (1, 1 / 0)
+t2 = t << 2
+t3 = t.Slice(0, 1)
+t4 = t.Prepend(0)
+t5 = t + (3, 4)
+print("LAZY_OK")
+`
+	out4, err := runLesCode(code4)
+	if err != nil {
+		t.Fatalf("code4 failed: %v", err)
+	}
+	if !strings.Contains(out4, "LAZY_OK") {
+		t.Fatalf("expected laziness preservation without forcing 1 / 0, got: %s", out4)
+	}
+
+	// 5. Arbitrary tuple (...) and Dict {...} type annotations
+	code5 := `
+def check_tuple(x: (...)) -> (...):
+    x << 1
+
+def check_dict(d: {...}) -> {...}:
+    d
+
+t_res = check_tuple((10, 20))
+d_res = check_dict({"a": 1})
+is_tup = (1, 2) is (...)
+is_dict = {"x": 42} is {...}
+`
+	prog5 := code5 + `
+print(t_res)
+print(d_res)
+print("IS_TUP:", is_tup)
+print("IS_DICT:", is_dict)
+`
+	out5, err := runLesCode(prog5)
+	if err != nil {
+		t.Fatalf("code5 failed: %v", err)
+	}
+	if !strings.Contains(out5, "(10, 20, 1)") || !strings.Contains(out5, "\"a\": 1") {
+		t.Errorf("unexpected output for arbitrary type annotations: %s", out5)
+	}
+	if !strings.Contains(out5, "IS_TUP:true") || !strings.Contains(out5, "IS_DICT:true") {
+		t.Errorf("expected is (...) and is {...} to be true, got: %s", out5)
+	}
+
+	// 6. Non-forcing right operand for << operator
+	code6 := `
+t = (1, 2)
+# 1 / 0 must not be forced immediately
+t_lazy = t << (1 / 0)
+print("LAZY_SHIFT_OK")
+`
+	out6, err := runLesCode(code6)
+	if err != nil {
+		t.Fatalf("code6 failed: %v", err)
+	}
+	if !strings.Contains(out6, "LAZY_SHIFT_OK") {
+		t.Errorf("expected lazy shift ok, got: %s", out6)
+	}
+
+	// 7. Tuple .+ method tear-off and method .Type() reflection
+	code7 := `
+f = (1, 2).+
+res = f((3, 4))
+app_type = ((1, 2).Append).Type()
+print(res)
+print("APP_TYPE:", app_type)
+`
+	out7, err := runLesCode(code7)
+	if err != nil {
+		t.Fatalf("code7 failed: %v", err)
+	}
+	if !strings.Contains(out7, "(1, 2, 3, 4)") {
+		t.Errorf("expected tuple .+ tear-off, got: %s", out7)
+	}
+	if !strings.Contains(out7, "APP_TYPE:(Unknown) -> (Int, Int, Unknown)") {
+		t.Errorf("expected accurate method Type reflection, got: %s", out7)
+	}
+
+	// 8. 1-element tuple method Type reflection and unpack vs comparison
+	code8 := `
+single_app_type = ((42,).Append).Type()
+single_shift_type = ((42,).<<).Type()
+print("SINGLE_APP:", single_app_type)
+print("SINGLE_SHIFT:", single_shift_type)
+
+def test_cmp() -> Bool:
+    (1, 2) + (3, 4) == (1, 2, 3, 4)
+
+print("CMP_OK:", test_cmp())
+`
+	out8, err := runLesCode(code8)
+	if err != nil {
+		t.Fatalf("code8 failed: %v", err)
+	}
+	if !strings.Contains(out8, "SINGLE_APP:(Unknown) -> (Int, Unknown)") {
+		t.Errorf("expected 1-element tuple Append reflection, got: %s", out8)
+	}
+	if !strings.Contains(out8, "SINGLE_SHIFT:(Unknown) -> (Int, Unknown)") {
+		t.Errorf("expected 1-element tuple << reflection, got: %s", out8)
+	}
+	if !strings.Contains(out8, "CMP_OK:true") {
+		t.Errorf("expected CMP_OK:true, got: %s", out8)
+	}
+}
+

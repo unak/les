@@ -946,12 +946,29 @@ func (p *Parser) hasAssignOnCurrentLine() bool {
 
 func (p *Parser) isUnpackParenDeclStart() bool {
 	rest := p.l.PeekRestOfLine()
-	idxClose := strings.Index(rest, ")")
-	if idxClose == -1 {
-		return false
+	depth := 1
+	runes := []rune(rest)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '(' {
+			depth++
+		} else if runes[i] == ')' {
+			depth--
+			if depth == 0 {
+				j := i + 1
+				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
+					j++
+				}
+				if j < len(runes) && runes[j] == '=' {
+					if j+1 < len(runes) && (runes[j+1] == '=' || runes[j+1] == '>') {
+						return false
+					}
+					return true
+				}
+				return false
+			}
+		}
 	}
-	idxAssign := strings.Index(rest[idxClose:], "=")
-	return idxAssign != -1
+	return false
 }
 
 func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {
@@ -1396,6 +1413,23 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 	}
 }
 
+func (p *Parser) parseTupleElement() ast.Expr {
+	if p.curTokenIs(lexer.TokenDot) {
+		pos := p.curPos()
+		dotCount := 0
+		for p.curTokenIs(lexer.TokenDot) {
+			dotCount++
+			p.nextToken()
+		}
+		if dotCount != 3 {
+			p.addError(pos.Line, pos.Col, "expected '...' for tuple spread")
+		}
+		inner := p.parseExpr(PREC_LOWEST)
+		return &ast.SpreadExpr{Position: pos, Expr: inner}
+	}
+	return p.parseExpr(PREC_LOWEST)
+}
+
 func (p *Parser) parseGroupOrTuple() ast.Expr {
 	pos := p.curPos()
 	// ( ) -> empty tuple
@@ -1405,7 +1439,22 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 	}
 
 	p.nextToken() // advance to first element
-	first := p.parseExpr(PREC_LOWEST)
+	isSpread := p.curTokenIs(lexer.TokenDot)
+	first := p.parseTupleElement()
+
+	if isSpread {
+		elems := []ast.Expr{first}
+		for p.peekTokenIs(lexer.TokenComma) {
+			p.nextToken() // consume ','
+			if p.peekTokenIs(lexer.TokenRParen) {
+				break
+			}
+			p.nextToken()
+			elems = append(elems, p.parseTupleElement())
+		}
+		p.expectPeek(lexer.TokenRParen)
+		return &ast.TupleLit{Position: pos, Elements: elems}
+	}
 
 	if p.peekTokenIs(lexer.TokenComma) {
 		// Tuple with elements
@@ -1416,7 +1465,7 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 				break // single tuple trailing comma: (1,)
 			}
 			p.nextToken()
-			elems = append(elems, p.parseExpr(PREC_LOWEST))
+			elems = append(elems, p.parseTupleElement())
 		}
 		p.expectPeek(lexer.TokenRParen)
 		return &ast.TupleLit{Position: pos, Elements: elems}
@@ -1435,14 +1484,14 @@ func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
 		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 	p.nextToken()
-	elems = append(elems, p.parseExpr(PREC_LOWEST))
+	elems = append(elems, p.parseTupleElement())
 	for p.peekTokenIs(lexer.TokenComma) {
 		p.nextToken()
 		if p.peekTokenIs(closing) {
 			break
 		}
 		p.nextToken()
-		elems = append(elems, p.parseExpr(PREC_LOWEST))
+		elems = append(elems, p.parseTupleElement())
 	}
 	p.expectPeek(closing)
 	return &ast.TupleLit{Position: pos, Elements: elems}
@@ -2016,6 +2065,9 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 
 func isValidDictAnnotationContent(inner string) bool {
 	inner = strings.TrimSpace(inner)
+	if inner == "..." {
+		return true
+	}
 	if inner == "" {
 		return false
 	}
@@ -2167,8 +2219,19 @@ func hasArrowBeforeRBracket(rest string) bool {
 			if depth <= 0 {
 				return false
 			}
-		} else if depth == 1 && r == '-' && i+1 < len(runes) && runes[i+1] == '>' {
-			return true
+		} else if depth == 1 {
+			if r == '-' && i+1 < len(runes) && runes[i+1] == '>' {
+				return true
+			}
+			if r == '.' && i+2 < len(runes) && runes[i+1] == '.' && runes[i+2] == '.' {
+				j := i + 3
+				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
+					j++
+				}
+				if j < len(runes) && (runes[j] == ')' || runes[j] == '}') {
+					return true
+				}
+			}
 		}
 	}
 	return false

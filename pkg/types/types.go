@@ -58,6 +58,9 @@ type TupleType struct {
 }
 
 func (t *TupleType) String() string {
+	if t.IsVariadic && (len(t.Elems) == 0 || (len(t.Elems) == 1 && t.Elems[0] == TypeUnknown)) {
+		return "(...)"
+	}
 	res := "("
 	for i, e := range t.Elems {
 		if i > 0 {
@@ -112,6 +115,9 @@ type DictType struct {
 }
 
 func (d *DictType) String() string {
+	if d.Key == TypeUnknown && d.Value == TypeUnknown {
+		return "{...}"
+	}
 	return fmt.Sprintf("{%s: %s}", d.Key.String(), d.Value.String())
 }
 
@@ -848,6 +854,12 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 				Ret: TypeString,
 			}, true
 		}
+		if tt, ok := t.(*TupleType); ok {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{&TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}}},
+				Ret: &TupleType{Elems: append([]Type(nil), tt.Elems...), IsVariadic: true},
+			}, true
+		}
 		if t == TypeBytes {
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeBytes}},
@@ -901,11 +913,71 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 				Ret: TypeInt,
 			}, true
 		}
-	case "&", "|", "^", "<<", ">>":
+	case "&", "|", "^", ">>":
 		if t == TypeInt {
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeInt}},
 				Ret: TypeInt,
+			}, true
+		}
+	case "<<":
+		if t == TypeInt {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeInt}},
+				Ret: TypeInt,
+			}, true
+		}
+		if tt, ok := t.(*TupleType); ok {
+			var retT Type
+			if tt.IsVariadic {
+				retT = tt
+			} else {
+				newElems := append(append([]Type(nil), tt.Elems...), TypeUnknown)
+				retT = &TupleType{Elems: newElems}
+			}
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeUnknown}},
+				Ret: retT,
+			}, true
+		}
+	case "Append":
+		if tt, ok := t.(*TupleType); ok {
+			var retT Type
+			if tt.IsVariadic {
+				retT = tt
+			} else {
+				newElems := append(append([]Type(nil), tt.Elems...), TypeUnknown)
+				retT = &TupleType{Elems: newElems}
+			}
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeUnknown}},
+				Ret: retT,
+			}, true
+		}
+	case "Prepend":
+		if tt, ok := t.(*TupleType); ok {
+			newElems := append([]Type{TypeUnknown}, tt.Elems...)
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{TypeUnknown}},
+				Ret: &TupleType{Elems: newElems, IsVariadic: tt.IsVariadic},
+			}, true
+		}
+	case "Concat":
+		if tt, ok := t.(*TupleType); ok {
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{&TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}}, IsVariadic: true},
+				MinArity: 1,
+				MaxArity: -1,
+				Ret:      &TupleType{Elems: append([]Type(nil), tt.Elems...), IsVariadic: true},
+			}, true
+		}
+	case "Slice":
+		if tt, ok := t.(*TupleType); ok {
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{TypeInt, TypeInt}},
+				MinArity: 1,
+				MaxArity: 2,
+				Ret:      &TupleType{Elems: append([]Type(nil), tt.Elems...), IsVariadic: true},
 			}, true
 		}
 	case "[]":

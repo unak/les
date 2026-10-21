@@ -957,18 +957,27 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `()` creates an empty tuple (type `()`).
   - `(x,)` creates a single-element tuple (trailing comma required to distinguish from grouping `(x)`). Single-element tuple type annotations are written as `(T,)`.
   - `(x1, x2, ...)` creates a multi-element tuple (e.g. `(1, 2)`).
+  - `(a, ...t, b)`: Spread syntax expands elements of tuple `t` inline into a new tuple literal without forcing lazy thunks.
+  - Type annotations: `(...)` represents an arbitrary tuple type of any length and element types.
 - **Methods**:
+  - `t.Append(elem: T): (...)`: Returns a new tuple with `elem` appended as the final element (does not flatten; passing a tuple nests it).
+  - `t.Prepend(elem: T): (...)`: Returns a new tuple with `elem` prepended as the first element.
+  - `t.Concat(...others: (...)): (...)`: Concatenates all argument tuples to `t` and returns a new tuple.
+  - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping).
   - `t.Len(): Int`: Returns the number of elements in `t`.
   - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
   - `t.ToString(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
 - **Index Access**:
   - `t[i]`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
 - **Operators & Destructuring**:
-
+  - `t1 + t2`: Concatenates two tuples (equivalent to `t1.Concat(t2)`).
+  - `t << elem`: Appends `elem` to `t` (equivalent to `t.Append(elem)`).
   - `==`, `!=`: Structural element-wise equality comparison.
   - Pattern matching / unpacking: `(a, b) = t`, `(first, *rest) = t`.
 
 #### `Dict`
+- **Type Annotations**:
+  - `{...}` represents an arbitrary dictionary type of any key and value types.
 - **Methods**:
   - `d.Len(): Int`: Returns the number of key-value pairs in `d`.
   - `d.Type(): String`: Returns the string representation of dict type (e.g., `"{String: Int}"`, `"{Unknown: Unknown}"`). Satisfies `interface Show`.

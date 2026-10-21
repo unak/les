@@ -1848,4 +1848,119 @@ def getVal[T: Box[Int]](b: T) -> Int:
 	}
 }
 
+func TestTupleOperationsInference(t *testing.T) {
+	code := `
+t = (1, "a")
+t_plus = t + (true, 2.5)
+t_shift = t << 99
+t_app = t.Append(false)
+t_prep = t.Prepend(nil)
+t_concat = t.Concat((1,), ("b",))
+t_slice1 = (1, 2, 3, 4).Slice(1, 3)
 
+def accept_any_tuple(x: (...)) -> (...):
+    x
+
+def accept_any_dict(d: {...}) -> {...}:
+    d
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	assertType := func(name string, expected string) {
+		typ, ok := inf.Scope().Lookup(name)
+		if !ok {
+			t.Fatalf("%s not found in scope", name)
+		}
+		if typ.String() != expected {
+			t.Errorf("expected %s to have type %s, got %s", name, expected, typ.String())
+		}
+	}
+
+	assertType("t_plus", "(Int, String, Bool, Float)")
+	assertType("t_shift", "(Int, String, Int)")
+	assertType("t_app", "(Int, String, Bool)")
+	assertType("t_prep", "(Nil, Int, String)")
+	assertType("t_concat", "(Int, String, Int, String)")
+	assertType("t_slice1", "(Int, Int)")
+
+	// Generic constraint with Tuple
+	genCode := `
+def addElem[T: (...)](t: T) -> (Int, ...):
+    t << 10
+
+def joinTup[T: (...)](t1: T, t2: T) -> (...):
+    t1 + t2
+
+def appTup[T: (...)](t: T):
+    t.Append("hello")
+`
+	progGen := parser.NewParser(lexer.NewLexer(genCode)).ParseProgram()
+	infGen := NewInferencer()
+	if err := infGen.InferProgram(progGen); err != nil {
+		t.Fatalf("unexpected type inference error on generic tuple constraints: %v", err)
+	}
+}
+
+func TestReviewFixes(t *testing.T) {
+	code := `
+# 1. Spread with variadic or generic tuple
+def spread_mid[T: (...)](t: T):
+    (0, ...t, 99)
+
+def spread_untyped(t):
+    (...t, 1)
+
+# 2. Variadic tuple concatenation and append union
+vt: (Int, ...) = (1, 2)
+vt_app = vt << "str"
+vt_plus = vt + ("str",)
+vt_concat = vt.Concat(("str",))
+
+# 3. Generic type instantiation in expr
+def id[T](x: T) -> T:
+    x
+
+val1 = id[(...)]( (1, 2) )
+val2 = id[{...}]( {"a": 1} )
+val3 = id[(Int, ...)]( (1, 2, 3) )
+
+# 4. Match case (...)
+def match_tup(x: Int | (...)) -> String:
+    match x:
+        case (...):
+            "is_tuple"
+        case Int:
+            "is_int"
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error in TestReviewFixes: %v", err)
+	}
+
+	assertType := func(name string, expected string) {
+		typ, ok := inf.Scope().Lookup(name)
+		if !ok {
+			t.Fatalf("%s not found in scope", name)
+		}
+		if typ.String() != expected {
+			t.Errorf("expected %s to have type %s, got %s", name, expected, typ.String())
+		}
+	}
+
+	assertType("vt_app", "(Int | String, ...)")
+	assertType("vt_plus", "(Int | String, ...)")
+	assertType("vt_concat", "(Int | String, ...)")
+
+	// Negative test for invalid dot count
+	invalidCode := `x = (.t, 1)`
+	pInvalid := parser.NewParser(lexer.NewLexer(invalidCode))
+	pInvalid.ParseProgram()
+	if len(pInvalid.Errors()) == 0 {
+		t.Errorf("expected error for '.t', got none")
+	}
+}
