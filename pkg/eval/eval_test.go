@@ -5233,5 +5233,51 @@ print a == a
 	if strings.TrimSpace(out12) != expected12 {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expected12, out12)
 	}
+
+	// 13. Mutual cyclic tuple equality terminates safely with true
+	code13 := `
+a = (1, b)
+b = (1, a)
+print a == b, "\n", a != b
+`
+	out13, err := runLesCode(code13)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code13: %v", err)
+	}
+	expected13 := "true\nfalse"
+	if strings.TrimSpace(out13) != expected13 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected13, out13)
+	}
+
+	// 14. Mutual cyclic tuple with different values returns false
+	code14 := `
+a = (1, b)
+b = (2, a)
+print a == b
+`
+	out14, err := runLesCode(code14)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code14: %v", err)
+	}
+	expected14 := "false"
+	if strings.TrimSpace(out14) != expected14 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected14, out14)
+	}
+
+	// 15. Method lookup / tear-off on cyclic tuple
+	code15 := `
+a = (1, a)
+f = a.Append
+t = f(99)
+print t.Inspect()
+`
+	out15, err := runLesCode(code15)
+	if err != nil {
+		t.Fatalf("unexpected eval error in code15: %v", err)
+	}
+	expected15 := "(1, (1, (...)), 99)"
+	if strings.TrimSpace(out15) != expected15 {
+		t.Fatalf("expected:\n%s\ngot:\n%s", expected15, out15)
+	}
 }
 
