@@ -5279,5 +5279,15 @@ print t.Inspect()
 	if strings.TrimSpace(out15) != expected15 {
 		t.Fatalf("expected:\n%s\ngot:\n%s", expected15, out15)
 	}
+
+	// 16. NewDictValue without keyValues fallback with non-string keys
+	nv := NewDictValue(map[DictKey]Value{
+		{Type: "Int", Key: "123"}: NewIntValue(456),
+	}, nil)
+	out16 := nv.Inspect()
+	expected16 := "{123: 456}"
+	if out16 != expected16 {
+		t.Fatalf("expected %s, got %s", expected16, out16)
+	}
 }
 

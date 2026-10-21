@@ -541,7 +541,9 @@ func NewDictValue(entries map[DictKey]Value, keyValues ...map[DictKey]Value) *Di
 		kv = keyValues[0]
 	} else {
 		for dk := range entries {
-			kv[dk] = StringValue(dk.Key)
+			if dk.Type == "String" {
+				kv[dk] = StringValue(dk.Key)
+			}
 		}
 	}
 	return &DictValue{
