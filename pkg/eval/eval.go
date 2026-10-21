@@ -267,8 +267,8 @@ func (ev *Evaluator) registerBuiltins() {
 					&ast.ReturnStmt{Value: &ast.Identifier{Name: "message"}},
 				},
 			},
-			"ToString": {
-				Name: "ToString",
+			"Inspect": {
+				Name: "Inspect",
 				Body: []ast.Stmt{
 					&ast.ReturnStmt{
 						Value: &ast.BinaryExpr{
@@ -294,9 +294,9 @@ func (ev *Evaluator) registerBuiltins() {
 			},
 			FieldOrder: []string{"message"},
 			Methods: map[string]*types.FuncType{
-				"Message":  errorMethodFuncType,
-				"ToString": errorMethodFuncType,
-				"Error":    errorMethodFuncType,
+				"Message": errorMethodFuncType,
+				"Inspect": errorMethodFuncType,
+				"Error":   errorMethodFuncType,
 			},
 		},
 	}
@@ -326,12 +326,12 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Show interface definition: ToString(): String, Type(): String
+	// Built-in Show interface definition: Inspect(): String, Type(): String
 	ev.builtinsEnv.Set("Show", &InterfaceDefValue{
 		Name: "Show",
 		Methods: map[string]ast.MethodSig{
-			"ToString": {
-				Name:   "ToString",
+			"Inspect": {
+				Name:   "Inspect",
 				Params: []ast.FuncParam{},
 			},
 			"Type": {
@@ -2599,19 +2599,46 @@ func evalBinary(op string, left, right Value) (Value, error) {
 	return nil, fmt.Errorf("unsupported binary operation %v %s %v", left, op, right)
 }
 
+func inspectString(s string) string {
+	var sb strings.Builder
+	sb.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			sb.WriteString(`\"`)
+		case '\\':
+			sb.WriteString(`\\`)
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteByte('"')
+	return sb.String()
+}
+
 func lookupBuiltinMember(val Value, member string) (Value, error) {
-	if member == "ToString" {
+	if member == "Inspect" {
 		return &BuiltinFunc{
-			Name: "ToString",
+			Name: "Inspect",
 			FuncType: &types.FuncType{
 				Arg: &types.TupleType{Elems: []types.Type{}},
 				Ret: types.TypeString,
 			},
 			Fn: func(args []Value) (Value, error) {
 				if len(args) != 0 {
-					return nil, fmt.Errorf("ToString() takes 0 arguments, got %d", len(args))
+					return nil, fmt.Errorf("Inspect() takes 0 arguments, got %d", len(args))
 				}
-				return StringValue(val.String()), nil
+				v := Force(val)
+				if sv, ok := v.(StringValue); ok {
+					return StringValue(inspectString(string(sv))), nil
+				}
+				return StringValue(v.String()), nil
 			},
 		}, nil
 	}
@@ -4015,7 +4042,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 						}
 					}
 				}
-				if mName == "ToString" || mName == "Type" {
+				if mName == "Inspect" || mName == "Type" {
 					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false
 					}
