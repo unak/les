@@ -1855,6 +1855,33 @@ func (inf *Inferencer) inferExpr(expr ast.Expr) (Type, error) {
 	return t, err
 }
 
+// appendToTuple adds addedElems to base tuple type, taking variadic tail into account.
+func appendToTuple(base *TupleType, addedElems []Type, addedIsVariadic bool) *TupleType {
+	if !base.IsVariadic {
+		merged := append(append([]Type(nil), base.Elems...), addedElems...)
+		return &TupleType{Elems: merged, IsVariadic: addedIsVariadic}
+	}
+	// base is variadic: fixed prefix is base.Elems[:len(base.Elems)-1],
+	// and anything appended merges into the variadic tail.
+	prefixLen := len(base.Elems) - 1
+	var tail Type = TypeUnknown
+	if len(base.Elems) > 0 {
+		tail = base.Elems[prefixLen]
+	}
+	var prefix []Type
+	if prefixLen > 0 {
+		prefix = append([]Type(nil), base.Elems[:prefixLen]...)
+	}
+	for _, el := range addedElems {
+		if tail == TypeUnknown || el == TypeUnknown {
+			tail = TypeUnknown
+		} else {
+			tail = NewUnionType(tail, el)
+		}
+	}
+	return &TupleType{Elems: append(prefix, tail), IsVariadic: true}
+}
+
 func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 	if expr == nil {
 		return TypeUnknown, nil
@@ -1878,42 +1905,35 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		return TypeUnknown, nil // forward reference or flexible variable
 	case *ast.TupleLit:
-		elems := make([]Type, 0, len(e.Elements))
-		isVariadic := false
+		curTuple := &TupleType{Elems: []Type{}}
 		for _, el := range e.Elements {
-			if isVariadic {
-				return nil, inf.nodeErr(el, "elements cannot follow a spread infinite/variadic tuple")
-			}
 			if sp, ok := el.(*ast.SpreadExpr); ok {
 				spT, err := inf.inferExpr(sp.Expr)
 				if err != nil {
 					return nil, err
 				}
-				if spT == TypeUnknown {
-					isVariadic = true
-					elems = append(elems, TypeUnknown)
+				effSpT := spT
+				if tp, ok := spT.(*TypeParamType); ok && tp.Constraint != nil {
+					effSpT = tp.Constraint
+				}
+				if effSpT == TypeUnknown {
+					curTuple = appendToTuple(curTuple, []Type{TypeUnknown}, true)
 					continue
 				}
-				spTuple, ok := spT.(*TupleType)
+				spTuple, ok := effSpT.(*TupleType)
 				if !ok {
 					return nil, inf.nodeErr(sp.Expr, "cannot spread non-tuple value of type %s", spT)
 				}
-				if spTuple.IsVariadic {
-					isVariadic = true
-				}
-				elems = append(elems, spTuple.Elems...)
+				curTuple = appendToTuple(curTuple, spTuple.Elems, spTuple.IsVariadic)
 			} else {
-				if isVariadic {
-					return nil, inf.nodeErr(el, "elements cannot follow a spread infinite/variadic tuple")
-				}
 				t, err := inf.inferExpr(el)
 				if err != nil {
 					return nil, err
 				}
-				elems = append(elems, t)
+				curTuple = appendToTuple(curTuple, []Type{t}, false)
 			}
 		}
-		return &TupleType{Elems: elems, IsVariadic: isVariadic}, nil
+		return curTuple, nil
 	case *ast.DictLit:
 		if len(e.Entries) == 0 {
 			return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
@@ -2121,14 +2141,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					}
 				}
 			}
-			if bSig, ok := LookupBuiltinTypeMethod(tp.Constraint, e.Op); ok {
-				if bSig.Ret == TypeBool {
-					return TypeBool, nil
+			// If constraint is a TupleType, let it fall through to effLeftT handling
+			// so that operand types and concatenation are correctly validated and computed.
+			if _, isTupleConstraint := tp.Constraint.(*TupleType); !isTupleConstraint {
+				if bSig, ok := LookupBuiltinTypeMethod(tp.Constraint, e.Op); ok {
+					if bSig.Ret == TypeBool {
+						return TypeBool, nil
+					}
+					if rightT.Equals(tp) {
+						return tp, nil
+					}
+					return bSig.Ret, nil
 				}
-				if rightT.Equals(tp) {
-					return tp, nil
-				}
-				return bSig.Ret, nil
 			}
 		}
 		effLeftT := leftT
@@ -2142,15 +2166,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		switch e.Op {
 		case "+":
 			if leftTuple, ok := effLeftT.(*TupleType); ok {
-				if rightT == TypeUnknown {
-					return &TupleType{Elems: append([]Type(nil), leftTuple.Elems...), IsVariadic: true}, nil
+				if effRightT == TypeUnknown {
+					return appendToTuple(leftTuple, []Type{TypeUnknown}, true), nil
 				}
-				rightTuple, ok := rightT.(*TupleType)
+				rightTuple, ok := effRightT.(*TupleType)
 				if !ok {
 					return nil, inf.nodeErr(e.Right, "type mismatch in operator '+': expected tuple, got %s", rightT)
 				}
-				merged := append(append([]Type(nil), leftTuple.Elems...), rightTuple.Elems...)
-				return &TupleType{Elems: merged, IsVariadic: leftTuple.IsVariadic || rightTuple.IsVariadic}, nil
+				return appendToTuple(leftTuple, rightTuple.Elems, rightTuple.IsVariadic), nil
 			}
 			if _, ok := effRightT.(*TupleType); ok {
 				return nil, inf.nodeErr(e.Left, "type mismatch in operator '+': expected tuple, got %s", leftT)
@@ -2188,11 +2211,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeBool, nil
 		case "<<":
 			if leftTuple, ok := effLeftT.(*TupleType); ok {
-				if leftTuple.IsVariadic {
-					return leftTuple, nil
-				}
-				newElems := append(append([]Type(nil), leftTuple.Elems...), rightT)
-				return &TupleType{Elems: newElems}, nil
+				return appendToTuple(leftTuple, []Type{rightT}, false), nil
 			}
 			if leftT == TypeUnknown || rightT == TypeUnknown {
 				if leftT != TypeUnknown && leftT != TypeInt {
@@ -2261,11 +2280,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if err != nil {
 						return nil, err
 					}
-					if targetTuple.IsVariadic {
-						return targetTuple, nil
-					}
-					newElems := append(append([]Type(nil), targetTuple.Elems...), argT)
-					return &TupleType{Elems: newElems}, nil
+					return appendToTuple(targetTuple, []Type{argT}, false), nil
 				case "Prepend":
 					if len(e.Args) != 1 {
 						return nil, inf.nodeErr(e, "Prepend expects 1 argument, got %d", len(e.Args))
@@ -2280,25 +2295,25 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if len(e.Args) < 1 {
 						return nil, inf.nodeErr(e, "Concat expects at least 1 argument, got 0")
 					}
-					merged := append([]Type(nil), targetTuple.Elems...)
-					isVar := targetTuple.IsVariadic
+					curTuple := targetTuple
 					for i, arg := range e.Args {
 						argT, err := inf.inferExpr(arg)
 						if err != nil {
 							return nil, err
 						}
-						if argTuple, ok := argT.(*TupleType); ok {
-							merged = append(merged, argTuple.Elems...)
-							if argTuple.IsVariadic {
-								isVar = true
-							}
-						} else if argT == TypeUnknown {
-							isVar = true
+						effArgT := argT
+						if tp, ok := argT.(*TypeParamType); ok && tp.Constraint != nil {
+							effArgT = tp.Constraint
+						}
+						if argTuple, ok := effArgT.(*TupleType); ok {
+							curTuple = appendToTuple(curTuple, argTuple.Elems, argTuple.IsVariadic)
+						} else if effArgT == TypeUnknown {
+							curTuple = appendToTuple(curTuple, []Type{TypeUnknown}, true)
 						} else {
 							return nil, inf.nodeErr(arg, "Concat argument %d must be a tuple, got %s", i+1, argT)
 						}
 					}
-					return &TupleType{Elems: merged, IsVariadic: isVar}, nil
+					return curTuple, nil
 				case "Slice":
 					if len(e.Args) < 1 || len(e.Args) > 2 {
 						return nil, inf.nodeErr(e, "Slice expects 1 or 2 arguments, got %d", len(e.Args))
@@ -2313,13 +2328,13 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						}
 					}
 					if len(e.Args) == 1 {
-						if intLit, ok := e.Args[0].(*ast.IntLit); ok && intLit.Value >= 0 && int(intLit.Value) <= len(targetTuple.Elems) && !targetTuple.IsVariadic {
+						if intLit, ok := e.Args[0].(*ast.IntLit); ok && intLit.BigValue == nil && intLit.Value >= 0 && int(intLit.Value) <= len(targetTuple.Elems) && !targetTuple.IsVariadic {
 							return &TupleType{Elems: append([]Type(nil), targetTuple.Elems[int(intLit.Value):]...)}, nil
 						}
 					} else if len(e.Args) == 2 {
 						sLit, sOK := e.Args[0].(*ast.IntLit)
 						eLit, eOK := e.Args[1].(*ast.IntLit)
-						if sOK && eOK && sLit.Value >= 0 && eLit.Value >= sLit.Value && int(eLit.Value) <= len(targetTuple.Elems) && !targetTuple.IsVariadic {
+						if sOK && eOK && sLit.BigValue == nil && eLit.BigValue == nil && sLit.Value >= 0 && eLit.Value >= sLit.Value && int(eLit.Value) <= len(targetTuple.Elems) && !targetTuple.IsVariadic {
 							return &TupleType{Elems: append([]Type(nil), targetTuple.Elems[int(sLit.Value):int(eLit.Value)]...)}, nil
 						}
 					}
@@ -3457,6 +3472,19 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 	for _, c := range e.Cases {
 		caseScope := NewScope(inf.scope)
 		if c.TuplePattern != nil {
+			if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "_" {
+				anyTuple := &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+				coveredTypes = append(coveredTypes, anyTuple)
+				if id, isId := e.Target.(*ast.Identifier); isId {
+					_ = caseScope.Declare(id.Name, anyTuple)
+				}
+			} else if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "" {
+				emptyTup := &TupleType{Elems: []Type{}}
+				coveredTypes = append(coveredTypes, emptyTup)
+				if id, isId := e.Target.(*ast.Identifier); isId {
+					_ = caseScope.Declare(id.Name, emptyTup)
+				}
+			}
 			for _, name := range c.TuplePattern.Elements {
 				if name != "_" {
 					_ = caseScope.Declare(name, TypeUnknown)

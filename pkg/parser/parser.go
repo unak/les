@@ -1399,8 +1399,13 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 func (p *Parser) parseTupleElement() ast.Expr {
 	if p.curTokenIs(lexer.TokenDot) {
 		pos := p.curPos()
+		dotCount := 0
 		for p.curTokenIs(lexer.TokenDot) {
+			dotCount++
 			p.nextToken()
+		}
+		if dotCount != 3 {
+			p.addError(pos.Line, pos.Col, "expected '...' for tuple spread")
 		}
 		inner := p.parseExpr(PREC_LOWEST)
 		return &ast.SpreadExpr{Position: pos, Expr: inner}
@@ -2197,8 +2202,19 @@ func hasArrowBeforeRBracket(rest string) bool {
 			if depth <= 0 {
 				return false
 			}
-		} else if depth == 1 && r == '-' && i+1 < len(runes) && runes[i+1] == '>' {
-			return true
+		} else if depth == 1 {
+			if r == '-' && i+1 < len(runes) && runes[i+1] == '>' {
+				return true
+			}
+			if r == '.' && i+2 < len(runes) && runes[i+1] == '.' && runes[i+2] == '.' {
+				j := i + 3
+				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
+					j++
+				}
+				if j < len(runes) && (runes[j] == ')' || runes[j] == '}') {
+					return true
+				}
+			}
 		}
 	}
 	return false
