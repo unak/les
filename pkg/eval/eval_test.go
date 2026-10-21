@@ -4134,7 +4134,7 @@ print (42 |> -(5))
 		t.Fatalf("unexpected eval error in TestOperatorMethodsAndEqualComparableInterfaces: %v", err)
 	}
 
-	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Unknown|-5|37"
+	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Int|-5|37"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
@@ -5349,6 +5349,133 @@ func TestEvalParenOmissionUnaryCall(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
 			}
 		})
+	}
+}
+
+func TestInfiniteTupleLenAndIndexing(t *testing.T) {
+	code := `
+t0 = (...)
+t1 = (10, ...)
+t2 = (10, 20, ...)
+print t0.Len()
+print "|"
+print t1.Len()
+print "|"
+print t2.Len()
+print "|"
+print ().Len()
+print "|"
+print (10,).Len()
+print "|"
+print (10, 20).Len()
+print "|"
+print t0
+print "|"
+print t1
+print "|"
+print t2
+print "|"
+print t1[0]
+print "|"
+print t1[5]
+print "|"
+print t2[0]
+print "|"
+print t2[1]
+print "|"
+print t2[10]
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "-1|-2|-3|0|1|2|(...)|(10, ...)|(10, 20, ...)|10|10|10|20|20"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestBuiltinIndexableInterfaceEvaluation(t *testing.T) {
+	code := `
+struct CustomVec:
+    x: Float
+    y: Float
+    def [](i: Int) -> Float:
+        i == 0 ? self.x : self.y
+    def Len() -> Int:
+        2
+
+struct NoLen:
+    x: Int
+    def [](i: Int) -> Int:
+        self.x
+
+v = CustomVec(1.5, 2.5)
+nl = NoLen(10)
+
+# Raw Indexable
+print ("hello" is Indexable)
+print "|"
+print (Bytes("abc") is Indexable)
+print "|"
+print ((1, 2) is Indexable)
+print "|"
+print ((...) is Indexable)
+print "|"
+print ((1, ...) is Indexable)
+print "|"
+print ({"a": 1} is Indexable)
+print "|"
+print (v is Indexable)
+print "|"
+print (nl is Indexable)
+print "|"
+print (42 is Indexable)
+print "|"
+print (nil is Indexable)
+print "|"
+
+# Specialized Indexable[K, V]
+print ("hello" is Indexable[Int, String])
+print "|"
+print ("hello" is Indexable[Int, Int])
+print "|"
+print (Bytes("abc") is Indexable[Int, Int])
+print "|"
+print ((1, 2) is Indexable[Int, Int])
+print "|"
+print ((1, ...) is Indexable[Int, Int])
+print "|"
+print ((1, "a") is Indexable[Int, Int | String])
+print "|"
+print ({"k": 10} is Indexable[String, Int])
+print "|"
+print ({"k": 10} is Indexable[Int, Int])
+print "|"
+print (v is Indexable[Int, Float])
+print "|"
+print (v is Indexable[Int, String])
+print "|"
+
+# Generic function constrained by Indexable
+def first_elem[C: Indexable[Int, V], V](coll: C) -> V:
+    coll[0]
+
+print first_elem("world")
+print "|"
+print first_elem(Bytes("xyz"))
+print "|"
+print first_elem((42, 43))
+print "|"
+print first_elem((99, ...))
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "true|true|true|true|true|true|true|false|false|false|true|false|true|true|true|true|true|false|true|false|w|120|42|99"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
 	}
 }
 

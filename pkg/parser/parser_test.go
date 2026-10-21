@@ -1860,6 +1860,35 @@ t3 = (...stream)
 	}
 }
 
+func TestParseInfiniteTupleLiterals(t *testing.T) {
+	input := `
+t0 = (...)
+t1 = (1, ...)
+t2 = (1, 2, ...)
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+
+	t0 := prog.Body[0].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if !t0.IsVariadic || len(t0.Elements) != 0 {
+		t.Fatalf("expected t0 to be variadic tuple with 0 elements, got %+v", t0)
+	}
+
+	t1 := prog.Body[1].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if !t1.IsVariadic || len(t1.Elements) != 1 {
+		t.Fatalf("expected t1 to be variadic tuple with 1 element, got %+v", t1)
+	}
+
+	t2 := prog.Body[2].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if !t2.IsVariadic || len(t2.Elements) != 2 {
+		t.Fatalf("expected t2 to be variadic tuple with 2 elements, got %+v", t2)
+	}
+}
+
 
 
 

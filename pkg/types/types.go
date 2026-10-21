@@ -595,6 +595,29 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok {
 				return false
 			}
+			if target.Name == "Indexable" {
+				if mName == "Len" {
+					if fnT.MinArgs() > 0 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 0) || !IsAssignableTo(fnT.Ret, TypeInt) {
+						return false
+					}
+					continue
+				}
+				if mName == "[]" {
+					if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
+						return false
+					}
+					if len(target.TypeArgs) == 2 {
+						targetKey := target.TypeArgs[0]
+						targetVal := target.TypeArgs[1]
+						if tup, ok := fnT.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+							if !IsAssignableTo(targetKey, tup.Elems[0]) || !IsAssignableTo(fnT.Ret, targetVal) {
+								return false
+							}
+						}
+					}
+					continue
+				}
+			}
 			matched := targetSig.Equals(fnT)
 			if !matched && len(fnT.Overloads) > 0 {
 				for _, ov := range fnT.Overloads {
@@ -631,6 +654,32 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				return false
 			}
 			continue
+		}
+		if target.Name == "Indexable" {
+			if mName == "Len" {
+				if !IsAssignableTo(srcSig.Ret, TypeInt) {
+					return false
+				}
+				tup, ok := srcSig.Arg.(*TupleType)
+				if !ok || len(tup.Elems) != 0 {
+					return false
+				}
+				continue
+			}
+			if mName == "[]" {
+				tup, ok := srcSig.Arg.(*TupleType)
+				if !ok || len(tup.Elems) != 1 {
+					return false
+				}
+				if len(target.TypeArgs) == 2 {
+					targetKey := target.TypeArgs[0]
+					targetVal := target.TypeArgs[1]
+					if !IsAssignableTo(targetKey, tup.Elems[0]) || !IsAssignableTo(srcSig.Ret, targetVal) {
+						return false
+					}
+				}
+				continue
+			}
 		}
 		matched := targetSig.Equals(srcSig)
 		if !matched && len(srcSig.Overloads) > 0 {
@@ -996,7 +1045,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		if tt, ok := t.(*TupleType); ok {
 			var elemT Type = TypeUnknown
 			if len(tt.Elems) > 0 {
-				elemT = tt.Elems[0]
+				elemT = NewUnionType(tt.Elems...)
 			}
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeInt}},

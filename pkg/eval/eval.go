@@ -382,6 +382,29 @@ func (ev *Evaluator) registerBuiltins() {
 			},
 		},
 	})
+
+	// Built-in Indexable interface definition: [](key: K): V, Len(): Int
+	ev.builtinsEnv.Set("Indexable", &InterfaceDefValue{
+		Name: "Indexable",
+		TypeParams: []ast.TypeParam{
+			{Name: "K"},
+			{Name: "V"},
+		},
+		Methods: map[string]ast.MethodSig{
+			"[]": {
+				Name: "[]",
+				Params: []ast.FuncParam{
+					{Name: "key", TypeAnnot: "K"},
+				},
+				ReturnType: "V",
+			},
+			"Len": {
+				Name:       "Len",
+				Params:     []ast.FuncParam{},
+				ReturnType: "Int",
+			},
+		},
+	})
 }
 
 func (ev *Evaluator) SetArgs(args []string) {
@@ -1551,7 +1574,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				}
 			}
 		}
-		return &TupleValue{Elements: elems}, nil
+		return &TupleValue{Elements: elems, IsVariadic: e.IsVariadic}, nil
 
 	case *ast.DictLit:
 		entries := make(map[DictKey]Value)
@@ -1614,6 +1637,9 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				idx = len(t.Elements) + idx
 			}
 			if idx < 0 || idx >= len(t.Elements) {
+				if t.IsVariadic && len(t.Elements) > 0 && idx >= len(t.Elements) {
+					return t.Elements[len(t.Elements)-1], nil
+				}
 				return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
 			}
 			return t.Elements[idx], nil
@@ -2714,6 +2740,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if len(args) != 0 {
 						return nil, fmt.Errorf("Len() takes 0 arguments, got %d", len(args))
 					}
+					if v.IsVariadic {
+						return NewIntValue(int64(-(len(v.Elements) + 1))), nil
+					}
 					return NewIntValue(int64(len(v.Elements))), nil
 				},
 			}, nil
@@ -2955,9 +2984,30 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			for i, el := range val.Elements {
 				elems[i] = typeOfValWithDepth(el, depth+1)
 			}
-			return &types.TupleType{Elems: elems}
+			return &types.TupleType{Elems: elems, IsVariadic: val.IsVariadic}
 		case *DictValue:
-			return &types.DictType{Key: types.TypeUnknown, Value: types.TypeUnknown}
+			if visitedTypes[val] || depth > 20 {
+				return &types.DictType{Key: types.TypeUnknown, Value: types.TypeUnknown}
+			}
+			visitedTypes[val] = true
+			defer delete(visitedTypes, val)
+			var kList []types.Type
+			var vList []types.Type
+			for dk, v := range val.Entries {
+				if origKey, ok := val.KeyValues[dk]; ok {
+					kList = append(kList, typeOfValWithDepth(origKey, depth+1))
+				}
+				vList = append(vList, typeOfValWithDepth(v, depth+1))
+			}
+			var kT types.Type = types.TypeUnknown
+			if len(kList) > 0 {
+				kT = types.NewUnionType(kList...)
+			}
+			var vT types.Type = types.TypeUnknown
+			if len(vList) > 0 {
+				vT = types.NewUnionType(vList...)
+			}
+			return &types.DictType{Key: kT, Value: vT}
 		default:
 			return types.TypeUnknown
 		}
@@ -3382,14 +3432,21 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						idx = len(t.Elements) + idx
 					}
 					if idx < 0 || idx >= len(t.Elements) {
+						if t.IsVariadic && len(t.Elements) > 0 && idx >= len(t.Elements) {
+							return Force(t.Elements[len(t.Elements)-1]), nil
+						}
 						return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
 					}
 					return Force(t.Elements[idx]), nil
 				},
 			}
-			bf.FuncType = &types.FuncType{
-				Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
-				Ret: types.TypeUnknown,
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "[]"); ok {
+				bf.FuncType = sig
+			} else {
+				bf.FuncType = &types.FuncType{
+					Arg: &types.TupleType{Elems: []types.Type{types.TypeInt}},
+					Ret: types.TypeUnknown,
+				}
 			}
 			return bf, nil
 
@@ -3408,9 +3465,13 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					return nil, fmt.Errorf("key not found in dict: %s", idxVal.String())
 				},
 			}
-			bf.FuncType = &types.FuncType{
-				Arg: &types.TupleType{Elems: []types.Type{types.TypeUnknown}},
-				Ret: types.TypeUnknown,
+			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "[]"); ok {
+				bf.FuncType = sig
+			} else {
+				bf.FuncType = &types.FuncType{
+					Arg: &types.TupleType{Elems: []types.Type{types.TypeUnknown}},
+					Ret: types.TypeUnknown,
+				}
 			}
 			return bf, nil
 		}
@@ -4082,6 +4143,16 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				} else if iface.Name == "Equal" || iface.Name == "Comparable" {
 					if expectedCount != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
 						return false
+					}
+				} else if iface.Name == "Indexable" {
+					if mName == "Len" {
+						if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
+							return false
+						}
+					} else if mName == "[]" {
+						if expectedCount != 1 {
+							return false
+						}
 					}
 				}
 			}
