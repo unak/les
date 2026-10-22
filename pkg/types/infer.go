@@ -2305,21 +2305,49 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if targetTuple, ok := effTargetT.(*TupleType); ok {
 				switch mem.Member {
 				case "Append":
-					if len(e.Args) != 1 {
-						return nil, inf.nodeErr(e, "Append expects 1 argument, got %d", len(e.Args))
+					if len(e.Args) == 0 {
+						return nil, inf.nodeErr(e, "Append expects at least 1 argument, got 0")
 					}
-					argT, err := inf.inferExpr(e.Args[0])
-					if err != nil {
-						return nil, err
+					var argT Type
+					if len(e.Args) == 1 {
+						var err error
+						argT, err = inf.inferExpr(e.Args[0])
+						if err != nil {
+							return nil, err
+						}
+					} else {
+						tupElems := make([]Type, len(e.Args))
+						for i, a := range e.Args {
+							t, err := inf.inferExpr(a)
+							if err != nil {
+								return nil, err
+							}
+							tupElems[i] = t
+						}
+						argT = &TupleType{Elems: tupElems}
 					}
 					return appendToTuple(targetTuple, []Type{argT}, false), nil
 				case "Prepend":
-					if len(e.Args) != 1 {
-						return nil, inf.nodeErr(e, "Prepend expects 1 argument, got %d", len(e.Args))
+					if len(e.Args) == 0 {
+						return nil, inf.nodeErr(e, "Prepend expects at least 1 argument, got 0")
 					}
-					argT, err := inf.inferExpr(e.Args[0])
-					if err != nil {
-						return nil, err
+					var argT Type
+					if len(e.Args) == 1 {
+						var err error
+						argT, err = inf.inferExpr(e.Args[0])
+						if err != nil {
+							return nil, err
+						}
+					} else {
+						tupElems := make([]Type, len(e.Args))
+						for i, a := range e.Args {
+							t, err := inf.inferExpr(a)
+							if err != nil {
+								return nil, err
+							}
+							tupElems[i] = t
+						}
+						argT = &TupleType{Elems: tupElems}
 					}
 					newElems := append([]Type{argT}, targetTuple.Elems...)
 					return &TupleType{Elems: newElems, IsVariadic: targetTuple.IsVariadic}, nil

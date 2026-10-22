@@ -4859,13 +4859,20 @@ print(t_slice_neg)
 	code2 := `
 t = (1, 2)
 nested_app = t.Append((3, 4))
+nested_app_multi = t.Append(3, 4)
 nested_shift = t << (3, 4)
 nested_prep = t.Prepend((0, 0))
+nested_prep_multi = t.Prepend(0, 0)
+t_single = (0,)
+t_single_app = t_single.Append(1, 2)
 `
 	prog2 := code2 + `
 print(nested_app)
+print(nested_app_multi)
 print(nested_shift)
 print(nested_prep)
+print(nested_prep_multi)
+print(t_single_app)
 `
 	out2, err := runLesCode(prog2)
 	if err != nil {
@@ -4876,6 +4883,9 @@ print(nested_prep)
 	}
 	if !strings.Contains(out2, "((0, 0), 1, 2)") {
 		t.Errorf("expected nested prepend, got: %s", out2)
+	}
+	if !strings.Contains(out2, "(0, (1, 2))") {
+		t.Errorf("expected single-element tuple multi-arg append, got: %s", out2)
 	}
 
 	// 3. Spread syntax in tuple literals

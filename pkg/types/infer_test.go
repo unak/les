@@ -1854,7 +1854,9 @@ t = (1, "a")
 t_plus = t + (true, 2.5)
 t_shift = t << 99
 t_app = t.Append(false)
+t_app_multi = t.Append(10, 20)
 t_prep = t.Prepend(nil)
+t_prep_multi = t.Prepend("x", "y")
 t_concat = t.Concat((1,), ("b",))
 t_slice1 = (1, 2, 3, 4).Slice(1, 3)
 
@@ -1883,7 +1885,9 @@ def accept_any_dict(d: {...}) -> {...}:
 	assertType("t_plus", "(Int, String, Bool, Float)")
 	assertType("t_shift", "(Int, String, Int)")
 	assertType("t_app", "(Int, String, Bool)")
+	assertType("t_app_multi", "(Int, String, (Int, Int))")
 	assertType("t_prep", "(Nil, Int, String)")
+	assertType("t_prep_multi", "((String, String), Int, String)")
 	assertType("t_concat", "(Int, String, Int, String)")
 	assertType("t_slice1", "(Int, Int)")
 
