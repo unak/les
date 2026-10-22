@@ -5479,3 +5479,92 @@ print first_elem((99, ...))
 	}
 }
 
+func TestInfiniteTupleEdgeCasesAndOperations(t *testing.T) {
+	// Item 1: Trailing comma in infinite tuple literals
+	// Item 2: Variadic propagation across +, <<, Append, Prepend, Concat, and ==
+	// Item 3: Spread with infinite tuple
+	// Item 4: Raw is Indexable when user defines K and V structs
+	code := `
+t_trail0 = (...,)
+t_trail1 = (10, ...,)
+print t_trail0.Len()
+print "|"
+print t_trail1.Len()
+print "|"
+
+# Variadic propagation
+t_inf = (3, ...)
+t_add1 = (1, 2) + t_inf
+t_add2 = t_inf + (4,)
+t_lshift = t_inf << 5
+t_app = t_inf.Append(6)
+t_prep = t_inf.Prepend(2)
+t_cat = (1,).Concat(t_inf, (4,))
+
+print t_add1.Len()
+print "|"
+print t_add2.Len()
+print "|"
+print t_lshift.Len()
+print "|"
+print t_app.Len()
+print "|"
+print t_prep.Len()
+print "|"
+print t_cat.Len()
+print "|"
+
+# Equality between finite and infinite
+print ((1, 2) == (1, 2, ...))
+print "|"
+print ((1, 2, ...) == (1, 2, ...))
+print "|"
+
+# Item 3: Spread infinite tuple
+t_sp = (0, ...t_inf)
+print t_sp.Len()
+print "|"
+
+# Item 4: User defined K and V types should not break raw is Indexable
+struct K:
+    x: Int
+struct V:
+    y: String
+
+print ((1, 2) is Indexable)
+print "|"
+print ((1, ...) is Indexable)
+print "|"
+print ("test" is Indexable)
+print "|"
+print ({"k": 1} is Indexable)
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "-1|-2|-4|-3|-3|-3|-3|-4|false|true|-3|true|true|true|true"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// Item 5: Negative indexing error on infinite tuple
+	negCode1 := `
+t = (1, 2, ...)
+print t[-1]
+`
+	_, err1 := runLesCode(negCode1)
+	if err1 == nil || !strings.Contains(err1.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative index error on infinite tuple via [], got: %v", err1)
+	}
+
+	negCode2 := `
+t = (1, 2, ...)
+print (t.[])(-1)
+`
+	_, err2 := runLesCode(negCode2)
+	if err2 == nil || !strings.Contains(err2.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative index error on infinite tuple via method call, got: %v", err2)
+	}
+}
+

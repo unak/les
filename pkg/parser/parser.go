@@ -1442,8 +1442,16 @@ func (p *Parser) parseTupleItem(closing lexer.TokenType) (ast.Expr, bool) {
 			dotCount++
 			p.nextToken()
 		}
-		if dotCount == 3 && p.curTokenIs(closing) {
-			return nil, true
+		if dotCount == 3 {
+			if p.curTokenIs(closing) {
+				return nil, true
+			}
+			if p.curTokenIs(lexer.TokenComma) {
+				p.nextToken() // consume trailing ','
+				if p.curTokenIs(closing) {
+					return nil, true
+				}
+			}
 		}
 		if dotCount != 3 {
 			p.addError(pos.Line, pos.Col, "expected '...' for tuple spread")

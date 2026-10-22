@@ -1055,7 +1055,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		}
 		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
 			restElements := tVal.Elements[reqCount:]
-			env.Set(s.Pattern.RestName, &TupleValue{Elements: restElements})
+			env.Set(s.Pattern.RestName, &TupleValue{Elements: restElements, IsVariadic: tVal.IsVariadic})
 		}
 		return nil, nil
 
@@ -1556,6 +1556,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.TupleLit:
 		// Lazy tuple elements: wrapped in Thunks unless force-demanded or constant literal
 		elems := make([]Value, 0, len(e.Elements))
+		isVariadic := e.IsVariadic
 		for _, el := range e.Elements {
 			if sp, ok := el.(*ast.SpreadExpr); ok {
 				spVal := Force(env.newThunk(sp.Expr))
@@ -1564,6 +1565,9 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 					return nil, fmt.Errorf("cannot spread non-tuple value of type %s", typeNameOf(spVal))
 				}
 				elems = append(elems, spTuple.Elements...)
+				if spTuple.IsVariadic {
+					isVariadic = true
+				}
 			} else {
 				if env.isForceDemand(el) {
 					elems = append(elems, Force(env.newThunk(el)))
@@ -1574,7 +1578,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				}
 			}
 		}
-		return &TupleValue{Elements: elems, IsVariadic: e.IsVariadic}, nil
+		return &TupleValue{Elements: elems, IsVariadic: isVariadic}, nil
 
 	case *ast.DictLit:
 		entries := make(map[DictKey]Value)
@@ -1634,6 +1638,9 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
 			}
 			if idx < 0 {
+				if t.IsVariadic {
+					return nil, fmt.Errorf("cannot use negative index on infinite tuple: %s", i.String())
+				}
 				idx = len(t.Elements) + idx
 			}
 			if idx < 0 || idx >= len(t.Elements) {
@@ -1732,7 +1739,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 					rightVal = env.newThunk(e.Right)
 				}
 				newElems := append(append([]Value(nil), lt.Elements...), rightVal)
-				return &TupleValue{Elements: newElems}, nil
+				return &TupleValue{Elements: newElems, IsVariadic: lt.IsVariadic}, nil
 			}
 			rightVal := Force(NewThunk(e.Right, env))
 			return evalBinary(e.Op, leftVal, rightVal)
@@ -1974,7 +1981,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				}
 				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
 					restElements := tVal.Elements[reqCount:]
-					caseEnv.Set(c.TuplePattern.RestName, &TupleValue{Elements: restElements})
+					caseEnv.Set(c.TuplePattern.RestName, &TupleValue{Elements: restElements, IsVariadic: tVal.IsVariadic})
 				}
 				return caseEnv.evalBlock(c.Body)
 			}
@@ -2437,13 +2444,13 @@ func evalBinaryWithVisited(op string, left, right Value, visitedPairs map[eqPair
 				return nil, fmt.Errorf("cannot concatenate tuple and %s", typeNameOf(right))
 			}
 			newElems := append(append([]Value(nil), lt.Elements...), rt.Elements...)
-			return &TupleValue{Elements: newElems}, nil
+			return &TupleValue{Elements: newElems, IsVariadic: lt.IsVariadic || rt.IsVariadic}, nil
 		case "<<":
 			newElems := append(append([]Value(nil), lt.Elements...), right)
-			return &TupleValue{Elements: newElems}, nil
+			return &TupleValue{Elements: newElems, IsVariadic: lt.IsVariadic}, nil
 		case "==":
 			rt, ok := right.(*TupleValue)
-			if !ok || len(lt.Elements) != len(rt.Elements) {
+			if !ok || len(lt.Elements) != len(rt.Elements) || lt.IsVariadic != rt.IsVariadic {
 				return BoolValue(false), nil
 			}
 			if lt == rt {
@@ -3206,7 +3213,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("<< takes 1 argument, got %d", len(args))
 					}
 					newElems := append(append([]Value(nil), tt.Elements...), args[0])
-					return &TupleValue{Elements: newElems}, nil
+					return &TupleValue{Elements: newElems, IsVariadic: tt.IsVariadic}, nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "<<"); ok {
@@ -3224,7 +3231,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
 					}
 					newElems := append(append([]Value(nil), tt.Elements...), args[0])
-					return &TupleValue{Elements: newElems}, nil
+					return &TupleValue{Elements: newElems, IsVariadic: tt.IsVariadic}, nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Append"); ok {
@@ -3242,7 +3249,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("Prepend takes 1 argument, got %d", len(args))
 					}
 					newElems := append([]Value{args[0]}, tt.Elements...)
-					return &TupleValue{Elements: newElems}, nil
+					return &TupleValue{Elements: newElems, IsVariadic: tt.IsVariadic}, nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Prepend"); ok {
@@ -3260,6 +3267,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("Concat takes at least 1 argument, got 0")
 					}
 					newElems := append([]Value(nil), tt.Elements...)
+					isVariadic := tt.IsVariadic
 					for i, arg := range args {
 						forced := Force(arg)
 						otherT, ok := forced.(*TupleValue)
@@ -3267,8 +3275,11 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 							return nil, fmt.Errorf("Concat argument %d must be a tuple, got %s", i+1, typeNameOf(forced))
 						}
 						newElems = append(newElems, otherT.Elements...)
+						if otherT.IsVariadic {
+							isVariadic = true
+						}
 					}
-					return &TupleValue{Elements: newElems}, nil
+					return &TupleValue{Elements: newElems, IsVariadic: isVariadic}, nil
 				},
 			}
 			if sig, ok := types.LookupBuiltinTypeMethod(typeOfVal(val), "Concat"); ok {
@@ -3429,6 +3440,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						return nil, fmt.Errorf("tuple index out of bounds: %s (len %d)", i.String(), len(t.Elements))
 					}
 					if idx < 0 {
+						if t.IsVariadic {
+							return nil, fmt.Errorf("cannot use negative index on infinite tuple: %s", i.String())
+						}
 						idx = len(t.Elements) + idx
 					}
 					if idx < 0 || idx >= len(t.Elements) {
@@ -3997,6 +4011,30 @@ func splitTopLevelCommas(s string) []string {
 }
 
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
+	hasUnboundTypeParam := func(annot string) bool {
+		if len(iface.TypeArgs) > 0 || len(iface.TypeParams) == 0 {
+			return false
+		}
+		runes := []rune(annot)
+		for i := 0; i < len(runes); {
+			if isIdentStart(runes[i]) {
+				start := i
+				for i < len(runes) && isIdentPart(runes[i]) {
+					i++
+				}
+				word := string(runes[start:i])
+				for _, tp := range iface.TypeParams {
+					if tp.Name == word {
+						return true
+					}
+				}
+			} else {
+				i++
+			}
+		}
+		return false
+	}
+
 	// Check all direct methods required by the interface
 	for mName, sig := range iface.Methods {
 		expectedCount := 0
@@ -4035,7 +4073,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				return false
 			}
 			if ft, ok := fn.FuncType.(*types.FuncType); ok && ft != nil {
-				if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil {
+				if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil && !hasUnboundTypeParam(sig.ReturnType) {
 					var inf *types.Inferencer
 					if env != nil && env.Inferencer != nil {
 						if i, ok := env.Inferencer.(*types.Inferencer); ok {
@@ -4061,7 +4099,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 								if p.Name == "self" {
 									continue
 								}
-								if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" {
+								if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" && !hasUnboundTypeParam(p.TypeAnnot) {
 									if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
 										if paramIdx < len(srcTup.Elems) {
 											if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {
@@ -4094,7 +4132,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 					if expectedCount < minA || (maxA >= 0 && expectedCount > maxA) {
 						return false
 					}
-					if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil {
+					if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil && !hasUnboundTypeParam(sig.ReturnType) {
 						if env != nil && env.Inferencer != nil {
 							if inf, ok := env.Inferencer.(*types.Inferencer); ok {
 								if expectedRetT, err := inf.ParseTypeAnnot(sig.ReturnType); err == nil {
@@ -4113,7 +4151,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 									if p.Name == "self" {
 										continue
 									}
-									if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" {
+									if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" && !hasUnboundTypeParam(p.TypeAnnot) {
 										if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
 											if paramIdx < len(srcTup.Elems) {
 												if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {

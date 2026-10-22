@@ -1865,6 +1865,9 @@ func TestParseInfiniteTupleLiterals(t *testing.T) {
 t0 = (...)
 t1 = (1, ...)
 t2 = (1, 2, ...)
+t3 = (...,)
+t4 = (1, ...,)
+t5 = (1, 2, ...,)
 `
 	l := lexer.NewLexer(input)
 	p := NewParser(l)
@@ -1886,6 +1889,21 @@ t2 = (1, 2, ...)
 	t2 := prog.Body[2].(*ast.VarDecl).Value.(*ast.TupleLit)
 	if !t2.IsVariadic || len(t2.Elements) != 2 {
 		t.Fatalf("expected t2 to be variadic tuple with 2 elements, got %+v", t2)
+	}
+
+	t3 := prog.Body[3].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if !t3.IsVariadic || len(t3.Elements) != 0 {
+		t.Fatalf("expected t3 to be variadic tuple with 0 elements, got %+v", t3)
+	}
+
+	t4 := prog.Body[4].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if !t4.IsVariadic || len(t4.Elements) != 1 {
+		t.Fatalf("expected t4 to be variadic tuple with 1 element, got %+v", t4)
+	}
+
+	t5 := prog.Body[5].(*ast.VarDecl).Value.(*ast.TupleLit)
+	if !t5.IsVariadic || len(t5.Elements) != 2 {
+		t.Fatalf("expected t5 to be variadic tuple with 2 elements, got %+v", t5)
 	}
 }
 
