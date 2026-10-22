@@ -5568,3 +5568,107 @@ print (t.[])(-1)
 	}
 }
 
+func TestInfiniteTupleComprehensiveReviewFixes(t *testing.T) {
+	// Issue 1: Runtime tuple type checks (is (Int, Int) vs is (Int, ...))
+	// Issue 2: t.Type() on infinite tuples
+	// Issue 3: MakeDictKey for empty infinite tuple
+	// Issue 5: Unpacking & MatchExpr for infinite tuples
+	// Issue 6: Tuple.Slice() on infinite tuples
+	code := `
+# Issue 1: Type matching
+print ((1, 2, ...) is (Int, Int))
+print "|"
+print ((1, 2) is (Int, Int))
+print "|"
+print ((...) is ())
+print "|"
+print (() is ())
+print "|"
+print ((1, 2) is (Int, ...))
+print "|"
+print ((1, ...) is (Int, ...))
+print "|"
+
+# Issue 2: Type() method
+print (...).Type()
+print "|"
+print (1, ...).Type()
+print "|"
+print (1, 2, ...).Type()
+print "|"
+print (1,).Type()
+print "|"
+print ().Type()
+print "|"
+
+# Issue 3: MakeDictKey
+d = {(...): 42}
+print d[(...)]
+print "|"
+
+# Issue 5: Tuple pattern matching with infinite tuples
+res = match (1, 2, ...):
+    case (a, b):
+        100
+    case (a, ...rest):
+        200
+print res
+print "|"
+
+(x, y, ...rest_inf) = (10, ...)
+print x
+print "|"
+print y
+print "|"
+print rest_inf.Len()
+print "|"
+
+# Issue 6: Slice
+sl_open = (1, 2, ...).Slice(1)
+print sl_open.Len()
+print "|"
+print sl_open[0]
+print "|"
+sl_win = (1, 2, ...).Slice(0, 4)
+print sl_win.Len()
+print "|"
+print sl_win[0]
+print "|"
+print sl_win[3]
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "false|true|false|true|true|true|(...)|(Int, ...)|(Int, Int, ...)|(Int)|()|42|200|10|10|-1|-2|2|4|1|2"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// Issue 5: Disallow fixed-length unpack of infinite tuple without rest
+	errUnpack := `
+(a, b) = (1, 2, ...)
+`
+	_, errU := runLesCode(errUnpack)
+	if errU == nil || !strings.Contains(errU.Error(), "cannot unpack infinite tuple into fixed-length pattern") {
+		t.Fatalf("expected unpack error for infinite tuple into fixed-length pattern, got: %v", errU)
+	}
+
+	// Issue 6: Disallow negative slice indices on infinite tuples
+	errSlice1 := `
+(1, ...).Slice(-1)
+`
+	_, errS1 := runLesCode(errSlice1)
+	if errS1 == nil || !strings.Contains(errS1.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative slice start error, got: %v", errS1)
+	}
+
+	errSlice2 := `
+(1, ...).Slice(0, -1)
+`
+	_, errS2 := runLesCode(errSlice2)
+	if errS2 == nil || !strings.Contains(errS2.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative slice end error, got: %v", errS2)
+	}
+}
+

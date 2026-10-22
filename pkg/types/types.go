@@ -81,21 +81,8 @@ func (t *TupleType) String() string {
 
 func (t *TupleType) Equals(other Type) bool {
 	ot, ok := other.(*TupleType)
-	if !ok {
+	if !ok || t.IsVariadic != ot.IsVariadic {
 		return false
-	}
-	if t.IsVariadic {
-		lastIdx := len(t.Elems) - 1
-		for i, el := range ot.Elems {
-			expected := t.Elems[lastIdx]
-			if i < len(t.Elems) {
-				expected = t.Elems[i]
-			}
-			if !expected.Equals(el) {
-				return false
-			}
-		}
-		return true
 	}
 	if len(t.Elems) != len(ot.Elems) {
 		return false
@@ -476,6 +463,9 @@ func IsAssignableTo(src, target Type) bool {
 					}
 				}
 				return true
+			}
+			if tSrc.IsVariadic {
+				return false
 			}
 			if len(tSrc.Elems) != len(tTarget.Elems) {
 				return false

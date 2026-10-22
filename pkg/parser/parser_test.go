@@ -1907,6 +1907,21 @@ t5 = (1, 2, ...,)
 	}
 }
 
+func TestParseInfiniteTupleInvalidElementsAfterEllipsis(t *testing.T) {
+	inputs := []string{
+		"(..., 1)",
+		"(1, ..., 2)",
+	}
+	for _, in := range inputs {
+		l := lexer.NewLexer(in)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Fatalf("expected parse error for %q, but got no errors", in)
+		}
+	}
+}
+
 
 
 

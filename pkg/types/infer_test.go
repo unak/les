@@ -2048,3 +2048,15 @@ t2 = (1, "a", ...)
 		t.Errorf("expected t2 to be (Int, String, ...), got %v", t2T)
 	}
 }
+
+func TestInfiniteTupleNotAssignableToFiniteTuple(t *testing.T) {
+	infTuple := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: true}
+	finTuple := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: false}
+
+	if IsAssignableTo(infTuple, finTuple) {
+		t.Errorf("expected infinite tuple (Int, Int, ...) to NOT be assignable to finite tuple (Int, Int)")
+	}
+	if !IsAssignableTo(finTuple, infTuple) {
+		t.Errorf("expected finite tuple (Int, Int) to be assignable to variadic tuple (Int, Int, ...)")
+	}
+}

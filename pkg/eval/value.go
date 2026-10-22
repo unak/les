@@ -532,7 +532,11 @@ func makeDictKeyWithVisited(v Value, visited map[any]bool, depth int) DictKey {
 			sb.WriteString(elemKey.Key)
 		}
 		if val.IsVariadic {
-			sb.WriteString(",...")
+			if len(val.Elements) > 0 {
+				sb.WriteString(",...")
+			} else {
+				sb.WriteString("...")
+			}
 		}
 		sb.WriteString(")")
 		return DictKey{Type: "Tuple", Key: sb.String()}

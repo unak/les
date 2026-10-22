@@ -484,9 +484,18 @@ func typeNameWithDepth(val Value, depth int) string {
 	case NilValue:
 		return "Nil"
 	case *TupleValue:
+		if len(v.Elements) == 0 {
+			if v.IsVariadic {
+				return "(...)"
+			}
+			return "()"
+		}
 		parts := make([]string, len(v.Elements))
 		for i, el := range v.Elements {
 			parts[i] = valueOrThunkTypeNameWithDepth(el, depth+1)
+		}
+		if v.IsVariadic {
+			return "(" + strings.Join(parts, ", ") + ", ...)"
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *DictValue:
@@ -1040,21 +1049,33 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		}
 		reqCount := len(s.Pattern.Elements)
 		if s.Pattern.RestName != "" {
-			if len(tVal.Elements) < reqCount {
+			if !tVal.IsVariadic && len(tVal.Elements) < reqCount {
 				return nil, fmt.Errorf("not enough elements to unpack into tuple pattern: got %d, need at least %d", len(tVal.Elements), reqCount)
 			}
 		} else {
+			if tVal.IsVariadic {
+				return nil, fmt.Errorf("cannot unpack infinite tuple into fixed-length pattern")
+			}
 			if len(tVal.Elements) != reqCount {
 				return nil, fmt.Errorf("element count mismatch in unpack: expected %d, got %d", reqCount, len(tVal.Elements))
 			}
 		}
 		for i, name := range s.Pattern.Elements {
 			if name != "_" {
-				env.Set(name, tVal.Elements[i])
+				if i < len(tVal.Elements) {
+					env.Set(name, tVal.Elements[i])
+				} else if tVal.IsVariadic && len(tVal.Elements) > 0 {
+					env.Set(name, tVal.Elements[len(tVal.Elements)-1])
+				} else {
+					env.Set(name, &TupleValue{Elements: []Value{}})
+				}
 			}
 		}
 		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-			restElements := tVal.Elements[reqCount:]
+			var restElements []Value
+			if reqCount < len(tVal.Elements) {
+				restElements = tVal.Elements[reqCount:]
+			}
 			env.Set(s.Pattern.RestName, &TupleValue{Elements: restElements, IsVariadic: tVal.IsVariadic})
 		}
 		return nil, nil
@@ -1963,10 +1984,13 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				}
 				reqCount := len(c.TuplePattern.Elements)
 				if c.TuplePattern.RestName != "" {
-					if len(tVal.Elements) < reqCount {
+					if !tVal.IsVariadic && len(tVal.Elements) < reqCount {
 						continue
 					}
 				} else {
+					if tVal.IsVariadic {
+						continue
+					}
 					if len(tVal.Elements) != reqCount {
 						continue
 					}
@@ -1976,11 +2000,18 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				caseEnv := NewEnvironment(env)
 				for i, name := range c.TuplePattern.Elements {
 					if name != "_" {
-						caseEnv.Set(name, tVal.Elements[i])
+						if i < len(tVal.Elements) {
+							caseEnv.Set(name, tVal.Elements[i])
+						} else if tVal.IsVariadic && len(tVal.Elements) > 0 {
+							caseEnv.Set(name, tVal.Elements[len(tVal.Elements)-1])
+						}
 					}
 				}
 				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-					restElements := tVal.Elements[reqCount:]
+					var restElements []Value
+					if reqCount < len(tVal.Elements) {
+						restElements = tVal.Elements[reqCount:]
+					}
 					caseEnv.Set(c.TuplePattern.RestName, &TupleValue{Elements: restElements, IsVariadic: tVal.IsVariadic})
 				}
 				return caseEnv.evalBlock(c.Body)
@@ -3301,6 +3332,68 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 					if !ok {
 						return nil, fmt.Errorf("Slice start index must be an integer, got %s", typeNameOf(startVal))
 					}
+					if tt.IsVariadic && sInt.Cmp(NewIntValue(0)) < 0 {
+						return nil, fmt.Errorf("cannot use negative index on infinite tuple: %s", sInt.String())
+					}
+					var endVal Value
+					var eInt IntValue
+					if len(args) == 2 {
+						endVal = Force(args[1])
+						ei, ok := endVal.(IntValue)
+						if !ok {
+							return nil, fmt.Errorf("Slice end index must be an integer, got %s", typeNameOf(endVal))
+						}
+						eInt = ei
+						if tt.IsVariadic && eInt.Cmp(NewIntValue(0)) < 0 {
+							return nil, fmt.Errorf("cannot use negative index on infinite tuple: %s", eInt.String())
+						}
+					}
+
+					if tt.IsVariadic {
+						sIdx64, ok := sInt.ToInt()
+						if !ok {
+							if sInt.Cmp(NewIntValue(0)) < 0 {
+								sIdx64 = 0
+							} else {
+								sIdx64 = len(tt.Elements)
+							}
+						}
+						sIdx := sIdx64
+						if sIdx < 0 {
+							sIdx = 0
+						}
+						if len(args) == 1 {
+							var newElems []Value
+							if sIdx < len(tt.Elements) {
+								newElems = append([]Value(nil), tt.Elements[sIdx:]...)
+							} else if len(tt.Elements) > 0 {
+								newElems = []Value{tt.Elements[len(tt.Elements)-1]}
+							}
+							return &TupleValue{Elements: newElems, IsVariadic: true}, nil
+						}
+						eIdx64, ok := eInt.ToInt()
+						if !ok {
+							if eInt.Cmp(NewIntValue(0)) < 0 {
+								eIdx64 = 0
+							} else {
+								eIdx64 = sIdx
+							}
+						}
+						eIdx := eIdx64
+						if eIdx < sIdx {
+							eIdx = sIdx
+						}
+						var newElems []Value
+						for i := sIdx; i < eIdx; i++ {
+							if i < len(tt.Elements) {
+								newElems = append(newElems, tt.Elements[i])
+							} else if len(tt.Elements) > 0 {
+								newElems = append(newElems, tt.Elements[len(tt.Elements)-1])
+							}
+						}
+						return &TupleValue{Elements: newElems, IsVariadic: false}, nil
+					}
+
 					n := len(tt.Elements)
 					sIdx64, ok := sInt.ToInt()
 					if !ok {
@@ -3323,11 +3416,6 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 
 					eIdx := n
 					if len(args) == 2 {
-						endVal := Force(args[1])
-						eInt, ok := endVal.(IntValue)
-						if !ok {
-							return nil, fmt.Errorf("Slice end index must be an integer, got %s", typeNameOf(endVal))
-						}
 						eIdx64, ok := eInt.ToInt()
 						if !ok {
 							if eInt.Cmp(NewIntValue(0)) < 0 {
@@ -3759,7 +3847,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
 			if inner == "" {
-				return len(tVal.Elements) == 0
+				return len(tVal.Elements) == 0 && !tVal.IsVariadic
 			}
 			if inner == "..." {
 				return true
@@ -3770,8 +3858,13 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				isVariadic = true
 				elemAnnots = elemAnnots[:len(elemAnnots)-1]
 			}
-			if !isVariadic && len(tVal.Elements) != len(elemAnnots) {
-				return false
+			if !isVariadic {
+				if tVal.IsVariadic {
+					return false
+				}
+				if len(tVal.Elements) != len(elemAnnots) {
+					return false
+				}
 			}
 			lastIdx := len(elemAnnots) - 1
 			for i, el := range tVal.Elements {

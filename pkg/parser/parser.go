@@ -1451,6 +1451,11 @@ func (p *Parser) parseTupleItem(closing lexer.TokenType) (ast.Expr, bool) {
 				if p.curTokenIs(closing) {
 					return nil, true
 				}
+				p.addError(pos.Line, pos.Col, "unexpected element after '...' in tuple literal")
+				for !p.curTokenIs(closing) && !p.curTokenIs(lexer.TokenEOF) {
+					p.nextToken()
+				}
+				return nil, true
 			}
 		}
 		if dotCount != 3 {
@@ -2275,7 +2280,7 @@ func hasArrowBeforeRBracket(rest string) bool {
 				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
 					j++
 				}
-				if j < len(runes) && (runes[j] == ')' || runes[j] == '}') {
+				if j < len(runes) && runes[j] == '}' {
 					return true
 				}
 			}
@@ -2324,6 +2329,12 @@ func exprToTypeAnnot(expr ast.Expr) string {
 				return ""
 			}
 			elems = append(elems, t)
+		}
+		if e.IsVariadic {
+			if len(elems) == 0 {
+				return "(...)"
+			}
+			return "(" + strings.Join(elems, ", ") + ", ...)"
 		}
 		return "(" + strings.Join(elems, ", ") + ")"
 	case *ast.DictLit:
