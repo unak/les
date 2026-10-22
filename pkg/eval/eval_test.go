@@ -5592,6 +5592,12 @@ print (() is (Int, ...))
 print "|"
 print ((1,) is (Int, String, ...))
 print "|"
+t_empty_annot: (Int, ...) = ()
+print t_empty_annot.Len()
+print "|"
+t_prefix_annot: (Int, String, ...) = (10,)
+print t_prefix_annot.Len()
+print "|"
 print ((...) is (Int, ...))
 print "|"
 print ((1, ...) is (Int, String, ...))
@@ -5657,7 +5663,7 @@ print sl_win[3]
 	if err != nil {
 		t.Fatalf("unexpected eval error: %v", err)
 	}
-	expected := "false|true|false|true|true|true|false|false|false|false|true|Box[(Int, ...)]|(...)|(Int, ...)|(Int, Int, ...)|(Int)|()|42|200|10|10|-1|-2|2|4|1|2"
+	expected := "false|true|false|true|true|true|true|true|0|1|false|false|true|Box[(Int, ...)]|(...)|(Int, ...)|(Int, Int, ...)|(Int)|()|42|200|10|10|-1|-2|2|4|1|2"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}

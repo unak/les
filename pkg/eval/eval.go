@@ -3872,7 +3872,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			if isVariadic {
 				if len(elemAnnots) > 0 {
-					if !tVal.IsVariadic && len(tVal.Elements) < len(elemAnnots) {
+					requiredPrefix := len(elemAnnots) - 1
+					if !tVal.IsVariadic && len(tVal.Elements) < requiredPrefix {
+						return false
+					}
+					if tVal.IsVariadic && len(tVal.Elements) < requiredPrefix {
 						return false
 					}
 					if tVal.IsVariadic && len(tVal.Elements) == 0 {
@@ -3888,7 +3892,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				}
 			}
 			checkCount := len(tVal.Elements)
-			if isVariadic && len(elemAnnots) > checkCount {
+			if isVariadic && tVal.IsVariadic && len(elemAnnots) > checkCount {
 				checkCount = len(elemAnnots)
 			}
 			lastIdx := len(elemAnnots) - 1

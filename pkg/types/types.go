@@ -451,18 +451,25 @@ func IsAssignableTo(src, target Type) bool {
 				if len(tTarget.Elems) == 0 {
 					return true
 				}
-				if !tSrc.IsVariadic && len(tSrc.Elems) < len(tTarget.Elems) {
+				// Required prefix length for variadic target (T1, ..., Tn, ...) is n-1
+				requiredPrefix := len(tTarget.Elems) - 1
+				if !tSrc.IsVariadic && len(tSrc.Elems) < requiredPrefix {
+					return false
+				}
+				if tSrc.IsVariadic && len(tSrc.Elems) < requiredPrefix {
 					return false
 				}
 				if tSrc.IsVariadic && len(tSrc.Elems) == 0 {
 					return false
 				}
-				checkCount := len(tSrc.Elems)
-				if len(tTarget.Elems) > checkCount {
-					checkCount = len(tTarget.Elems)
-				}
 				lastTargetIdx := len(tTarget.Elems) - 1
 				lastSrcIdx := len(tSrc.Elems) - 1
+				// If target is variadic, finite source only needs to validate its existing elements.
+				// If source is also variadic, we check up to max(len(tSrc.Elems), len(tTarget.Elems)).
+				checkCount := len(tSrc.Elems)
+				if tSrc.IsVariadic && len(tTarget.Elems) > checkCount {
+					checkCount = len(tTarget.Elems)
+				}
 				for i := 0; i < checkCount; i++ {
 					var el Type
 					if i < len(tSrc.Elems) {
