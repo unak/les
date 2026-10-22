@@ -3270,10 +3270,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			bf := &BuiltinFunc{
 				Name: member,
 				Fn: func(args []Value) (Value, error) {
-					if len(args) != 1 {
-						return nil, fmt.Errorf("%s takes 1 argument, got %d", member, len(args))
+					if len(args) == 0 {
+						return nil, fmt.Errorf("%s takes at least 1 argument, got 0", member)
 					}
-					newElems := append(append([]Value(nil), tt.Elements...), args[0])
+					var elemToAppend Value
+					if len(args) == 1 {
+						elemToAppend = args[0]
+					} else {
+						elemToAppend = &TupleValue{Elements: append([]Value(nil), args...)}
+					}
+					newElems := append(append([]Value(nil), tt.Elements...), elemToAppend)
 					return &TupleValue{Elements: newElems, IsVariadic: tt.IsVariadic}, nil
 				},
 			}
@@ -3288,10 +3294,16 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			bf := &BuiltinFunc{
 				Name: "Prepend",
 				Fn: func(args []Value) (Value, error) {
-					if len(args) != 1 {
-						return nil, fmt.Errorf("Prepend takes 1 argument, got %d", len(args))
+					if len(args) == 0 {
+						return nil, fmt.Errorf("Prepend takes at least 1 argument, got 0")
 					}
-					newElems := append([]Value{args[0]}, tt.Elements...)
+					var elemToPrepend Value
+					if len(args) == 1 {
+						elemToPrepend = args[0]
+					} else {
+						elemToPrepend = &TupleValue{Elements: append([]Value(nil), args...)}
+					}
+					newElems := append([]Value{elemToPrepend}, tt.Elements...)
 					return &TupleValue{Elements: newElems, IsVariadic: tt.IsVariadic}, nil
 				},
 			}
