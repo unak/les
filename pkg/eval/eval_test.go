@@ -4134,7 +4134,7 @@ print (42 |> -(5))
 		t.Fatalf("unexpected eval error in TestOperatorMethodsAndEqualComparableInterfaces: %v", err)
 	}
 
-	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Unknown|-5|37"
+	expected := "4, 6|2, 2|-1, -2|1, 2|false|true|true|false|true|1, 2|52|-42|42|e|() -> Int | (Int) -> Int|() -> Int | (Int) -> Int|-42|-5|true|true|true|true|true|true|true|true|true|true|false|(Int) -> Int|-5|37"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
 	}
@@ -5349,6 +5349,352 @@ func TestEvalParenOmissionUnaryCall(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.expected, strings.TrimSpace(out))
 			}
 		})
+	}
+}
+
+func TestInfiniteTupleLenAndIndexing(t *testing.T) {
+	code := `
+t0 = (...)
+t1 = (10, ...)
+t2 = (10, 20, ...)
+print t0.Len()
+print "|"
+print t1.Len()
+print "|"
+print t2.Len()
+print "|"
+print ().Len()
+print "|"
+print (10,).Len()
+print "|"
+print (10, 20).Len()
+print "|"
+print t0
+print "|"
+print t1
+print "|"
+print t2
+print "|"
+print t1[0]
+print "|"
+print t1[5]
+print "|"
+print t2[0]
+print "|"
+print t2[1]
+print "|"
+print t2[10]
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "-1|-2|-3|0|1|2|(...)|(10, ...)|(10, 20, ...)|10|10|10|20|20"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestBuiltinIndexableInterfaceEvaluation(t *testing.T) {
+	code := `
+struct CustomVec:
+    x: Float
+    y: Float
+    def [](i: Int) -> Float:
+        i == 0 ? self.x : self.y
+    def Len() -> Int:
+        2
+
+struct NoLen:
+    x: Int
+    def [](i: Int) -> Int:
+        self.x
+
+v = CustomVec(1.5, 2.5)
+nl = NoLen(10)
+
+# Raw Indexable
+print ("hello" is Indexable)
+print "|"
+print (Bytes("abc") is Indexable)
+print "|"
+print ((1, 2) is Indexable)
+print "|"
+print ((...) is Indexable)
+print "|"
+print ((1, ...) is Indexable)
+print "|"
+print ({"a": 1} is Indexable)
+print "|"
+print (v is Indexable)
+print "|"
+print (nl is Indexable)
+print "|"
+print (42 is Indexable)
+print "|"
+print (nil is Indexable)
+print "|"
+
+# Specialized Indexable[K, V]
+print ("hello" is Indexable[Int, String])
+print "|"
+print ("hello" is Indexable[Int, Int])
+print "|"
+print (Bytes("abc") is Indexable[Int, Int])
+print "|"
+print ((1, 2) is Indexable[Int, Int])
+print "|"
+print ((1, ...) is Indexable[Int, Int])
+print "|"
+print ((1, "a") is Indexable[Int, Int | String])
+print "|"
+print ({"k": 10} is Indexable[String, Int])
+print "|"
+print ({"k": 10} is Indexable[Int, Int])
+print "|"
+print (v is Indexable[Int, Float])
+print "|"
+print (v is Indexable[Int, String])
+print "|"
+
+# Generic function constrained by Indexable
+def first_elem[C: Indexable[Int, V], V](coll: C) -> V:
+    coll[0]
+
+print first_elem("world")
+print "|"
+print first_elem(Bytes("xyz"))
+print "|"
+print first_elem((42, 43))
+print "|"
+print first_elem((99, ...))
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "true|true|true|true|true|true|true|false|false|false|true|false|true|true|true|true|true|false|true|false|w|120|42|99"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+}
+
+func TestInfiniteTupleEdgeCasesAndOperations(t *testing.T) {
+	// Item 1: Trailing comma in infinite tuple literals
+	// Item 2: Variadic propagation across +, <<, Append, Prepend, Concat, and ==
+	// Item 3: Spread with infinite tuple
+	// Item 4: Raw is Indexable when user defines K and V structs
+	code := `
+t_trail0 = (...,)
+t_trail1 = (10, ...,)
+print t_trail0.Len()
+print "|"
+print t_trail1.Len()
+print "|"
+
+# Variadic propagation
+t_inf = (3, ...)
+t_add1 = (1, 2) + t_inf
+t_add2 = t_inf + (4,)
+t_lshift = t_inf << 5
+t_app = t_inf.Append(6)
+t_prep = t_inf.Prepend(2)
+t_cat = (1,).Concat(t_inf, (4,))
+
+print t_add1.Len()
+print "|"
+print t_add2.Len()
+print "|"
+print t_lshift.Len()
+print "|"
+print t_app.Len()
+print "|"
+print t_prep.Len()
+print "|"
+print t_cat.Len()
+print "|"
+
+# Equality between finite and infinite
+print ((1, 2) == (1, 2, ...))
+print "|"
+print ((1, 2, ...) == (1, 2, ...))
+print "|"
+
+# Item 3: Spread infinite tuple
+t_sp = (0, ...t_inf)
+print t_sp.Len()
+print "|"
+
+# Item 4: User defined K and V types should not break raw is Indexable
+struct K:
+    x: Int
+struct V:
+    y: String
+
+print ((1, 2) is Indexable)
+print "|"
+print ((1, ...) is Indexable)
+print "|"
+print ("test" is Indexable)
+print "|"
+print ({"k": 1} is Indexable)
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "-1|-2|-4|-3|-3|-3|-3|-4|false|true|-3|true|true|true|true"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// Item 5: Negative indexing error on infinite tuple
+	negCode1 := `
+t = (1, 2, ...)
+print t[-1]
+`
+	_, err1 := runLesCode(negCode1)
+	if err1 == nil || !strings.Contains(err1.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative index error on infinite tuple via [], got: %v", err1)
+	}
+
+	negCode2 := `
+t = (1, 2, ...)
+print (t.[])(-1)
+`
+	_, err2 := runLesCode(negCode2)
+	if err2 == nil || !strings.Contains(err2.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative index error on infinite tuple via method call, got: %v", err2)
+	}
+}
+
+func TestInfiniteTupleComprehensiveReviewFixes(t *testing.T) {
+	// Issue 1: Runtime tuple type checks (is (Int, Int) vs is (Int, ...))
+	// Issue 2: t.Type() on infinite tuples
+	// Issue 3: MakeDictKey for empty infinite tuple
+	// Issue 5: Unpacking & MatchExpr for infinite tuples
+	// Issue 6: Tuple.Slice() on infinite tuples
+	code := `
+# Issue 1: Type matching
+print ((1, 2, ...) is (Int, Int))
+print "|"
+print ((1, 2) is (Int, Int))
+print "|"
+print ((...) is ())
+print "|"
+print (() is ())
+print "|"
+print ((1, 2) is (Int, ...))
+print "|"
+print ((1, ...) is (Int, ...))
+print "|"
+print (() is (Int, ...))
+print "|"
+print ((1,) is (Int, String, ...))
+print "|"
+print ((...) is (Int, ...))
+print "|"
+print ((1, ...) is (Int, String, ...))
+print "|"
+print ((1, "a", ...) is (Int, String, ...))
+print "|"
+
+# Issue 2 refinement: Struct type inference with infinite tuples
+struct Box[T]:
+    val: T
+b_inf = Box((1, ...))
+print b_inf.Type()
+print "|"
+
+# Issue 2: Type() method
+print (...).Type()
+print "|"
+print (1, ...).Type()
+print "|"
+print (1, 2, ...).Type()
+print "|"
+print (1,).Type()
+print "|"
+print ().Type()
+print "|"
+
+# Issue 3: MakeDictKey
+d = {(...): 42}
+print d[(...)]
+print "|"
+
+# Issue 5: Tuple pattern matching with infinite tuples
+res = match (1, 2, ...):
+    case (a, b):
+        100
+    case (a, ...rest):
+        200
+print res
+print "|"
+
+(x, y, ...rest_inf) = (10, ...)
+print x
+print "|"
+print y
+print "|"
+print rest_inf.Len()
+print "|"
+
+# Issue 6: Slice
+sl_open = (1, 2, ...).Slice(1)
+print sl_open.Len()
+print "|"
+print sl_open[0]
+print "|"
+sl_win = (1, 2, ...).Slice(0, 4)
+print sl_win.Len()
+print "|"
+print sl_win[0]
+print "|"
+print sl_win[3]
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "false|true|false|true|true|true|false|false|false|false|true|Box[(Int, ...)]|(...)|(Int, ...)|(Int, Int, ...)|(Int)|()|42|200|10|10|-1|-2|2|4|1|2"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// Top-level return of infinite tuple should fail
+	errRet := `
+return (...)
+`
+	_, errR := runLesCode(errRet)
+	if errR == nil || !strings.Contains(errR.Error(), "return at top level expects Int or Bool") {
+		t.Fatalf("expected return error for (...), got: %v", errR)
+	}
+
+	// Issue 5: Disallow fixed-length unpack of infinite tuple without rest
+	errUnpack := `
+(a, b) = (1, 2, ...)
+`
+	_, errU := runLesCode(errUnpack)
+	if errU == nil || !strings.Contains(errU.Error(), "cannot unpack infinite tuple into fixed-length pattern") {
+		t.Fatalf("expected unpack error for infinite tuple into fixed-length pattern, got: %v", errU)
+	}
+
+	// Issue 6: Disallow negative slice indices on infinite tuples
+	errSlice1 := `
+(1, ...).Slice(-1)
+`
+	_, errS1 := runLesCode(errSlice1)
+	if errS1 == nil || !strings.Contains(errS1.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative slice start error, got: %v", errS1)
+	}
+
+	errSlice2 := `
+(1, ...).Slice(0, -1)
+`
+	_, errS2 := runLesCode(errSlice2)
+	if errS2 == nil || !strings.Contains(errS2.Error(), "cannot use negative index on infinite tuple") {
+		t.Fatalf("expected negative slice end error, got: %v", errS2)
 	}
 }
 

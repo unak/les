@@ -1964,3 +1964,115 @@ def match_tup(x: Int | (...)) -> String:
 		t.Errorf("expected error for '.t', got none")
 	}
 }
+
+func TestBuiltinIndexableInterfaceTypeInference(t *testing.T) {
+	input := `
+struct CustomVec:
+    x: Float
+    y: Float
+    def [](i: Int) -> Float:
+        i == 0 ? self.x : self.y
+    def Len() -> Int:
+        2
+
+s1: Indexable[Int, String] = "hello"
+s2: Indexable = "world"
+b1: Indexable[Int, Int] = Bytes("abc")
+t1: Indexable[Int, Int] = (1, 2)
+t2: Indexable[Int, Int | String] = (1, "a")
+t3: Indexable[Int, Int] = (1, ...)
+d1: Indexable[String, Int] = {"a": 10}
+v1: Indexable[Int, Float] = CustomVec(1.0, 2.0)
+v2: Indexable = CustomVec(1.0, 2.0)
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("expected Indexable assignments to succeed, got %v", err)
+	}
+
+	// Negative tests
+	negativeInputs := []string{
+		`x: Indexable[Int, Int] = "hello"`,
+		`x: Indexable[String, Int] = (1, 2)`,
+		`x: Indexable = 42`,
+	}
+	for _, neg := range negativeInputs {
+		l := lexer.NewLexer(neg)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Errorf("expected type error for %s, got nil", neg)
+		}
+	}
+}
+
+func TestInfiniteTupleLiteralInference(t *testing.T) {
+	input := `
+t0 = (...)
+t1 = (1, ...)
+t2 = (1, "a", ...)
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("inference error: %v", err)
+	}
+
+	t0T, ok := inf.scope.Lookup("t0")
+	if !ok || !t0T.(*TupleType).IsVariadic {
+		t.Errorf("expected t0 to be variadic tuple type, got %v", t0T)
+	}
+
+	t1T, ok := inf.scope.Lookup("t1")
+	if !ok || !t1T.(*TupleType).IsVariadic || len(t1T.(*TupleType).Elems) != 1 || t1T.(*TupleType).Elems[0] != TypeInt {
+		t.Errorf("expected t1 to be (Int, ...), got %v", t1T)
+	}
+
+	t2T, ok := inf.scope.Lookup("t2")
+	if !ok || !t2T.(*TupleType).IsVariadic || len(t2T.(*TupleType).Elems) != 2 {
+		t.Errorf("expected t2 to be (Int, String, ...), got %v", t2T)
+	}
+}
+
+func TestInfiniteTupleNotAssignableToFiniteTuple(t *testing.T) {
+	infTuple := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: true}
+	finTuple := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: false}
+
+	if IsAssignableTo(infTuple, finTuple) {
+		t.Errorf("expected infinite tuple (Int, Int, ...) to NOT be assignable to finite tuple (Int, Int)")
+	}
+	if !IsAssignableTo(finTuple, infTuple) {
+		t.Errorf("expected finite tuple (Int, Int) to be assignable to variadic tuple (Int, Int, ...)")
+	}
+
+	// Prefix lower-bound checks
+	emptyFin := &TupleType{Elems: []Type{}, IsVariadic: false}
+	singleFin := &TupleType{Elems: []Type{TypeInt}, IsVariadic: false}
+	intStringInf := &TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: true}
+	intInf := &TupleType{Elems: []Type{TypeInt}, IsVariadic: true}
+
+	if IsAssignableTo(emptyFin, intInf) {
+		t.Errorf("expected () to NOT be assignable to (Int, ...)")
+	}
+	if IsAssignableTo(singleFin, intStringInf) {
+		t.Errorf("expected (Int,) to NOT be assignable to (Int, String, ...)")
+	}
+	if IsAssignableTo(intInf, intStringInf) {
+		t.Errorf("expected (Int, ...) to NOT be assignable to (Int, String, ...)")
+	}
+}

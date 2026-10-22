@@ -336,7 +336,13 @@ func inspectValueWithContext(v Value, visited map[any]bool, depth int) string {
 			}
 			sb.WriteString(inspectValueWithContext(el, visited, depth+1))
 		}
-		if len(val.Elements) == 1 {
+		if val.IsVariadic {
+			if len(val.Elements) > 0 {
+				sb.WriteString(", ...")
+			} else {
+				sb.WriteString("...")
+			}
+		} else if len(val.Elements) == 1 {
 			sb.WriteString(",")
 		}
 		sb.WriteString(")")
@@ -427,7 +433,8 @@ func inspectValueWithContext(v Value, visited map[any]bool, depth int) string {
 
 // TupleValue holds lazy values (Thunks or direct values).
 type TupleValue struct {
-	Elements []Value
+	Elements   []Value
+	IsVariadic bool
 }
 
 func (t *TupleValue) Inspect() string {
@@ -463,7 +470,13 @@ func (t *TupleValue) stringWithVisited(visited map[any]bool, depth int) string {
 			sb.WriteString(val.String())
 		}
 	}
-	if len(t.Elements) == 1 {
+	if t.IsVariadic {
+		if len(t.Elements) > 0 {
+			sb.WriteString(", ...")
+		} else {
+			sb.WriteString("...")
+		}
+	} else if len(t.Elements) == 1 {
 		sb.WriteString(",")
 	}
 	sb.WriteString(")")
@@ -517,6 +530,13 @@ func makeDictKeyWithVisited(v Value, visited map[any]bool, depth int) DictKey {
 			sb.WriteString(elemKey.Type)
 			sb.WriteString(":")
 			sb.WriteString(elemKey.Key)
+		}
+		if val.IsVariadic {
+			if len(val.Elements) > 0 {
+				sb.WriteString(",...")
+			} else {
+				sb.WriteString("...")
+			}
 		}
 		sb.WriteString(")")
 		return DictKey{Type: "Tuple", Key: sb.String()}

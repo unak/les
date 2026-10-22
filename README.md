@@ -426,7 +426,7 @@ Les provides comprehensive bitwise operators operating on arbitrary-precision in
 
 #### Indexing Details (`[]`)
 - `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
-- `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]`. Out-of-bounds index raises a runtime error.
+- `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]` on finite tuples. Negative indexing is not supported on infinite tuples because an infinite sequence has no end, and attempting it raises a runtime error (`cannot use negative index on infinite tuple`). Out-of-bounds index raises a runtime error.
 - `Dict`: `d[key]` accesses value by key (`d["a"]`). Keys are strictly typed (e.g. `1` and `"1"` do not conflict). Non-existent key raises a runtime error.
 
 ### 7. Side Effects & I/O Semantics
@@ -963,12 +963,12 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `t.Append(elem: T): (...)`: Returns a new tuple with `elem` appended as the final element (does not flatten; passing a tuple nests it).
   - `t.Prepend(elem: T): (...)`: Returns a new tuple with `elem` prepended as the first element.
   - `t.Concat(...others: (...)): (...)`: Concatenates all argument tuples to `t` and returns a new tuple.
-  - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping).
-  - `t.Len(): Int`: Returns the number of elements in `t`.
+  - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping on finite tuples; negative index on an infinite tuple raises a runtime error).
+  - `t.Len(): Int`: Returns the number of elements in `t`. For infinite tuples (streams), returns negative integers based on explicit prefix element count before `...`: `-(k + 1)` where `k` is the prefix length (e.g. `(...)` -> `-1`, `(1, ...)` -> `-2`, `(1, 2, ...)` -> `-3`).
   - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
   - `t.Inspect(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
 - **Index Access**:
-  - `t[i]`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element). Out-of-bounds index raises a runtime error.
+  - `t[i]`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element) on finite tuples. Attempting negative index on an infinite tuple raises a runtime error (`cannot use negative index on infinite tuple`). Out-of-bounds index raises a runtime error.
 - **Operators & Destructuring**:
   - `t1 + t2`: Concatenates two tuples (equivalent to `t1.Concat(t2)`).
   - `t << elem`: Appends `elem` to `t` (equivalent to `t.Append(elem)`).
@@ -1011,6 +1011,21 @@ interface Error:
 ```
 - **Implicit Satisfaction**: Standard error instances created via the built-in `Error(msg)` function satisfy `Error`. In addition, any user-defined `struct` implementing `Message(): String` (or `Error(): String`) automatically satisfies `Error` structurally without explicit declarations.
 - **Usage**: Extensively used in union return types (`Type | Error`) and type-narrowing expressions (`val is Error` or `match val: case Error:`).
+
+#### `interface Indexable[K, V]`
+Declares the contract for types supporting index-based element access and length inspection:
+```python
+interface Indexable[K, V]:
+    def [](key: K) -> V
+    def Len(): Int
+```
+- **Implicit Satisfaction**: Built-in collections (`Tuple`, `Dict`, `String`, `Bytes`) and user-defined structs with index operator `def [](key)` and `def Len(): Int` satisfy `Indexable[K, V]`.
+  - `(Int, String)` satisfies `Indexable[Int, Int | String]`
+  - `(1, ...)` satisfies `Indexable[Int, Int]`
+  - `{String: Int}` satisfies `Indexable[String, Int]`
+  - `String` satisfies `Indexable[Int, String]`
+  - `Bytes` satisfies `Indexable[Int, Int]`
+- **Unspecialized Form**: `val is Indexable` matches any indexable collection without type argument specialization.
 
 ### 5. Built-in Modules
 

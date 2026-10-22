@@ -1434,7 +1434,7 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 	}
 }
 
-func (p *Parser) parseTupleElement() ast.Expr {
+func (p *Parser) parseTupleItem(closing lexer.TokenType) (ast.Expr, bool) {
 	if p.curTokenIs(lexer.TokenDot) {
 		pos := p.curPos()
 		dotCount := 0
@@ -1442,13 +1442,34 @@ func (p *Parser) parseTupleElement() ast.Expr {
 			dotCount++
 			p.nextToken()
 		}
+		if dotCount == 3 {
+			if p.curTokenIs(closing) {
+				return nil, true
+			}
+			if p.curTokenIs(lexer.TokenComma) {
+				p.nextToken() // consume trailing ','
+				if p.curTokenIs(closing) {
+					return nil, true
+				}
+				p.addError(pos.Line, pos.Col, "unexpected element after '...' in tuple literal")
+				for !p.curTokenIs(closing) && !p.curTokenIs(lexer.TokenEOF) {
+					p.nextToken()
+				}
+				return nil, true
+			}
+		}
 		if dotCount != 3 {
 			p.addError(pos.Line, pos.Col, "expected '...' for tuple spread")
 		}
 		inner := p.parseExpr(PREC_LOWEST)
-		return &ast.SpreadExpr{Position: pos, Expr: inner}
+		return &ast.SpreadExpr{Position: pos, Expr: inner}, false
 	}
-	return p.parseExpr(PREC_LOWEST)
+	return p.parseExpr(PREC_LOWEST), false
+}
+
+func (p *Parser) parseTupleElement() ast.Expr {
+	expr, _ := p.parseTupleItem(lexer.TokenRParen)
+	return expr
 }
 
 func (p *Parser) parseGroupOrTuple() ast.Expr {
@@ -1460,40 +1481,41 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 	}
 
 	p.nextToken() // advance to first element
-	isSpread := p.curTokenIs(lexer.TokenDot)
-	first := p.parseTupleElement()
+	first, isVariadic := p.parseTupleItem(lexer.TokenRParen)
+	if isVariadic {
+		// standalone ellipsis: (...) -> 0 or more infinite tuple
+		return &ast.TupleLit{Position: pos, Elements: []ast.Expr{}, IsVariadic: true}
+	}
 
-	if isSpread {
-		elems := []ast.Expr{first}
-		for p.peekTokenIs(lexer.TokenComma) {
-			p.nextToken() // consume ','
-			if p.peekTokenIs(lexer.TokenRParen) {
-				break
-			}
-			p.nextToken()
-			elems = append(elems, p.parseTupleElement())
+	isSpread := false
+	if _, ok := first.(*ast.SpreadExpr); ok {
+		isSpread = true
+	}
+
+	elems := []ast.Expr{first}
+
+	for p.peekTokenIs(lexer.TokenComma) {
+		p.nextToken() // consume ','
+		if p.peekTokenIs(lexer.TokenRParen) {
+			p.nextToken() // consume trailing ')'
+			return &ast.TupleLit{Position: pos, Elements: elems}
 		}
+		p.nextToken() // advance to next element or '...'
+		nextItem, variadic := p.parseTupleItem(lexer.TokenRParen)
+		if variadic {
+			// trailing ellipsis: (1, ...) or (1, 2, ...)
+			return &ast.TupleLit{Position: pos, Elements: elems, IsVariadic: true}
+		}
+		elems = append(elems, nextItem)
+	}
+
+	if isSpread || len(elems) > 1 {
 		p.expectPeek(lexer.TokenRParen)
 		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 
-	if p.peekTokenIs(lexer.TokenComma) {
-		// Tuple with elements
-		elems := []ast.Expr{first}
-		for p.peekTokenIs(lexer.TokenComma) {
-			p.nextToken() // consume ','
-			if p.peekTokenIs(lexer.TokenRParen) {
-				break // single tuple trailing comma: (1,)
-			}
-			p.nextToken()
-			elems = append(elems, p.parseTupleElement())
-		}
-		p.expectPeek(lexer.TokenRParen)
-		return &ast.TupleLit{Position: pos, Elements: elems}
-	}
-
+	// Single element without comma: (expr) -> grouped expression
 	p.expectPeek(lexer.TokenRParen)
-	// Regular grouped expression: (a + b)
 	return first
 }
 
@@ -1505,14 +1527,23 @@ func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
 		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 	p.nextToken()
-	elems = append(elems, p.parseTupleElement())
+	first, isVariadic := p.parseTupleItem(closing)
+	if isVariadic {
+		return &ast.TupleLit{Position: pos, Elements: elems, IsVariadic: true}
+	}
+	elems = append(elems, first)
 	for p.peekTokenIs(lexer.TokenComma) {
 		p.nextToken()
 		if p.peekTokenIs(closing) {
-			break
+			p.nextToken()
+			return &ast.TupleLit{Position: pos, Elements: elems}
 		}
 		p.nextToken()
-		elems = append(elems, p.parseTupleElement())
+		nextItem, variadic := p.parseTupleItem(closing)
+		if variadic {
+			return &ast.TupleLit{Position: pos, Elements: elems, IsVariadic: true}
+		}
+		elems = append(elems, nextItem)
 	}
 	p.expectPeek(closing)
 	return &ast.TupleLit{Position: pos, Elements: elems}
@@ -2249,7 +2280,7 @@ func hasArrowBeforeRBracket(rest string) bool {
 				for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t') {
 					j++
 				}
-				if j < len(runes) && (runes[j] == ')' || runes[j] == '}') {
+				if j < len(runes) && runes[j] == '}' {
 					return true
 				}
 			}
@@ -2298,6 +2329,12 @@ func exprToTypeAnnot(expr ast.Expr) string {
 				return ""
 			}
 			elems = append(elems, t)
+		}
+		if e.IsVariadic {
+			if len(elems) == 0 {
+				return "(...)"
+			}
+			return "(" + strings.Join(elems, ", ") + ", ...)"
 		}
 		return "(" + strings.Join(elems, ", ") + ")"
 	case *ast.DictLit:

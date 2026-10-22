@@ -195,6 +195,29 @@ var BuiltinErrorIface = &InterfaceType{
 	Embedded: []*InterfaceType{},
 }
 
+var BuiltinIndexableIface = &InterfaceType{
+	Name: "Indexable",
+	TypeParams: []TypeParamDef{
+		{Name: "K"},
+		{Name: "V"},
+	},
+	Methods: map[string]*FuncType{
+		"[]": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "K"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      &TypeParamType{Name: "V"},
+		},
+		"Len": {
+			Arg:      &TupleType{Elems: []Type{}},
+			MinArity: 0,
+			MaxArity: 0,
+			Ret:      TypeInt,
+		},
+	},
+	Embedded: []*InterfaceType{},
+}
+
 func NewInferencer() *Inferencer {
 	rootScope := NewScope(nil)
 
@@ -207,6 +230,9 @@ func NewInferencer() *Inferencer {
 	// Built-in Equal & Comparable interfaces
 	_ = rootScope.Declare("Equal", BuiltinEqualIface)
 	_ = rootScope.Declare("Comparable", BuiltinComparableIface)
+
+	// Built-in Indexable interface
+	_ = rootScope.Declare("Indexable", BuiltinIndexableIface)
 
 	// Built-in print: (*args: Show) -> ()
 	_ = rootScope.Declare("print", BuiltinPrintFuncType)
@@ -1931,6 +1957,12 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					return nil, err
 				}
 				curTuple = appendToTuple(curTuple, []Type{t}, false)
+			}
+		}
+		if e.IsVariadic {
+			curTuple.IsVariadic = true
+			if len(curTuple.Elems) == 0 {
+				curTuple.Elems = []Type{TypeUnknown}
 			}
 		}
 		return curTuple, nil

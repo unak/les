@@ -81,21 +81,8 @@ func (t *TupleType) String() string {
 
 func (t *TupleType) Equals(other Type) bool {
 	ot, ok := other.(*TupleType)
-	if !ok {
+	if !ok || t.IsVariadic != ot.IsVariadic {
 		return false
-	}
-	if t.IsVariadic {
-		lastIdx := len(t.Elems) - 1
-		for i, el := range ot.Elems {
-			expected := t.Elems[lastIdx]
-			if i < len(t.Elems) {
-				expected = t.Elems[i]
-			}
-			if !expected.Equals(el) {
-				return false
-			}
-		}
-		return true
 	}
 	if len(t.Elems) != len(ot.Elems) {
 		return false
@@ -461,21 +448,42 @@ func IsAssignableTo(src, target Type) bool {
 	if tTarget, ok := target.(*TupleType); ok {
 		if tSrc, ok := src.(*TupleType); ok {
 			if tTarget.IsVariadic {
-				lastIdx := len(tTarget.Elems) - 1
-				for i, el := range tSrc.Elems {
-					var expected Type = TypeUnknown
-					if lastIdx >= 0 {
-						if i < len(tTarget.Elems) {
-							expected = tTarget.Elems[i]
-						} else {
-							expected = tTarget.Elems[lastIdx]
-						}
+				if len(tTarget.Elems) == 0 {
+					return true
+				}
+				if !tSrc.IsVariadic && len(tSrc.Elems) < len(tTarget.Elems) {
+					return false
+				}
+				if tSrc.IsVariadic && len(tSrc.Elems) == 0 {
+					return false
+				}
+				checkCount := len(tSrc.Elems)
+				if len(tTarget.Elems) > checkCount {
+					checkCount = len(tTarget.Elems)
+				}
+				lastTargetIdx := len(tTarget.Elems) - 1
+				lastSrcIdx := len(tSrc.Elems) - 1
+				for i := 0; i < checkCount; i++ {
+					var el Type
+					if i < len(tSrc.Elems) {
+						el = tSrc.Elems[i]
+					} else {
+						el = tSrc.Elems[lastSrcIdx]
+					}
+					var expected Type
+					if i < len(tTarget.Elems) {
+						expected = tTarget.Elems[i]
+					} else {
+						expected = tTarget.Elems[lastTargetIdx]
 					}
 					if !IsAssignableTo(el, expected) {
 						return false
 					}
 				}
 				return true
+			}
+			if tSrc.IsVariadic {
+				return false
 			}
 			if len(tSrc.Elems) != len(tTarget.Elems) {
 				return false
@@ -595,6 +603,29 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok {
 				return false
 			}
+			if target.Name == "Indexable" {
+				if mName == "Len" {
+					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeInt) {
+						return false
+					}
+					continue
+				}
+				if mName == "[]" {
+					if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
+						return false
+					}
+					if len(target.TypeArgs) == 2 {
+						targetKey := target.TypeArgs[0]
+						targetVal := target.TypeArgs[1]
+						if tup, ok := fnT.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+							if !IsAssignableTo(targetKey, tup.Elems[0]) || !IsAssignableTo(fnT.Ret, targetVal) {
+								return false
+							}
+						}
+					}
+					continue
+				}
+			}
 			matched := targetSig.Equals(fnT)
 			if !matched && len(fnT.Overloads) > 0 {
 				for _, ov := range fnT.Overloads {
@@ -631,6 +662,32 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				return false
 			}
 			continue
+		}
+		if target.Name == "Indexable" {
+			if mName == "Len" {
+				if !IsAssignableTo(srcSig.Ret, TypeInt) {
+					return false
+				}
+				tup, ok := srcSig.Arg.(*TupleType)
+				if !ok || len(tup.Elems) != 0 {
+					return false
+				}
+				continue
+			}
+			if mName == "[]" {
+				tup, ok := srcSig.Arg.(*TupleType)
+				if !ok || len(tup.Elems) != 1 {
+					return false
+				}
+				if len(target.TypeArgs) == 2 {
+					targetKey := target.TypeArgs[0]
+					targetVal := target.TypeArgs[1]
+					if !IsAssignableTo(targetKey, tup.Elems[0]) || !IsAssignableTo(srcSig.Ret, targetVal) {
+						return false
+					}
+				}
+				continue
+			}
 		}
 		matched := targetSig.Equals(srcSig)
 		if !matched && len(srcSig.Overloads) > 0 {
@@ -996,7 +1053,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		if tt, ok := t.(*TupleType); ok {
 			var elemT Type = TypeUnknown
 			if len(tt.Elems) > 0 {
-				elemT = tt.Elems[0]
+				elemT = NewUnionType(tt.Elems...)
 			}
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeInt}},

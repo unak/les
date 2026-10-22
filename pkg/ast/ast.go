@@ -153,8 +153,9 @@ func (n *NilLit) Pos() Position { return n.Position }
 
 // TupleLit represents tuple literal, e.g. (1, 2, 3), (), (1,).
 type TupleLit struct {
-	Position Position
-	Elements []Expr
+	Position   Position
+	Elements   []Expr
+	IsVariadic bool
 }
 
 func (t *TupleLit) node()         {}
