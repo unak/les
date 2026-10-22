@@ -2059,4 +2059,20 @@ func TestInfiniteTupleNotAssignableToFiniteTuple(t *testing.T) {
 	if !IsAssignableTo(finTuple, infTuple) {
 		t.Errorf("expected finite tuple (Int, Int) to be assignable to variadic tuple (Int, Int, ...)")
 	}
+
+	// Prefix lower-bound checks
+	emptyFin := &TupleType{Elems: []Type{}, IsVariadic: false}
+	singleFin := &TupleType{Elems: []Type{TypeInt}, IsVariadic: false}
+	intStringInf := &TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: true}
+	intInf := &TupleType{Elems: []Type{TypeInt}, IsVariadic: true}
+
+	if IsAssignableTo(emptyFin, intInf) {
+		t.Errorf("expected () to NOT be assignable to (Int, ...)")
+	}
+	if IsAssignableTo(singleFin, intStringInf) {
+		t.Errorf("expected (Int,) to NOT be assignable to (Int, String, ...)")
+	}
+	if IsAssignableTo(intInf, intStringInf) {
+		t.Errorf("expected (Int, ...) to NOT be assignable to (Int, String, ...)")
+	}
 }

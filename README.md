@@ -963,7 +963,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `t.Append(elem: T): (...)`: Returns a new tuple with `elem` appended as the final element (does not flatten; passing a tuple nests it).
   - `t.Prepend(elem: T): (...)`: Returns a new tuple with `elem` prepended as the first element.
   - `t.Concat(...others: (...)): (...)`: Concatenates all argument tuples to `t` and returns a new tuple.
-  - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping).
+  - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping on finite tuples; negative index on an infinite tuple raises a runtime error).
   - `t.Len(): Int`: Returns the number of elements in `t`. For infinite tuples (streams), returns negative integers based on explicit prefix element count before `...`: `-(k + 1)` where `k` is the prefix length (e.g. `(...)` -> `-1`, `(1, ...)` -> `-2`, `(1, 2, ...)` -> `-3`).
   - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
   - `t.Inspect(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.

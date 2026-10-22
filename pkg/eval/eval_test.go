@@ -5588,6 +5588,23 @@ print ((1, 2) is (Int, ...))
 print "|"
 print ((1, ...) is (Int, ...))
 print "|"
+print (() is (Int, ...))
+print "|"
+print ((1,) is (Int, String, ...))
+print "|"
+print ((...) is (Int, ...))
+print "|"
+print ((1, ...) is (Int, String, ...))
+print "|"
+print ((1, "a", ...) is (Int, String, ...))
+print "|"
+
+# Issue 2 refinement: Struct type inference with infinite tuples
+struct Box[T]:
+    val: T
+b_inf = Box((1, ...))
+print b_inf.Type()
+print "|"
 
 # Issue 2: Type() method
 print (...).Type()
@@ -5640,9 +5657,18 @@ print sl_win[3]
 	if err != nil {
 		t.Fatalf("unexpected eval error: %v", err)
 	}
-	expected := "false|true|false|true|true|true|(...)|(Int, ...)|(Int, Int, ...)|(Int)|()|42|200|10|10|-1|-2|2|4|1|2"
+	expected := "false|true|false|true|true|true|false|false|false|false|true|Box[(Int, ...)]|(...)|(Int, ...)|(Int, Int, ...)|(Int)|()|42|200|10|10|-1|-2|2|4|1|2"
 	if out != expected {
 		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// Top-level return of infinite tuple should fail
+	errRet := `
+return (...)
+`
+	_, errR := runLesCode(errRet)
+	if errR == nil || !strings.Contains(errR.Error(), "return at top level expects Int or Bool") {
+		t.Fatalf("expected return error for (...), got: %v", errR)
 	}
 
 	// Issue 5: Disallow fixed-length unpack of infinite tuple without rest

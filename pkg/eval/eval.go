@@ -578,7 +578,13 @@ func safeFieldTypeName(val Value) string {
 			if litVal, ok := evalLiteral(thunk.Expr); ok {
 				return typeNameWithDepth(litVal, 0)
 			}
-			if tup, ok := thunk.Expr.(*ast.TupleLit); ok && len(tup.Elements) > 0 {
+			if tup, ok := thunk.Expr.(*ast.TupleLit); ok {
+				if len(tup.Elements) == 0 {
+					if tup.IsVariadic {
+						return "(...)"
+					}
+					return "()"
+				}
 				hasSpread := false
 				for _, el := range tup.Elements {
 					if _, isSp := el.(*ast.SpreadExpr); isSp {
@@ -594,6 +600,9 @@ func safeFieldTypeName(val Value) string {
 						} else {
 							parts[i] = "Unknown"
 						}
+					}
+					if tup.IsVariadic {
+						return "(" + strings.Join(parts, ", ") + ", ...)"
 					}
 					return "(" + strings.Join(parts, ", ") + ")"
 				}
@@ -615,8 +624,11 @@ func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings
 	case *types.TupleType:
 		if strings.HasPrefix(valTypeStr, "(") && strings.HasSuffix(valTypeStr, ")") {
 			inner := strings.TrimSpace(valTypeStr[1 : len(valTypeStr)-1])
-			if inner != "" {
+			if inner != "" && inner != "..." {
 				parts := splitTopLevelCommas(inner)
+				if len(parts) > 0 && parts[len(parts)-1] == "..." {
+					parts = parts[:len(parts)-1]
+				}
 				if dt.IsVariadic && len(dt.Elems) > 0 {
 					varElem := dt.Elems[len(dt.Elems)-1]
 					for _, p := range parts {
@@ -1220,7 +1232,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			forced := Force(retVal)
 			switch v := forced.(type) {
 			case *TupleValue:
-				if len(v.Elements) == 0 {
+				if len(v.Elements) == 0 && !v.IsVariadic {
 					code = 0
 				} else {
 					return nil, fmt.Errorf("return at top level expects Int or Bool, got %v", forced)
@@ -3858,7 +3870,16 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				isVariadic = true
 				elemAnnots = elemAnnots[:len(elemAnnots)-1]
 			}
-			if !isVariadic {
+			if isVariadic {
+				if len(elemAnnots) > 0 {
+					if !tVal.IsVariadic && len(tVal.Elements) < len(elemAnnots) {
+						return false
+					}
+					if tVal.IsVariadic && len(tVal.Elements) == 0 {
+						return false
+					}
+				}
+			} else {
 				if tVal.IsVariadic {
 					return false
 				}
@@ -3866,8 +3887,18 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					return false
 				}
 			}
+			checkCount := len(tVal.Elements)
+			if isVariadic && len(elemAnnots) > checkCount {
+				checkCount = len(elemAnnots)
+			}
 			lastIdx := len(elemAnnots) - 1
-			for i, el := range tVal.Elements {
+			for i := 0; i < checkCount; i++ {
+				var el Value
+				if i < len(tVal.Elements) {
+					el = tVal.Elements[i]
+				} else {
+					el = tVal.Elements[len(tVal.Elements)-1]
+				}
 				expectedAnnot := "Unknown"
 				if lastIdx >= 0 {
 					if i < len(elemAnnots) {

@@ -448,15 +448,33 @@ func IsAssignableTo(src, target Type) bool {
 	if tTarget, ok := target.(*TupleType); ok {
 		if tSrc, ok := src.(*TupleType); ok {
 			if tTarget.IsVariadic {
-				lastIdx := len(tTarget.Elems) - 1
-				for i, el := range tSrc.Elems {
-					var expected Type = TypeUnknown
-					if lastIdx >= 0 {
-						if i < len(tTarget.Elems) {
-							expected = tTarget.Elems[i]
-						} else {
-							expected = tTarget.Elems[lastIdx]
-						}
+				if len(tTarget.Elems) == 0 {
+					return true
+				}
+				if !tSrc.IsVariadic && len(tSrc.Elems) < len(tTarget.Elems) {
+					return false
+				}
+				if tSrc.IsVariadic && len(tSrc.Elems) == 0 {
+					return false
+				}
+				checkCount := len(tSrc.Elems)
+				if len(tTarget.Elems) > checkCount {
+					checkCount = len(tTarget.Elems)
+				}
+				lastTargetIdx := len(tTarget.Elems) - 1
+				lastSrcIdx := len(tSrc.Elems) - 1
+				for i := 0; i < checkCount; i++ {
+					var el Type
+					if i < len(tSrc.Elems) {
+						el = tSrc.Elems[i]
+					} else {
+						el = tSrc.Elems[lastSrcIdx]
+					}
+					var expected Type
+					if i < len(tTarget.Elems) {
+						expected = tTarget.Elems[i]
+					} else {
+						expected = tTarget.Elems[lastTargetIdx]
 					}
 					if !IsAssignableTo(el, expected) {
 						return false
@@ -587,7 +605,7 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			}
 			if target.Name == "Indexable" {
 				if mName == "Len" {
-					if fnT.MinArgs() > 0 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 0) || !IsAssignableTo(fnT.Ret, TypeInt) {
+					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeInt) {
 						return false
 					}
 					continue
