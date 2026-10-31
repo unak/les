@@ -3409,6 +3409,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	// Parameterized type annotation: Name[T1, T2] or @mod.Name[T1, T2]
 	if strings.HasSuffix(annot, "]") {
 		depth := 0
+		pDepth := 0
+		brDepth := 0
 		bracketIdx := -1
 		for i := 0; i < len(runes); i++ {
 			r := runes[i]
@@ -3419,42 +3421,54 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 					continue
 				}
 			}
-			if r == '[' {
-				if depth == 0 && bracketIdx == -1 {
-					bracketIdx = i
-				}
-				depth++
-			} else if r == ']' {
-				depth--
-				if depth == 0 && i == len(runes)-1 {
-					break
+			if r == '(' {
+				pDepth++
+			} else if r == ')' {
+				pDepth--
+			} else if r == '{' {
+				brDepth++
+			} else if r == '}' {
+				brDepth--
+			} else if pDepth == 0 && brDepth == 0 {
+				if r == '[' {
+					if depth == 0 {
+						bracketIdx = i
+					}
+					depth++
+				} else if r == ']' {
+					depth--
+					if depth == 0 && i < len(runes)-1 {
+						bracketIdx = -1
+					}
 				}
 			}
 		}
-		if bracketIdx > 0 && depth == 0 {
+		if bracketIdx > 0 && depth == 0 && pDepth == 0 && brDepth == 0 {
 			baseStr := strings.TrimSpace(string(runes[:bracketIdx]))
-			argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
-			baseType, err := inf.parseTypeAnnot(baseStr)
-			if err != nil {
-				return nil, err
-			}
-			argTypes, _, err := inf.parseTupleElements(argsStr)
-			if err != nil {
-				return nil, err
-			}
-			if st, ok := baseType.(*StructType); ok {
-				if err := ValidateTypeConstraints(st.TypeParams, argTypes); err != nil {
+			if !strings.ContainsAny(baseStr, "->()[]{}:|, \t\n") {
+				argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
+				baseType, err := inf.parseTypeAnnot(baseStr)
+				if err != nil {
 					return nil, err
 				}
-				return InstantiateStruct(st, argTypes), nil
-			}
-			if iface, ok := baseType.(*InterfaceType); ok {
-				if err := ValidateTypeConstraints(iface.TypeParams, argTypes); err != nil {
+				argTypes, _, err := inf.parseTupleElements(argsStr)
+				if err != nil {
 					return nil, err
 				}
-				return InstantiateInterface(iface, argTypes), nil
+				if st, ok := baseType.(*StructType); ok {
+					if err := ValidateTypeConstraints(st.TypeParams, argTypes); err != nil {
+						return nil, err
+					}
+					return InstantiateStruct(st, argTypes), nil
+				}
+				if iface, ok := baseType.(*InterfaceType); ok {
+					if err := ValidateTypeConstraints(iface.TypeParams, argTypes); err != nil {
+						return nil, err
+					}
+					return InstantiateInterface(iface, argTypes), nil
+				}
+				return nil, fmt.Errorf("type '%s' does not take type arguments", baseStr)
 			}
-			return nil, fmt.Errorf("type '%s' does not take type arguments", baseStr)
 		}
 	}
 
@@ -3532,10 +3546,25 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 		parts = append(parts, string(runes[start:]))
 		var narrowMembers []Type
 		var coveredMembers []Type
+		hasTrueMember := false
+		hasFalseMember := false
 		for _, p := range parts {
 			pt := strings.TrimSpace(p)
 			if pt == "" {
 				return nil, nil, fmt.Errorf("invalid union type: empty member in '%s'", annot)
+			}
+			unwrapped := pt
+			for ast.HasEnclosingDelims(unwrapped, '(', ')') {
+				in := strings.TrimSpace(unwrapped[1 : len(unwrapped)-1])
+				if ast.HasTopLevelComma(in) {
+					break
+				}
+				unwrapped = in
+			}
+			if unwrapped == "true" {
+				hasTrueMember = true
+			} else if unwrapped == "false" {
+				hasFalseMember = true
 			}
 			nMember, cMember, err := inf.parsePatternTypeAnnot(pt)
 			if err != nil {
@@ -3545,6 +3574,9 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 			if cMember != nil {
 				coveredMembers = append(coveredMembers, cMember)
 			}
+		}
+		if hasTrueMember && hasFalseMember {
+			coveredMembers = append(coveredMembers, TypeBool)
 		}
 		var finalCovered Type
 		if len(coveredMembers) > 0 {
@@ -3565,49 +3597,17 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 			return varTup, varTup, nil
 		}
 
-		// Check if there is a top-level comma
-		hasTopLevelComma := false
-		pD := 0
-		bD := 0
-		brD := 0
-		innerRunes := []rune(inner)
-		for i := 0; i < len(innerRunes); i++ {
-			r := innerRunes[i]
-			if r == '/' {
-				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
-				if nextIdx > i {
-					i = nextIdx - 1
-					continue
-				}
-			}
-			if r == '(' {
-				pD++
-			} else if r == ')' {
-				pD--
-			} else if r == '[' {
-				bD++
-			} else if r == ']' {
-				bD--
-			} else if r == '{' {
-				brD++
-			} else if r == '}' {
-				brD--
-			} else if r == ',' && pD == 0 && bD == 0 && brD == 0 {
-				hasTopLevelComma = true
-				break
-			}
-		}
-
-		if !hasTopLevelComma {
+		if !ast.HasTopLevelComma(inner) {
 			// Single grouped pattern e.g. (/^\d+$/) or (Int)
 			return inf.parsePatternTypeAnnot(inner)
 		}
 
 		// Tuple pattern with top-level comma
 		var rawParts []string
-		pD = 0
-		bD = 0
-		brD = 0
+		pD := 0
+		bD := 0
+		brD := 0
+		innerRunes := []rune(inner)
 		elemStart := 0
 		for i := 0; i < len(innerRunes); i++ {
 			r := innerRunes[i]
@@ -3991,10 +3991,25 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 			}
 			if pat == "_" {
 				hasWildcard = true
-			} else if pat == "true" {
-				hasTrue = true
-			} else if pat == "false" {
-				hasFalse = true
+				if c.AsName != "" && c.AsName != "_" {
+					asT := targetT
+					if asT == nil {
+						asT = TypeUnknown
+					}
+					_ = caseScope.Declare(c.AsName, asT)
+				}
+			} else if pat == "true" || pat == "false" {
+				if pat == "true" {
+					hasTrue = true
+				} else {
+					hasFalse = true
+				}
+				if id, isId := e.Target.(*ast.Identifier); isId {
+					_ = caseScope.Declare(id.Name, TypeBool)
+				}
+				if c.AsName != "" && c.AsName != "_" {
+					_ = caseScope.Declare(c.AsName, TypeBool)
+				}
 			} else if pat != "" {
 				narrowT, coveredT, err := inf.parsePatternTypeAnnot(pat)
 				if err != nil {

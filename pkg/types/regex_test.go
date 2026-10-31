@@ -285,4 +285,55 @@ def testRest(t: (Int, String)): Int:
 	if err := infRest.InferProgram(progRest); err != nil {
 		t.Fatalf(`expected (...r) to be exhaustive, got %v`, err)
 	}
+
+	// Verify true | false union exhaustiveness in pattern
+	_, cBoolUnion, errBoolUnion := inf.ParsePatternTypeAnnot(`true | false`)
+	if errBoolUnion != nil {
+		t.Fatalf(`failed to parse true | false union: %v`, errBoolUnion)
+	}
+	if cBoolUnion != TypeBool {
+		t.Fatalf(`expected coveredType TypeBool, got %v`, cBoolUnion)
+	}
+
+	// Verify (true | false, Int) exhaustiveness
+	codeBoolTup := `
+def testBoolTup(p: (Bool, Int)): String:
+    match p:
+        case (true | false, Int):
+            return ok
+`
+	lBoolTup := lexer.NewLexer(codeBoolTup)
+	pBoolTup := parser.NewParser(lBoolTup)
+	progBoolTup := pBoolTup.ParseProgram()
+	if len(pBoolTup.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, pBoolTup.Errors())
+	}
+	infBoolTup := NewInferencer()
+	if err := infBoolTup.InferProgram(progBoolTup); err != nil {
+		t.Fatalf(`expected (true | false, Int) to be exhaustive, got %v`, err)
+	}
+
+	// Verify case _ as x and case true as x variable binding
+	codeBindings := `
+def testBindings(x: Int, b: Bool): Int:
+    match x:
+        case _ as anyVal:
+            print anyVal
+    match b:
+        case true as t:
+            print t
+        case false as f:
+            print f
+    return 0
+`
+	lBind := lexer.NewLexer(codeBindings)
+	pBind := parser.NewParser(lBind)
+	progBind := pBind.ParseProgram()
+	if len(pBind.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, pBind.Errors())
+	}
+	infBind := NewInferencer()
+	if err := infBind.InferProgram(progBind); err != nil {
+		t.Fatalf(`expected bindings to typecheck, got %v`, err)
+	}
 }

@@ -473,3 +473,20 @@ r5 = classifyPair((1, 2, 3))
 	checkStr("r4", "true-val")
 	checkStr("r5", "fallback-tup")
 }
+
+func TestParseGenericTypeAnnotArrowAndMultipleBrackets(t *testing.T) {
+	_, _, isGen1 := parseGenericTypeAnnot("Foo[Int] -> Bar[String]")
+	if isGen1 {
+		t.Fatalf("expected Foo[Int] -> Bar[String] not to be parsed as generic type")
+	}
+
+	base2, args2, isGen2 := parseGenericTypeAnnot("Pair[Int, String]")
+	if !isGen2 || base2 != "Pair" || len(args2) != 2 || args2[0] != "Int" || args2[1] != "String" {
+		t.Fatalf("expected Pair[Int, String] to be generic, got %v, %v, %v", isGen2, base2, args2)
+	}
+
+	_, _, isGen3 := parseGenericTypeAnnot("(Pair[Int, String])")
+	if isGen3 {
+		t.Fatalf("expected (Pair[Int, String]) not to be generic")
+	}
+}

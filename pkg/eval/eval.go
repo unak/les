@@ -826,6 +826,8 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 		return annot, nil, false
 	}
 	depth := 0
+	pDepth := 0
+	brDepth := 0
 	bracketIdx := -1
 	runes := []rune(annot)
 	for i := 0; i < len(runes); i++ {
@@ -837,23 +839,33 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 				continue
 			}
 		}
-		if r == '[' {
-			if depth == 0 && bracketIdx == -1 {
-				bracketIdx = i
-			}
-			depth++
-		} else if r == ']' {
-			depth--
-			if depth == 0 && i == len(runes)-1 {
-				break
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if pDepth == 0 && brDepth == 0 {
+			if r == '[' {
+				if depth == 0 {
+					bracketIdx = i
+				}
+				depth++
+			} else if r == ']' {
+				depth--
+				if depth == 0 && i < len(runes)-1 {
+					bracketIdx = -1
+				}
 			}
 		}
 	}
-	if bracketIdx <= 0 || depth != 0 {
+	if bracketIdx <= 0 || depth != 0 || pDepth != 0 || brDepth != 0 {
 		return annot, nil, false
 	}
 	base := strings.TrimSpace(string(runes[:bracketIdx]))
-	if strings.Contains(base, "->") || strings.HasPrefix(base, "(") || strings.HasPrefix(base, "{") {
+	if strings.ContainsAny(base, "->()[]{}:|, \t\n") {
 		return annot, nil, false
 	}
 	inner := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))

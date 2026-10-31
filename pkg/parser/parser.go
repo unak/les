@@ -968,8 +968,14 @@ func (p *Parser) isTupleDestructuringPattern() bool {
 	}
 	elems = append(elems, strings.TrimSpace(string(elemRunes[start:])))
 
-	for _, el := range elems {
-		if el == `` || el == `...` || el == `_` {
+	for idx, el := range elems {
+		if el == `` {
+			if idx == len(elems)-1 && len(elems) >= 2 {
+				continue
+			}
+			return false
+		}
+		if el == `...` || el == `_` {
 			continue
 		}
 		if strings.HasPrefix(el, `...`) {
