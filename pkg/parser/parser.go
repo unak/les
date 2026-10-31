@@ -822,6 +822,8 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 				if p.curTokenIs(lexer.TokenIdent) {
 					asName = p.curToken.Literal
 					p.nextToken()
+				} else {
+					p.addError(p.curToken.Line, p.curToken.Col, "expected identifier after 'as', got %s", lexer.FormatToken(p.curToken))
 				}
 			} else if p.peekTokenIs(lexer.TokenIdent) && p.peekToken.Literal == "as" {
 				p.nextToken() // advance to 'as'
@@ -829,6 +831,8 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 				if p.curTokenIs(lexer.TokenIdent) {
 					asName = p.curToken.Literal
 					p.nextToken()
+				} else {
+					p.addError(p.curToken.Line, p.curToken.Col, "expected identifier after 'as', got %s", lexer.FormatToken(p.curToken))
 				}
 			}
 

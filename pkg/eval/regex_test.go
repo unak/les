@@ -232,3 +232,56 @@ match s:
 
 	checkInt("val", 42)
 }
+
+func TestRegexDuplicateNamedGroups(t *testing.T) {
+	input := `
+r = /(?P<x>\d+)|(?P<x>[a-z]+)/
+m1 = "abc" =~ r
+m2 = "123" =~ r
+
+x1 = m1["x"]
+span1 = m1.Span("x")
+start1 = m1.Start("x")
+end1 = m1.End("x")
+
+x2 = m2["x"]
+span2 = m2.Span("x")
+start2 = m2.Start("x")
+end2 = m2.End("x")
+`
+	env, _ := runEvalCode(t, input)
+
+	checkStr := func(varName, expected string) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		sv, ok := Force(val).(StringValue)
+		if !ok || string(sv) != expected {
+			t.Fatalf("%s: expected %q, got %v", varName, expected, val)
+		}
+	}
+
+	checkInt := func(varName string, expected int) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		iv, ok := Force(val).(IntValue)
+		if !ok {
+			t.Fatalf("%s not IntValue: %v", varName, val)
+		}
+		i, _ := iv.ToInt()
+		if i != expected {
+			t.Fatalf("%s: expected %d, got %d", varName, expected, i)
+		}
+	}
+
+	checkStr("x1", "abc")
+	checkInt("start1", 0)
+	checkInt("end1", 3)
+
+	checkStr("x2", "123")
+	checkInt("start2", 0)
+	checkInt("end2", 3)
+}

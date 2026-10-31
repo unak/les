@@ -88,3 +88,23 @@ def check(x: String | Int):
 		t.Fatalf("type inference error: %v", err)
 	}
 }
+
+func TestInvalidRegexTypeErrors(t *testing.T) {
+	cases := []string{
+		`r = /a(b/`,
+		`b = "test" is /a(b/`,
+	}
+	for _, input := range cases {
+		l := lexer.NewLexer(input)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			continue
+		}
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected type error for invalid regex %q", input)
+		}
+	}
+}

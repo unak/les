@@ -1665,7 +1665,9 @@ func (rv *RegexValue) ExecMatch(s string) Value {
 	subexpNames := rv.Re.SubexpNames()
 	for i, name := range subexpNames {
 		if name != "" && i < len(groups) {
-			names[name] = groups[i]
+			if existing, ok := names[name]; !ok || existing == (NilValue{}) {
+				names[name] = groups[i]
+			}
 		}
 	}
 
@@ -1708,7 +1710,9 @@ func (rv *RegexValue) ExecFindAll(s string, n int) *TupleValue {
 		names := make(map[string]Value)
 		for i, name := range subexpNames {
 			if name != "" && i < len(groups) {
-				names[name] = groups[i]
+				if existing, ok := names[name]; !ok || existing == (NilValue{}) {
+					names[name] = groups[i]
+				}
 			}
 		}
 

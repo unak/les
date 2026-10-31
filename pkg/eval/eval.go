@@ -1073,6 +1073,15 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			env.store[s.Name] = newVal
 			return nil, nil
 		}
+		// If RHS is a regex literal, validate and compile immediately so invalid regex raises error
+		if rlit, ok := s.Value.(*ast.RegexLit); ok {
+			rv, err := CompileRegex(rlit.Pattern, rlit.Flags)
+			if err != nil {
+				return nil, err
+			}
+			env.Set(s.Name, rv)
+			return nil, nil
+		}
 		// If RHS is a constant literal, evaluate immediately without lazy thunk!
 		if val, ok := evalLiteral(s.Value); ok {
 			env.Set(s.Name, val)
@@ -2043,7 +2052,24 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.IsExpr:
 		val := Force(NewThunk(e.Expr, env))
-		matches := checkValueMatchesType(val, strings.TrimSpace(e.TypeAnnot), env)
+		annot := strings.TrimSpace(e.TypeAnnot)
+		if strings.HasPrefix(annot, "/") {
+			lastSlash := strings.LastIndex(annot, "/")
+			if lastSlash <= 0 {
+				return nil, fmt.Errorf("invalid regex literal in 'is': %s", annot)
+			}
+			rawPat := annot[1:lastSlash]
+			flags := annot[lastSlash+1:]
+			rv, err := CompileRegex(types.UnescapeRegexPattern(rawPat), flags)
+			if err != nil {
+				return nil, err
+			}
+			if sv, ok := val.(StringValue); ok {
+				return BoolValue(rv.Re.MatchString(string(sv))), nil
+			}
+			return BoolValue(false), nil
+		}
+		matches := checkValueMatchesType(val, annot, env)
 		return BoolValue(matches), nil
 
 	case *ast.MatchExpr:
@@ -4079,15 +4105,25 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 							idx = i64
 						} else if sv, ok := kVal.(StringValue); ok {
 							found := false
+							firstMatchIdx := -1
 							for i, name := range mv.Regex.Re.SubexpNames() {
 								if name != "" && name == string(sv) {
-									idx = i
-									found = true
-									break
+									if firstMatchIdx == -1 {
+										firstMatchIdx = i
+									}
+									if i < len(mv.Spans) && mv.Spans[i][0] != -1 {
+										idx = i
+										found = true
+										break
+									}
 								}
 							}
 							if !found {
-								return NewIntValue(-1), nil
+								if firstMatchIdx != -1 {
+									idx = firstMatchIdx
+								} else {
+									return NewIntValue(-1), nil
+								}
 							}
 						} else {
 							return nil, fmt.Errorf("Start argument must be Int or String, got %s", typeNameOf(kVal))
@@ -4124,15 +4160,25 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 							idx = i64
 						} else if sv, ok := kVal.(StringValue); ok {
 							found := false
+							firstMatchIdx := -1
 							for i, name := range mv.Regex.Re.SubexpNames() {
 								if name != "" && name == string(sv) {
-									idx = i
-									found = true
-									break
+									if firstMatchIdx == -1 {
+										firstMatchIdx = i
+									}
+									if i < len(mv.Spans) && mv.Spans[i][0] != -1 {
+										idx = i
+										found = true
+										break
+									}
 								}
 							}
 							if !found {
-								return NewIntValue(-1), nil
+								if firstMatchIdx != -1 {
+									idx = firstMatchIdx
+								} else {
+									return NewIntValue(-1), nil
+								}
 							}
 						} else {
 							return nil, fmt.Errorf("End argument must be Int or String, got %s", typeNameOf(kVal))
@@ -4169,15 +4215,25 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 							idx = i64
 						} else if sv, ok := kVal.(StringValue); ok {
 							found := false
+							firstMatchIdx := -1
 							for i, name := range mv.Regex.Re.SubexpNames() {
 								if name != "" && name == string(sv) {
-									idx = i
-									found = true
-									break
+									if firstMatchIdx == -1 {
+										firstMatchIdx = i
+									}
+									if i < len(mv.Spans) && mv.Spans[i][0] != -1 {
+										idx = i
+										found = true
+										break
+									}
 								}
 							}
 							if !found {
-								return &TupleValue{Elements: []Value{NewIntValue(-1), NewIntValue(-1)}}, nil
+								if firstMatchIdx != -1 {
+									idx = firstMatchIdx
+								} else {
+									return &TupleValue{Elements: []Value{NewIntValue(-1), NewIntValue(-1)}}, nil
+								}
 							}
 						} else {
 							return nil, fmt.Errorf("Span argument must be Int or String, got %s", typeNameOf(kVal))

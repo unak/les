@@ -73,6 +73,8 @@ les - arg1 arg2 < script.les
 | `Nil` | `nil` | Represents the absence of a value (singleton literal `nil`). Frequently used in union types (e.g., `String | Nil`). |
 | `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
 | `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. Keys are strictly typed (e.g. `1` and `"1"` are distinct keys without coercion). |
+| `Regex` | `/pattern/flags`, `Regex("pattern", "flags")` | Immutable compiled regular expression object. Supports flags `i` (case-insensitive), `m` (multi-line), `s` (dot matches all), and `U` (ungreedy). Disambiguated from division `/` based on preceding token context. |
+| `Match` | Result of `s =~ r` or `r.Match(s)` | Successful regex match result. Indexed by 0-based group index `m[0]` (full match, `String`), `m[1..n]` (captures, `String | Nil`), negative index `m[-1]`, or group name `m["name"]`. Implements `Indexable[Int, String | Nil]` and `Indexable[String, String | Nil]`. |
 
 > [!NOTE]
 > **Numeric Literal Syntax Rules & Disambiguation**:
@@ -860,6 +862,8 @@ if len(Args) > 0:
 Primitive types provide predefined instance methods, indexing mechanisms, length support, and operators, as well as implementations of the `Show` interface.
 
 #### `String`
+
+- `=~(r: Regex): Match | Nil`: Matches string against regular expression `r`, returning `Match` or `nil`.
 - **Methods**:
   - `s.Len(): Int`: Returns the number of runes (Unicode code points) in `s`.
   - `s.Type(): String`: Returns `"String"`. Satisfies `interface Show`.
@@ -987,6 +991,57 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 - **Operators**:
   - `==`, `!=`: Structural equality comparison of all key-value entries.
 
+#### Regex
+- **Methods**:
+  - 
+.Pattern(): String: Returns the underlying pattern string.
+  - 
+.Flags(): String: Returns the compiled flag string (e.g. 'i').
+  - 
+.Test(s: String): Bool: Returns 	rue if regex matches target string s.
+  - 
+.Match(s: String): Match | Nil: Matches s, returning Match on success or 
+il.
+  - 
+.FindAll(s: String, count: Int = -1): (Match, ...): Returns a tuple of all non-overlapping matches.
+  - 
+.Replace(s: String, repl: String): String: Replaces the first match with replacement string 
+epl.
+  - 
+.ReplaceAll(s: String, repl: String): String: Replaces all matches with 
+epl.
+  - 
+.Split(s: String, count: Int = -1): (String, ...): Splits s by regex matches into a tuple of strings.
+  - 
+.Inspect(): String: Returns regex string representation. Satisfies interface Show.
+  - 
+.Type(): String: Returns 'Regex'. Satisfies interface Show.
+- **Operators**:
+  - s =~ r, 
+ =~ s: Matches string and regex, returning Match | Nil.
+  - ==, !=: Checks equality of pattern and flags.
+
+#### Match
+- **Methods**:
+  - m.Len(): Int: Returns number of capture groups including group 0 (full match).
+  - m.Group(idxOrName: Int | String): String | Nil: Returns captured string by 0-based index, negative index, or group name; returns 
+il if unmatched.
+  - m.Groups(): (String | Nil, ...): Returns tuple of capture groups (excluding group 0).
+  - m.NamedGroups(): {String: String | Nil}: Returns dictionary of all named capture groups.
+  - m.Start(idxOrName: Int | String = 0): Int: Returns 0-based start rune offset, or -1 if unmatched.
+  - m.End(idxOrName: Int | String = 0): Int: Returns 0-based end rune offset, or -1 if unmatched.
+  - m.Span(idxOrName: Int | String = 0): (Int, Int): Returns (Start, End) rune offset tuple, or (-1, -1).
+  - m.Text(): String: Returns full matched string (same as m[0]).
+  - m.Target(): String: Returns original target string searched.
+  - m.Regex(): Regex: Returns compiled Regex object that produced this match.
+  - m.Inspect(): String: Returns human-readable representation. Satisfies interface Show.
+  - m.Type(): String: Returns 'Match'. Satisfies interface Show.
+- **Index Access**:
+  - m[i]: 0-based capture group index (m[0] is full match, m[1..n] are captures). Supports negative indexing (m[-1]). Implements Indexable[Int, String | Nil].
+  - m['name']: Named capture group access. Implements Indexable[String, String | Nil].
+- **Operators**:
+  - ==, !=: Compares target, regex pattern/flags, and capture spans.
+
 ### 4. Built-in Interfaces
 
 Les provides predefined standard interfaces in the global scope for polymorphism, string conversion, and error handling:
@@ -1077,32 +1132,7 @@ import bufio
 
 ## Planned Features / Future Work
 
-### 1. Regular Expression Type (`Regex`) & `/pattern/flags` Literal
-
-A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is planned for rich text processing.
-
-- **Syntax**: `/pattern/flags` (e.g., `/[a-zA-Z0-9_-]+/`, `/[a-z]+/i`)
-- **Lexer / Parser Disambiguation**:
-  - Disambiguate between division operator (`/`) and regex literal start (`/.../`) using preceding token context:
-    - Preceded by an expression operand (ident, literal, `)`, `]`, `}`): parsed as division `/`.
-    - Preceded by an operator, punctuation, or statement start (e.g., `=`, `(`, `[`, `{`, `,`, `:`, `case`, `return`, `do`): parsed as regex literal `/.../`.
-- **Pattern Matching (`match` / `case`) Integration**:
-  - Seamless matching and capture extraction in `match` statements:
-    ```python
-    match line:
-        case /^GET\s+(\S+)/:
-            # Capture groups extraction / handling
-            print "Matched GET"
-        case /^POST\s+(\S+)/:
-            print "Matched POST"
-        case _:
-            print "Unknown"
-    ```
-- **Methods & Type System**:
-  - Native regex matching operations (`s =~ /re/` or `s is /re/`, `re.Find(s)`, `re.Replace(s, rep)`).
-  - Implicitly satisfies the `Show` interface for printing.
-
-### 2. Hexadecimal Floating-Point Literals
+### 1. Hexadecimal Floating-Point Literals
 
 - Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
   - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
@@ -1111,7 +1141,7 @@ A first-class `Regex` (or `Regexp`) type with `/pattern/flags` literal syntax is
   - Direct method invocation on literals (e.g., `42.Inspect()`, `3.14.Inspect()`).
   - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.Inspect()`) is disambiguated as a method call on integer `42`.
 
-### 3. String Interpolation (`#{}`)
+### 2. String Interpolation (#{})
 
 Ruby-style string interpolation within double-quoted strings:
 
@@ -1127,7 +1157,7 @@ Ruby-style string interpolation within double-quoted strings:
   print 'Literal #{name}\n'  # prints "Literal #{name}\n"
   ```
 
-### 4. Null-Safe Navigation (`?.`) & Coalescing Operator (`??`)
+### 3. Null-Safe Navigation (?.) & Coalescing Operator (??)
 
 Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
 

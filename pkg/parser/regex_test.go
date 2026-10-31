@@ -89,3 +89,17 @@ func TestParseRegexEscapedSlashAndBackslash(t *testing.T) {
 		t.Fatalf("expected pattern %q, got %q", expected, rlit.Pattern)
 	}
 }
+
+func TestParseMatchCaseMissingAsIdentError(t *testing.T) {
+	input := `
+match s:
+    case /foo/ as:
+        print 1
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		t.Fatalf("expected parser error for missing identifier after as")
+	}
+}

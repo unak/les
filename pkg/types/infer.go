@@ -1994,6 +1994,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 	case *ast.NilLit:
 		return TypeNil, nil
 	case *ast.RegexLit:
+		if err := ValidateRegex(e.Pattern, e.Flags); err != nil {
+			return nil, inf.nodeErr(e, "%s", err.Error())
+		}
 		return TypeRegex, nil
 	case *ast.ForceExpr:
 		return inf.inferExpr(e.Expr)
@@ -3050,7 +3053,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if e.TypeAnnot != "" && !strings.HasPrefix(e.TypeAnnot, "/") {
+		if strings.HasPrefix(e.TypeAnnot, "/") {
+			lastSlash := strings.LastIndex(e.TypeAnnot, "/")
+			if lastSlash <= 0 {
+				return nil, inf.nodeErr(e, "invalid regex literal in 'is': %s", e.TypeAnnot)
+			}
+			rawPat := e.TypeAnnot[1:lastSlash]
+			flags := e.TypeAnnot[lastSlash+1:]
+			pat := UnescapeRegexPattern(rawPat)
+			if err := ValidateRegex(pat, flags); err != nil {
+				return nil, inf.nodeErr(e, "%s", err.Error())
+			}
+		} else if e.TypeAnnot != "" {
 			if _, err := inf.parseTypeAnnot(e.TypeAnnot); err != nil {
 				return nil, err
 			}
@@ -3639,6 +3653,9 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 	for _, c := range e.Cases {
 		caseScope := NewScope(inf.scope)
 		if c.RegexPattern != nil {
+			if err := ValidateRegex(c.RegexPattern.Pattern, c.RegexPattern.Flags); err != nil {
+				return nil, false, inf.nodeErr(c.RegexPattern, "%s", err.Error())
+			}
 			if id, isId := e.Target.(*ast.Identifier); isId {
 				_ = caseScope.Declare(id.Name, TypeString)
 			}

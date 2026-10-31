@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -1518,6 +1519,55 @@ func ValidateTypeConstraints(typeParams []TypeParamDef, typeArgs []Type) error {
 				return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", typeArgs[i].String(), subConstraint.String(), tp.Name)
 			}
 		}
+	}
+	return nil
+}
+
+// UnescapeRegexPattern unescapes \/ to / while preserving \\.
+func UnescapeRegexPattern(rawPat string) string {
+	var patSb strings.Builder
+	for i := 0; i < len(rawPat); i++ {
+		if rawPat[i] == '\\' && i+1 < len(rawPat) {
+			if rawPat[i+1] == '/' {
+				patSb.WriteByte('/')
+			} else {
+				patSb.WriteByte('\\')
+				patSb.WriteByte(rawPat[i+1])
+			}
+			i++
+		} else {
+			patSb.WriteByte(rawPat[i])
+		}
+	}
+	return patSb.String()
+}
+
+// ValidateRegex verifies pattern and flags compile under Go regexp syntax.
+func ValidateRegex(pattern, flags string) error {
+	var prefix strings.Builder
+	flagSet := make(map[rune]bool)
+	for _, fl := range flags {
+		switch fl {
+		case 'i', 'm', 's', 'U':
+			flagSet[fl] = true
+		default:
+			return fmt.Errorf("unknown regex flag: %c", fl)
+		}
+	}
+
+	if len(flagSet) > 0 {
+		prefix.WriteString("(?")
+		for _, fl := range []rune{'i', 'm', 's', 'U'} {
+			if flagSet[fl] {
+				prefix.WriteRune(fl)
+			}
+		}
+		prefix.WriteString(")")
+	}
+
+	_, err := regexp.Compile(prefix.String() + pattern)
+	if err != nil {
+		return fmt.Errorf("invalid regex pattern: %w", err)
 	}
 	return nil
 }
