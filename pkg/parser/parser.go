@@ -811,10 +811,30 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 				if rlit, ok := p.parsePrefix().(*ast.RegexLit); ok {
 					regexPat = rlit
 				}
-			} else if p.curTokenIs(lexer.TokenLParen) {
+			} else if p.curTokenIs(lexer.TokenLParen) && p.isTupleDestructuringPattern() {
 				tuplePat, pattern = p.parseTuplePattern()
 			} else {
 				pattern = p.parseTypeAnnotString()
+				patCheck := strings.TrimSpace(pattern)
+				if strings.HasPrefix(patCheck, `(`) && strings.HasSuffix(patCheck, `)`) {
+					inner := strings.TrimSpace(patCheck[1 : len(patCheck)-1])
+					if strings.HasPrefix(inner, `/`) {
+						innerRunes := []rune(inner)
+						if ast.SkipRegexInTypeAnnot(innerRunes, 0) == len(innerRunes) {
+							lastSlash := strings.LastIndex(inner, `/`)
+							if lastSlash > 0 {
+								rawPat := inner[1:lastSlash]
+								flags := inner[lastSlash+1:]
+								pattern = inner
+								regexPat = &ast.RegexLit{
+									Position: cPos,
+									Pattern:  ast.UnescapeRegexPattern(rawPat),
+									Flags:    flags,
+								}
+							}
+						}
+					}
+				}
 			}
 
 			if p.curTokenIs(lexer.TokenIdent) && p.curToken.Literal == "as" {
@@ -867,6 +887,32 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 		Target:   target,
 		Cases:    cases,
 	}
+}
+
+func (p *Parser) isTupleDestructuringPattern() bool {
+	if p.peekTokenIs(lexer.TokenRParen) {
+		return true
+	}
+	if p.peekTokenIs(lexer.TokenDot) {
+		return true
+	}
+	if !p.peekTokenIs(lexer.TokenIdent) {
+		return false
+	}
+	lit := p.peekToken.Literal
+	if lit != `_` && !unicode.IsLower(rune(lit[0])) {
+		return false
+	}
+	rest := p.l.PeekRestOfLine()
+	for _, r := range rest {
+		if r == ')' {
+			break
+		}
+		if r == '|' || r == ':' || r == '/' {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Parser) parseTuplePattern() (*ast.TuplePattern, string) {
@@ -2172,7 +2218,15 @@ func isValidDictAnnotationContent(inner string) bool {
 	bDepth := 0
 	brDepth := 0
 	runes := []rune(inner)
-	for i, r := range runes {
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			pDepth++
 		} else if r == ')' {

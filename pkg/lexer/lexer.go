@@ -45,9 +45,24 @@ func (l *Lexer) PeekRestOfLine() string {
 	return sb.String()
 }
 
+func isOperandTokenType(t TokenType) bool {
+	switch t {
+	case TokenIdent, TokenInt, TokenFloat, TokenString, TokenBool, TokenNil,
+		TokenRegex, TokenRParen, TokenRBracket, TokenRBrace:
+		return true
+	default:
+		return false
+	}
+}
+
 func (l *Lexer) NextToken() Token {
+	prev := l.lastTokenType
 	tok := l.nextTokenInternal()
-	l.lastTokenType = tok.Type
+	if tok.Type == TokenNot && isOperandTokenType(prev) {
+		l.lastTokenType = TokenRParen // Postfix '!' ends an operand
+	} else {
+		l.lastTokenType = tok.Type
+	}
 	return tok
 }
 

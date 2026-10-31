@@ -401,7 +401,7 @@ Listed from highest to lowest precedence:
 | 8 | `\|` | `a \| b` | `Int` | Bitwise OR |
 | 9 | `<`, `<=`, `>`, `>=` | `a < b`, `a >= b` | `Int`, `Float`, `String`, `Bytes` | Relational comparisons |
 | 10 | `is` | `x is Int`, `p is Reader` | | Dynamic type / interface satisfaction test |
-| 11 | `==`, `!=` | `a == b`, `a != b` | Any | Equality / inequality comparison |
+| 11 | `==`, `!=`, `=~` | `a == b`, `s =~ /pat/` | Any, `String`/`Regex` | Equality / inequality comparison, pattern match |
 | 12 | `&&` | `cond1 && cond2` | `Bool` | Short-circuit logical AND |
 | 13 | `\|\|` | `cond1 \|\| cond2` | `Bool` | Short-circuit logical OR |
 | 14 | `? :` | `cond ? a : b` | `Bool` (cond) | Inline ternary conditional |
@@ -518,10 +518,12 @@ Les provides comprehensive bitwise operators operating on arbitrary-precision in
 
 
 - **Pattern Match Expression `match ... case`**:
-  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, and default `_`:
+  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, regex patterns (with optional `as m` capture binding), and default `_`:
   ```python
   def classify(v):
       match v:
+          case /^(?P<num>\d+)$/ as m:
+              print "all digits:", m["num"]
           case {String: Int}:
               print "dict of string to int"
           case Int | Float:
@@ -534,6 +536,7 @@ Les provides comprehensive bitwise operators operating on arbitrary-precision in
               print "other"
 
   classify 100
+  classify "123"
   classify "les"
   classify {"a": 1}
   classify nil
@@ -993,54 +996,39 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 
 #### Regex
 - **Methods**:
-  - 
-.Pattern(): String: Returns the underlying pattern string.
-  - 
-.Flags(): String: Returns the compiled flag string (e.g. 'i').
-  - 
-.Test(s: String): Bool: Returns 	rue if regex matches target string s.
-  - 
-.Match(s: String): Match | Nil: Matches s, returning Match on success or 
-il.
-  - 
-.FindAll(s: String, count: Int = -1): (Match, ...): Returns a tuple of all non-overlapping matches.
-  - 
-.Replace(s: String, repl: String): String: Replaces the first match with replacement string 
-epl.
-  - 
-.ReplaceAll(s: String, repl: String): String: Replaces all matches with 
-epl.
-  - 
-.Split(s: String, count: Int = -1): (String, ...): Splits s by regex matches into a tuple of strings.
-  - 
-.Inspect(): String: Returns regex string representation. Satisfies interface Show.
-  - 
-.Type(): String: Returns 'Regex'. Satisfies interface Show.
+  - `r.Pattern(): String`: Returns the underlying pattern string.
+  - `r.Flags(): String`: Returns the compiled flag string (e.g. `'i'`).
+  - `r.Test(s: String): Bool`: Returns `true` if regex matches target string `s`.
+  - `r.Match(s: String): Match | Nil`: Matches `s`, returning `Match` on success or `Nil`.
+  - `r.FindAll(s: String, count: Int = -1): (Match, ...)`: Returns a tuple of all non-overlapping matches.
+  - `r.Replace(s: String, repl: String): String`: Replaces the first match with replacement string `repl`.
+  - `r.ReplaceAll(s: String, repl: String): String`: Replaces all matches with `repl`.
+  - `r.Split(s: String, count: Int = -1): (String, ...)`: Splits `s` by regex matches into a tuple of strings.
+  - `r.Inspect(): String`: Returns regex string representation. Satisfies interface `Show`.
+  - `r.Type(): String`: Returns 'Regex'. Satisfies interface `Show`.
 - **Operators**:
-  - s =~ r, 
- =~ s: Matches string and regex, returning Match | Nil.
-  - ==, !=: Checks equality of pattern and flags.
+  - `s =~ r`, `r =~ s`: Matches string and regex, returning `Match | Nil`.
+  - `==`, `!=`: Checks equality of pattern and flags.
 
 #### Match
 - **Methods**:
-  - m.Len(): Int: Returns number of capture groups including group 0 (full match).
-  - m.Group(idxOrName: Int | String): String | Nil: Returns captured string by 0-based index, negative index, or group name; returns 
-il if unmatched.
-  - m.Groups(): (String | Nil, ...): Returns tuple of capture groups (excluding group 0).
-  - m.NamedGroups(): {String: String | Nil}: Returns dictionary of all named capture groups.
-  - m.Start(idxOrName: Int | String = 0): Int: Returns 0-based start rune offset, or -1 if unmatched.
-  - m.End(idxOrName: Int | String = 0): Int: Returns 0-based end rune offset, or -1 if unmatched.
-  - m.Span(idxOrName: Int | String = 0): (Int, Int): Returns (Start, End) rune offset tuple, or (-1, -1).
-  - m.Text(): String: Returns full matched string (same as m[0]).
-  - m.Target(): String: Returns original target string searched.
-  - m.Regex(): Regex: Returns compiled Regex object that produced this match.
-  - m.Inspect(): String: Returns human-readable representation. Satisfies interface Show.
-  - m.Type(): String: Returns 'Match'. Satisfies interface Show.
+  - `m.Len(): Int`: Returns number of capture groups including group 0 (full match).
+  - `m.Group(idxOrName: Int | String): String | Nil`: Returns captured string by 0-based index, negative index, or group name; returns `Nil` if unmatched.
+  - `m.Groups(): (String | Nil, ...)`: Returns tuple of capture groups (excluding group 0).
+  - `m.NamedGroups(): {String: String | Nil}`: Returns dictionary of all named capture groups.
+  - `m.Start(idxOrName: Int | String = 0): Int`: Returns 0-based start rune offset, or `-1` if unmatched.
+  - `m.End(idxOrName: Int | String = 0): Int`: Returns 0-based end rune offset, or `-1` if unmatched.
+  - `m.Span(idxOrName: Int | String = 0): (Int, Int)`: Returns `(Start, End)` rune offset tuple, or `(-1, -1)`.
+  - `m.Text(): String`: Returns full matched string (same as `m[0]`).
+  - `m.Target(): String`: Returns original target string searched.
+  - `m.Regex(): Regex`: Returns compiled Regex object that produced this match.
+  - `m.Inspect(): String`: Returns human-readable representation. Satisfies interface `Show`.
+  - `m.Type(): String`: Returns 'Match'. Satisfies interface `Show`.
 - **Index Access**:
-  - m[i]: 0-based capture group index (m[0] is full match, m[1..n] are captures). Supports negative indexing (m[-1]). Implements Indexable[Int, String | Nil].
-  - m['name']: Named capture group access. Implements Indexable[String, String | Nil].
+  - `m[i]`: 0-based capture group index (`m[0]` is full match, `m[1..n]` are captures). Supports negative indexing (`m[-1]`). Implements `Indexable[Int, String | Nil]`.
+  - `m["name"]`: Named capture group access. Implements `Indexable[String, String | Nil]`.
 - **Operators**:
-  - ==, !=: Compares target, regex pattern/flags, and capture spans.
+  - `==`, `!=`: Compares target, regex pattern/flags, and capture spans.
 
 ### 4. Built-in Interfaces
 

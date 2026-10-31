@@ -3401,7 +3401,15 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		bDepth := 0
 		brDepth := 0
 		innerRunes := []rune(inner)
-		for i, r := range innerRunes {
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
 			if r == '(' {
 				pDepth++
 			} else if r == ')' {
@@ -3514,48 +3522,7 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 		return TypeUnknown, nil, nil
 	}
 
-	// Unwrap enclosing grouping parens if no top-level comma (e.g. (/^\d+$/ | Int))
-	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
-		inner := strings.TrimSpace(annot[1 : len(annot)-1])
-		if inner != "" && inner != "..." {
-			hasTopLevelComma := false
-			pDepth := 0
-			bDepth := 0
-			brDepth := 0
-			innerRunes := []rune(inner)
-			for i := 0; i < len(innerRunes); i++ {
-				r := innerRunes[i]
-				if r == '/' {
-					nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
-					if nextIdx > i {
-						i = nextIdx - 1
-						continue
-					}
-				}
-				if r == '(' {
-					pDepth++
-				} else if r == ')' {
-					pDepth--
-				} else if r == '[' {
-					bDepth++
-				} else if r == ']' {
-					bDepth--
-				} else if r == '{' {
-					brDepth++
-				} else if r == '}' {
-					brDepth--
-				} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
-					hasTopLevelComma = true
-					break
-				}
-			}
-			if !hasTopLevelComma {
-				return inf.parsePatternTypeAnnot(inner)
-			}
-		}
-	}
-
-	// Check top-level Union: A | B
+	// 1. Check top-level Union FIRST: A | B
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
@@ -3613,7 +3580,187 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 		return NewUnionType(narrowMembers...), finalCovered, nil
 	}
 
-	// Single regex literal: /pattern/flags
+	// 2. Tuple pattern or grouping: (...)
+	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner == "" {
+			emptyTup := &TupleType{Elems: []Type{}}
+			return emptyTup, emptyTup, nil
+		}
+		if inner == "..." {
+			varTup := &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			return varTup, varTup, nil
+		}
+
+		// Check if there is a top-level comma
+		hasTopLevelComma := false
+		pD := 0
+		bD := 0
+		brD := 0
+		innerRunes := []rune(inner)
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '(' {
+				pD++
+			} else if r == ')' {
+				pD--
+			} else if r == '[' {
+				bD++
+			} else if r == ']' {
+				bD--
+			} else if r == '{' {
+				brD++
+			} else if r == '}' {
+				brD--
+			} else if r == ',' && pD == 0 && bD == 0 && brD == 0 {
+				hasTopLevelComma = true
+				break
+			}
+		}
+
+		if !hasTopLevelComma {
+			// Single grouped pattern e.g. (/^\d+$/) or (Int)
+			return inf.parsePatternTypeAnnot(inner)
+		}
+
+		// Tuple pattern with top-level comma
+		var rawParts []string
+		pD = 0
+		bD = 0
+		brD = 0
+		elemStart := 0
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '(' {
+				pD++
+			} else if r == ')' {
+				pD--
+			} else if r == '[' {
+				bD++
+			} else if r == ']' {
+				bD--
+			} else if r == '{' {
+				brD++
+			} else if r == '}' {
+				brD--
+			} else if r == ',' && pD == 0 && bD == 0 && brD == 0 {
+				rawParts = append(rawParts, string(innerRunes[elemStart:i]))
+				elemStart = i + 1
+			}
+		}
+		rawParts = append(rawParts, string(innerRunes[elemStart:]))
+
+		var narrowElems []Type
+		var coveredElems []Type
+		allCovered := true
+		isVariadic := false
+
+		for _, p := range rawParts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed == "" {
+				continue
+			}
+			if trimmed == "..." {
+				isVariadic = true
+				break
+			}
+			nEl, cEl, err := inf.parsePatternTypeAnnot(trimmed)
+			if err != nil {
+				return nil, nil, err
+			}
+			narrowElems = append(narrowElems, nEl)
+			if cEl == nil {
+				allCovered = false
+			} else {
+				coveredElems = append(coveredElems, cEl)
+			}
+		}
+
+		narrowT := &TupleType{Elems: narrowElems, IsVariadic: isVariadic}
+		var coveredT Type
+		if allCovered && len(coveredElems) == len(narrowElems) {
+			coveredT = &TupleType{Elems: coveredElems, IsVariadic: isVariadic}
+		}
+		return narrowT, coveredT, nil
+	}
+
+	// 3. Dict pattern: {...}
+	if strings.HasPrefix(annot, "{") && strings.HasSuffix(annot, "}") {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner == "..." {
+			varDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}
+			return varDict, varDict, nil
+		}
+		colonIdx := -1
+		pD := 0
+		bD := 0
+		brD := 0
+		innerRunes := []rune(inner)
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '(' {
+				pD++
+			} else if r == ')' {
+				pD--
+			} else if r == '[' {
+				bD++
+			} else if r == ']' {
+				bD--
+			} else if r == '{' {
+				brD++
+			} else if r == '}' {
+				brD--
+			} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+				colonIdx = i
+				break
+			}
+		}
+
+		if colonIdx != -1 {
+			keyStr := strings.TrimSpace(string(innerRunes[:colonIdx]))
+			valStr := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
+			if keyStr != "" && valStr != "" {
+				nKey, cKey, err := inf.parsePatternTypeAnnot(keyStr)
+				if err != nil {
+					return nil, nil, err
+				}
+				nVal, cVal, err := inf.parsePatternTypeAnnot(valStr)
+				if err != nil {
+					return nil, nil, err
+				}
+				narrowT := &DictType{Key: nKey, Value: nVal}
+				var coveredT Type
+				if cKey != nil && cVal != nil {
+					coveredT = &DictType{Key: cKey, Value: cVal}
+				}
+				return narrowT, coveredT, nil
+			}
+		}
+		return nil, nil, fmt.Errorf("invalid dictionary pattern '%s'", annot)
+	}
+
+	// 4. Single regex literal: /pattern/flags
 	if strings.HasPrefix(annot, "/") {
 		lastSlash := strings.LastIndex(annot, "/")
 		if lastSlash <= 0 {
@@ -3628,12 +3775,23 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 		return TypeString, nil, nil
 	}
 
-	// Ordinary type annotation
+	// 5. Ordinary type annotation
 	t, err := inf.parseTypeAnnot(annot)
 	if err != nil {
 		return nil, nil, err
 	}
 	return t, t, nil
+}
+
+// ParsePatternTypeAnnot parses a pattern type annotation on an Inferencer instance.
+func (inf *Inferencer) ParsePatternTypeAnnot(annot string) (Type, Type, error) {
+	return inf.parsePatternTypeAnnot(annot)
+}
+
+// ParsePatternTypeAnnot parses a pattern type annotation using a fresh Inferencer.
+func ParsePatternTypeAnnot(annot string) (Type, Type, error) {
+	inf := NewInferencer()
+	return inf.parsePatternTypeAnnot(annot)
 }
 
 func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {

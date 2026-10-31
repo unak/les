@@ -133,3 +133,39 @@ match s:
 		t.Fatalf("case 1: expected asName 'm', got %q", me.Cases[1].AsName)
 	}
 }
+
+
+func TestParseMatchCaseParenthesizedRegexAndDictRegexColon(t *testing.T) {
+	input := `
+match s:
+    case (/^\d+$/) as m:
+        print 1
+    case (/^\d+$/ | Int):
+        print 2
+    case {String: /(?i:abc)/}:
+        print 3
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`unexpected parser errors: %v`, p.Errors())
+	}
+	es := prog.Body[0].(*ast.ExprStmt)
+	me := es.Value.(*ast.MatchExpr)
+	if len(me.Cases) != 3 {
+		t.Fatalf(`expected 3 cases, got %d`, len(me.Cases))
+	}
+	if me.Cases[0].RegexPattern == nil {
+		t.Fatalf(`expected non-nil RegexPattern for case 0`)
+	}
+	if me.Cases[0].AsName != `m` {
+		t.Fatalf(`expected AsName m, got %s`, me.Cases[0].AsName)
+	}
+	if me.Cases[1].Pattern != `(/^\d+$/ | Int)` {
+		t.Fatalf(`expected pattern (^\d+$ | Int), got %s`, me.Cases[1].Pattern)
+	}
+	if me.Cases[2].Pattern != `{String: /(?i:abc)/}` {
+		t.Fatalf(`expected pattern {String: /(?i:abc)/}, got %s`, me.Cases[2].Pattern)
+	}
+}

@@ -305,3 +305,15 @@ func TestLexerRegexParenAndCharClass(t *testing.T) {
 		}
 	}
 }
+
+func TestLexerPostfixForceDivision(t *testing.T) {
+	input := `a! / b / c`
+	l := NewLexer(input)
+	toks := []TokenType{TokenIdent, TokenNot, TokenSlash, TokenIdent, TokenSlash, TokenIdent, TokenEOF}
+	for i, exp := range toks {
+		tok := l.NextToken()
+		if tok.Type != exp {
+			t.Fatalf(`[%d] expected %v, got %v (%s)`, i, exp, tok.Type, tok.Literal)
+		}
+	}
+}

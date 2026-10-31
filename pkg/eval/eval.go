@@ -4416,6 +4416,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		} else if !strings.Contains(typeAnnot, "/") {
 			return checkThunkInferredType(thunk, typeAnnot, optEnv...)
 		} else {
+			if !checkThunkInferredType(thunk, typeAnnot, optEnv...) {
+				return false
+			}
 			val = Force(thunk)
 		}
 	}
@@ -4620,7 +4623,15 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			bD := 0
 			brD := 0
 			innerRunes := []rune(inner)
-			for i, r := range innerRunes {
+			for i := 0; i < len(innerRunes); i++ {
+				r := innerRunes[i]
+				if r == '/' {
+					nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+					if nextIdx > i {
+						i = nextIdx - 1
+						continue
+					}
+				}
 				if r == '(' {
 					pD++
 				} else if r == ')' {
@@ -4896,22 +4907,72 @@ func checkThunkInferredType(thunk *Thunk, targetAnnot string, optEnv ...*Environ
 	var err error
 	if len(optEnv) > 0 && optEnv[0] != nil && optEnv[0].Inferencer != nil {
 		if inf, ok := optEnv[0].Inferencer.(*types.Inferencer); ok {
-			targetType, err = inf.ParseTypeAnnot(targetAnnot)
+			targetType, _, err = inf.ParsePatternTypeAnnot(targetAnnot)
 		}
 	}
 	if targetType == nil {
-		targetType, err = types.ParseTypeAnnot(targetAnnot)
+		targetType, _, err = types.ParsePatternTypeAnnot(targetAnnot)
 	}
 	if err != nil {
 		return true // target annot could not be parsed statically, preserve laziness
 	}
 
-	// If the statically inferred type is not assignable to targetType,
+	// If the statically inferred type cannot overlap with targetType,
 	// it can never match at runtime: return false without forcing the thunk!
-	if !types.IsAssignableTo(infT, targetType) {
+	if !typesCanOverlap(infT, targetType) {
 		return false
 	}
 	return true
+}
+
+func typesCanOverlap(t1, t2 types.Type) bool {
+	if t1 == nil || t2 == nil || t1 == types.TypeUnknown || t2 == types.TypeUnknown {
+		return true
+	}
+	if u1, ok := t1.(*types.UnionType); ok {
+		for _, m := range u1.Members {
+			if typesCanOverlap(m, t2) {
+				return true
+			}
+		}
+		return false
+	}
+	if u2, ok := t2.(*types.UnionType); ok {
+		for _, m := range u2.Members {
+			if typesCanOverlap(t1, m) {
+				return true
+			}
+		}
+		return false
+	}
+	if types.IsAssignableTo(t1, t2) || types.IsAssignableTo(t2, t1) {
+		return true
+	}
+	if tup1, ok := t1.(*types.TupleType); ok {
+		if tup2, ok := t2.(*types.TupleType); ok {
+			if !tup1.IsVariadic && !tup2.IsVariadic && len(tup1.Elems) != len(tup2.Elems) {
+				return false
+			}
+			minLen := len(tup1.Elems)
+			if len(tup2.Elems) < minLen {
+				minLen = len(tup2.Elems)
+			}
+			for i := 0; i < minLen; i++ {
+				if !typesCanOverlap(tup1.Elems[i], tup2.Elems[i]) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	if d1, ok := t1.(*types.DictType); ok {
+		if d2, ok := t2.(*types.DictType); ok {
+			return typesCanOverlap(d1.Key, d2.Key) && typesCanOverlap(d1.Value, d2.Value)
+		}
+		return false
+	}
+	return false
 }
 
 func splitTopLevelCommas(s string) []string {

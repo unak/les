@@ -403,3 +403,34 @@ r5 = classify(true)
 	checkStr("r4", "string")
 	checkStr("r5", "other")
 }
+
+func TestRegexDictPatternEvalAndIncompatibleThunkLaziness(t *testing.T) {
+	input := `
+d1 = {"foo": "abc"}
+d2 = {"abc": 123}
+m1 = d1 is {String: /(?i:abc)/}
+m2 = d2 is {/(?i:abc)/: Int}
+m3 = d1 is {String: /(?i:xyz)/}
+
+lazy_incompat_dict = {"val": 1 / 0}
+b_incompat = lazy_incompat_dict is {String: /^\d+$/}
+lazy_incompat_tup = (1 / 0, "abc")
+b_incompat2 = lazy_incompat_tup is (/^\d+$/, String)
+`
+	env, _ := runEvalCode(t, input)
+	checkBool := func(varName string, expected bool) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		bv, ok := Force(val).(BoolValue)
+		if !ok || bool(bv) != expected {
+			t.Fatalf("%s: expected %v, got %v", varName, expected, val)
+		}
+	}
+	checkBool("m1", true)
+	checkBool("m2", true)
+	checkBool("m3", false)
+	checkBool("b_incompat", false)
+	checkBool("b_incompat2", false)
+}

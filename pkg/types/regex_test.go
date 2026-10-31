@@ -189,3 +189,41 @@ def test(s: String): String:
 		t.Fatalf("expected exhaustiveness/return mismatch error for regex case in String-returning function")
 	}
 }
+
+
+func TestRegexTupleAndDictPatternInference(t *testing.T) {
+	inf := NewInferencer()
+	nTup, cTup, err := inf.ParsePatternTypeAnnot(`(/^\d+$/, Int)`)
+	if err != nil {
+		t.Fatalf(`failed to parse tuple pattern: %v`, err)
+	}
+	if nTup == nil || cTup != nil {
+		t.Fatalf(`expected non-nil narrowType and nil coveredType for (/^\d+$/, Int)`)
+	}
+
+	nDict, cDict, err := inf.ParsePatternTypeAnnot(`{String: /(?i:abc)/}`)
+	if err != nil {
+		t.Fatalf(`failed to parse dict pattern: %v`, err)
+	}
+	if nDict == nil || cDict != nil {
+		t.Fatalf(`expected non-nil narrowType and nil coveredType for {String: /(?i:abc)/}`)
+	}
+
+	input := `
+def test(p: (String, Int)): String:
+    match p:
+        case (/^\d+$/, Int):
+            return " digit-pair\
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, p.Errors())
+	}
+	inf2 := NewInferencer()
+	err2 := inf2.InferProgram(prog)
+	if err2 == nil {
+		t.Fatalf(`expected exhaustiveness error for tuple regex pattern`)
+	}
+}
