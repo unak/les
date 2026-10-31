@@ -26,6 +26,57 @@ func removeNilFromType(t Type) Type {
 	return t
 }
 
+func narrowTypeByPattern(origT, patT Type) Type {
+	if origT == nil || origT == TypeUnknown {
+		if patT != nil {
+			return patT
+		}
+		return TypeUnknown
+	}
+	if patT == nil || patT == TypeUnknown {
+		return origT
+	}
+	if u, ok := origT.(*UnionType); ok {
+		var narrowed []Type
+		for _, m := range u.Members {
+			if IsAssignableTo(m, patT) {
+				narrowed = append(narrowed, narrowTypeByPattern(m, patT))
+			}
+		}
+		if len(narrowed) > 0 {
+			return NewUnionType(narrowed...)
+		}
+		return patT
+	}
+	if origTup, ok := origT.(*TupleType); ok {
+		if patTup, ok := patT.(*TupleType); ok {
+			var newElems []Type
+			for i := 0; i < len(origTup.Elems); i++ {
+				var pElem Type = TypeUnknown
+				if i < len(patTup.Elems) {
+					pElem = patTup.Elems[i]
+				} else if patTup.IsVariadic && len(patTup.Elems) > 0 {
+					pElem = patTup.Elems[len(patTup.Elems)-1]
+				}
+				newElems = append(newElems, narrowTypeByPattern(origTup.Elems[i], pElem))
+			}
+			return &TupleType{Elems: newElems, IsVariadic: origTup.IsVariadic}
+		}
+	}
+	if origDict, ok := origT.(*DictType); ok {
+		if patDict, ok := patT.(*DictType); ok {
+			return &DictType{
+				Key:   narrowTypeByPattern(origDict.Key, patDict.Key),
+				Value: narrowTypeByPattern(origDict.Value, patDict.Value),
+			}
+		}
+	}
+	if IsAssignableTo(origT, patT) {
+		return origT
+	}
+	return patT
+}
+
 
 // Scope tracks lexical bindings and detects duplicate declarations in the same scope.
 type Scope struct {
@@ -746,7 +797,8 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
 					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
 						if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
-							_ = thenScope.Declare(id.Name, narrowT)
+							origT, _ := inf.scope.Lookup(id.Name)
+							_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
 						}
 					}
 				}
@@ -3951,34 +4003,57 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 				_ = caseScope.Declare(c.AsName, TypeMatch)
 			}
 		} else if c.TuplePattern != nil {
+			elemUnknowns := make([]Type, len(c.TuplePattern.Elements))
+			for i := range elemUnknowns {
+				elemUnknowns[i] = TypeUnknown
+			}
 			var tupleCovered Type
-			if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName != "" {
-				tupleCovered = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
-			} else if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "" {
-				tupleCovered = &TupleType{Elems: []Type{}}
+			if c.TuplePattern.RestName != "" {
+				tupleCovered = &TupleType{Elems: append(elemUnknowns, TypeUnknown), IsVariadic: true}
+			} else {
+				tupleCovered = &TupleType{Elems: elemUnknowns, IsVariadic: false}
 			}
-			if tupleCovered != nil {
-				coveredTypes = append(coveredTypes, tupleCovered)
-				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, tupleCovered)
+			coveredTypes = append(coveredTypes, tupleCovered)
+
+			narrowedTupleT := narrowTypeByPattern(targetT, tupleCovered)
+			if id, isId := e.Target.(*ast.Identifier); isId {
+				_ = caseScope.Declare(id.Name, narrowedTupleT)
+			}
+
+			if tup, ok := narrowedTupleT.(*TupleType); ok {
+				for i, name := range c.TuplePattern.Elements {
+					if name != "_" {
+						var elemT Type = TypeUnknown
+						if i < len(tup.Elems) {
+							elemT = tup.Elems[i]
+						} else if tup.IsVariadic && len(tup.Elems) > 0 {
+							elemT = tup.Elems[len(tup.Elems)-1]
+						}
+						_ = caseScope.Declare(name, elemT)
+					}
+				}
+				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+					var restElemT Type = TypeUnknown
+					if tup.IsVariadic && len(tup.Elems) > 0 {
+						restElemT = tup.Elems[len(tup.Elems)-1]
+					} else if len(tup.Elems) > len(c.TuplePattern.Elements) {
+						restElemT = tup.Elems[len(c.TuplePattern.Elements)]
+					}
+					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{restElemT}, IsVariadic: true})
+				}
+			} else {
+				for _, name := range c.TuplePattern.Elements {
+					if name != "_" {
+						_ = caseScope.Declare(name, TypeUnknown)
+					}
+				}
+				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
 				}
 			}
-			for _, name := range c.TuplePattern.Elements {
-				if name != "_" {
-					_ = caseScope.Declare(name, TypeUnknown)
-				}
-			}
-			if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-				_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
-			}
+
 			if c.AsName != "" && c.AsName != "_" {
-				asT := targetT
-				if tupleCovered != nil {
-					asT = tupleCovered
-				} else if asT == nil || asT == TypeUnknown {
-					asT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
-				}
-				_ = caseScope.Declare(c.AsName, asT)
+				_ = caseScope.Declare(c.AsName, narrowedTupleT)
 			}
 		} else {
 			pat := strings.TrimSpace(c.Pattern)
@@ -4004,26 +4079,30 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 				} else {
 					hasFalse = true
 				}
+				narrowedTargetT := narrowTypeByPattern(targetT, TypeBool)
 				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, TypeBool)
+					_ = caseScope.Declare(id.Name, narrowedTargetT)
 				}
 				if c.AsName != "" && c.AsName != "_" {
-					_ = caseScope.Declare(c.AsName, TypeBool)
+					_ = caseScope.Declare(c.AsName, narrowedTargetT)
 				}
 			} else if pat != "" {
 				narrowT, coveredT, err := inf.parsePatternTypeAnnot(pat)
 				if err != nil {
 					return nil, false, err
 				}
-				if coveredT != nil {
+				if coveredT == TypeUnknown {
+					hasWildcard = true
+				} else if coveredT != nil {
 					coveredTypes = append(coveredTypes, coveredT)
 				}
+				narrowedTargetT := narrowTypeByPattern(targetT, narrowT)
 				// If target is an identifier, narrow its type inside this case scope
 				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, narrowT)
+					_ = caseScope.Declare(id.Name, narrowedTargetT)
 				}
 				if c.AsName != "" && c.AsName != "_" {
-					_ = caseScope.Declare(c.AsName, narrowT)
+					_ = caseScope.Declare(c.AsName, narrowedTargetT)
 				}
 			}
 		}
@@ -4043,11 +4122,13 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 		}
 	}
 
+	if hasTrue && hasFalse {
+		coveredTypes = append(coveredTypes, TypeBool)
+	}
+
 	isExhaustive := hasWildcard
 	if !isExhaustive && targetT != nil && targetT != TypeUnknown {
-		if targetT == TypeBool && hasTrue && hasFalse {
-			isExhaustive = true
-		} else if len(coveredTypes) > 0 && IsAssignableTo(targetT, NewUnionType(coveredTypes...)) {
+		if len(coveredTypes) > 0 && IsAssignableTo(targetT, NewUnionType(coveredTypes...)) {
 			isExhaustive = true
 		}
 	}

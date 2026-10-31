@@ -522,15 +522,15 @@ func makeDictKeyWithVisited(v Value, visited map[any]bool, depth int) DictKey {
 	case NilValue:
 		return DictKey{Type: "Nil", Key: "nil"}
 	case *RegexValue:
-		return DictKey{Type: "Regex", Key: val.String()}
+		return DictKey{Type: "Regex", Key: fmt.Sprintf("%d:%s:%s", len(val.Pattern), val.Pattern, val.Flags)}
 	case *MatchValue:
 		var sb strings.Builder
-		sb.WriteString(val.Target)
-		sb.WriteString(":")
+		sb.WriteString(fmt.Sprintf("%d:%s:", len(val.Target), val.Target))
 		if val.Regex != nil {
-			sb.WriteString(val.Regex.String())
+			sb.WriteString(fmt.Sprintf("%d:%s:%s:", len(val.Regex.Pattern), val.Regex.Pattern, val.Regex.Flags))
+		} else {
+			sb.WriteString("0:::")
 		}
-		sb.WriteString(":")
 		for _, sp := range val.Spans {
 			sb.WriteString(fmt.Sprintf("[%d,%d]", sp[0], sp[1]))
 		}

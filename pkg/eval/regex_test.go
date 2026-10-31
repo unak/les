@@ -489,4 +489,19 @@ func TestParseGenericTypeAnnotArrowAndMultipleBrackets(t *testing.T) {
 	if isGen3 {
 		t.Fatalf("expected (Pair[Int, String]) not to be generic")
 	}
+
+	// Test DictKey uniqueness between Regex("a/b") and Regex("a\\\\/b")
+	r1, err1 := CompileRegex("a/b", "")
+	if err1 != nil {
+		t.Fatalf("CompileRegex failed: %v", err1)
+	}
+	r2, err2 := CompileRegex("a\\\\/b", "")
+	if err2 != nil {
+		t.Fatalf("CompileRegex failed: %v", err2)
+	}
+	k1 := MakeDictKey(r1)
+	k2 := MakeDictKey(r2)
+	if k1 == k2 {
+		t.Fatalf("expected distinct DictKeys for r1 and r2, got identical %v", k1)
+	}
 }

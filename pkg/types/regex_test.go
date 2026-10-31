@@ -3,6 +3,7 @@ package types
 import (
 	"les/pkg/lexer"
 	"les/pkg/parser"
+	"strings"
 	"testing"
 )
 
@@ -332,6 +333,45 @@ def testBindings(x: Int, b: Bool): Int:
 	if len(pBind.Errors()) > 0 {
 		t.Fatalf(`parser errors: %v`, pBind.Errors())
 	}
+	linesP9 := []string{
+		"def testPass9(p: (String, Int), u: (Int, String) | Int, b: Bool | Int): Int:",
+		"    match p:",
+		"        case (/^[0-9]+$/, _) as t:",
+		"            var a: String = t[0]",
+		"            var bVal: Int = t[1]",
+		"            var p0: String = p[0]",
+		"            var p1: Int = p[1]",
+		"        case _:",
+		"            pass",
+		"    match u:",
+		"        case (x, y) as tup:",
+		"            var num: Int = x",
+		"            var str: String = y",
+		"            var t0: Int = tup[0]",
+		"            var t1: String = tup[1]",
+		"        case Int:",
+		"            pass",
+		"    match b:",
+		"        case true:",
+		"            return 1",
+		"        case false:",
+		"            return 2",
+		"        case Int:",
+		"            return 3",
+		"    return 0",
+	}
+	codePass9 := strings.Join(linesP9, string(rune(10)))
+	lP9 := lexer.NewLexer(codePass9)
+	pP9 := parser.NewParser(lP9)
+	progP9 := pP9.ParseProgram()
+	if len(pP9.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", pP9.Errors())
+	}
+	infP9 := NewInferencer()
+	if err := infP9.InferProgram(progP9); err != nil {
+		t.Fatalf("expected Pass 9 code to typecheck, got %v", err)
+	}
+
 	infBind := NewInferencer()
 	if err := infBind.InferProgram(progBind); err != nil {
 		t.Fatalf(`expected bindings to typecheck, got %v`, err)
