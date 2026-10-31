@@ -1548,7 +1548,11 @@ func (rv *RegexValue) String() string {
 	var sb strings.Builder
 	sb.WriteByte('/')
 	for i := 0; i < len(rv.Pattern); i++ {
-		if rv.Pattern[i] == '/' {
+		if rv.Pattern[i] == '\\' && i+1 < len(rv.Pattern) {
+			sb.WriteByte('\\')
+			sb.WriteByte(rv.Pattern[i+1])
+			i++
+		} else if rv.Pattern[i] == '/' {
 			sb.WriteString("\\/")
 		} else {
 			sb.WriteByte(rv.Pattern[i])

@@ -1329,8 +1329,13 @@ func (p *Parser) parsePrefix() ast.Expr {
 		// Unescape \/ to /
 		var patSb strings.Builder
 		for i := 0; i < len(rawPat); i++ {
-			if rawPat[i] == '\\' && i+1 < len(rawPat) && rawPat[i+1] == '/' {
-				patSb.WriteByte('/')
+			if rawPat[i] == '\\' && i+1 < len(rawPat) {
+				if rawPat[i+1] == '/' {
+					patSb.WriteByte('/')
+				} else {
+					patSb.WriteByte('\\')
+					patSb.WriteByte(rawPat[i+1])
+				}
 				i++
 			} else {
 				patSb.WriteByte(rawPat[i])

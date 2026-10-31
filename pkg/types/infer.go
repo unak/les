@@ -745,7 +745,9 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 					}
 				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
 					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
-						if patT, err := inf.parseTypeAnnot(isExpr.TypeAnnot); err == nil {
+						if strings.HasPrefix(isExpr.TypeAnnot, "/") {
+							_ = thenScope.Declare(id.Name, TypeString)
+						} else if patT, err := inf.parseTypeAnnot(isExpr.TypeAnnot); err == nil {
 							_ = thenScope.Declare(id.Name, patT)
 						}
 					}
@@ -3048,7 +3050,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if e.TypeAnnot != "" {
+		if e.TypeAnnot != "" && !strings.HasPrefix(e.TypeAnnot, "/") {
 			if _, err := inf.parseTypeAnnot(e.TypeAnnot); err != nil {
 				return nil, err
 			}
@@ -3280,10 +3282,6 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			Arg: argType,
 			Ret: retType,
 		}, nil
-	}
-
-	if strings.HasPrefix(annot, "/") {
-		return TypeRegex, nil
 	}
 
 	switch annot {
@@ -3641,7 +3639,9 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 	for _, c := range e.Cases {
 		caseScope := NewScope(inf.scope)
 		if c.RegexPattern != nil {
-			coveredTypes = append(coveredTypes, TypeString)
+			if id, isId := e.Target.(*ast.Identifier); isId {
+				_ = caseScope.Declare(id.Name, TypeString)
+			}
 			if c.AsName != "" && c.AsName != "_" {
 				_ = caseScope.Declare(c.AsName, TypeMatch)
 			}

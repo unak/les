@@ -2097,11 +2097,12 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				if sv, ok := val.(StringValue); ok {
 					res := rv.ExecMatch(string(sv))
 					if mVal, ok := res.(*MatchValue); ok {
-						caseEnv := NewEnvironment(env)
 						if c.AsName != "" && c.AsName != "_" {
+							caseEnv := NewEnvironment(env)
 							caseEnv.Set(c.AsName, mVal)
+							return caseEnv.evalBlock(c.Body)
 						}
-						return caseEnv.evalBlock(c.Body)
+						return env.evalBlock(c.Body)
 					}
 				}
 				continue
@@ -4079,7 +4080,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						} else if sv, ok := kVal.(StringValue); ok {
 							found := false
 							for i, name := range mv.Regex.Re.SubexpNames() {
-								if name == string(sv) {
+								if name != "" && name == string(sv) {
 									idx = i
 									found = true
 									break
@@ -4091,6 +4092,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						} else {
 							return nil, fmt.Errorf("Start argument must be Int or String, got %s", typeNameOf(kVal))
 						}
+					}
+					if idx < 0 {
+						idx = len(mv.Spans) + idx
 					}
 					if idx < 0 || idx >= len(mv.Spans) {
 						return NewIntValue(-1), nil
@@ -4121,7 +4125,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						} else if sv, ok := kVal.(StringValue); ok {
 							found := false
 							for i, name := range mv.Regex.Re.SubexpNames() {
-								if name == string(sv) {
+								if name != "" && name == string(sv) {
 									idx = i
 									found = true
 									break
@@ -4133,6 +4137,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						} else {
 							return nil, fmt.Errorf("End argument must be Int or String, got %s", typeNameOf(kVal))
 						}
+					}
+					if idx < 0 {
+						idx = len(mv.Spans) + idx
 					}
 					if idx < 0 || idx >= len(mv.Spans) {
 						return NewIntValue(-1), nil
@@ -4163,7 +4170,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						} else if sv, ok := kVal.(StringValue); ok {
 							found := false
 							for i, name := range mv.Regex.Re.SubexpNames() {
-								if name == string(sv) {
+								if name != "" && name == string(sv) {
 									idx = i
 									found = true
 									break
@@ -4175,6 +4182,9 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 						} else {
 							return nil, fmt.Errorf("Span argument must be Int or String, got %s", typeNameOf(kVal))
 						}
+					}
+					if idx < 0 {
+						idx = len(mv.Spans) + idx
 					}
 					if idx < 0 || idx >= len(mv.Spans) {
 						return &TupleValue{Elements: []Value{NewIntValue(-1), NewIntValue(-1)}}, nil
@@ -4338,9 +4348,23 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	if strings.HasPrefix(typeAnnot, "/") {
 		lastSlash := strings.LastIndex(typeAnnot, "/")
 		if lastSlash > 0 {
-			pattern := typeAnnot[1:lastSlash]
+			rawPat := typeAnnot[1:lastSlash]
 			flags := typeAnnot[lastSlash+1:]
-			rv, err := CompileRegex(pattern, flags)
+			var patSb strings.Builder
+			for i := 0; i < len(rawPat); i++ {
+				if rawPat[i] == '\\' && i+1 < len(rawPat) {
+					if rawPat[i+1] == '/' {
+						patSb.WriteByte('/')
+					} else {
+						patSb.WriteByte('\\')
+						patSb.WriteByte(rawPat[i+1])
+					}
+					i++
+				} else {
+					patSb.WriteByte(rawPat[i])
+				}
+			}
+			rv, err := CompileRegex(patSb.String(), flags)
 			if err == nil {
 				if sv, ok := val.(StringValue); ok {
 					return rv.Re.MatchString(string(sv))

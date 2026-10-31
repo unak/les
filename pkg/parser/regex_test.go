@@ -73,3 +73,19 @@ match val:
 		t.Fatalf("expected Pattern 'Int', got %q", me.Cases[1].Pattern)
 	}
 }
+
+func TestParseRegexEscapedSlashAndBackslash(t *testing.T) {
+	input := `r = /a\\\/b\/c/`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+	v := prog.Body[0].(*ast.VarDecl)
+	rlit := v.Value.(*ast.RegexLit)
+	expected := `a\\/b/c`
+	if rlit.Pattern != expected {
+		t.Fatalf("expected pattern %q, got %q", expected, rlit.Pattern)
+	}
+}

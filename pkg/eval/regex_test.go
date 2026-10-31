@@ -169,3 +169,66 @@ is_not_match = "abc" is /^\d+$/
 		t.Fatalf("expected 2 entries in named, got %v", nVal)
 	}
 }
+
+func TestRegexEdgeCasesAndReviewFixes(t *testing.T) {
+	input := `
+r = /(?P<year>\d{4})-(?P<month>\d{2})/
+s = "2026-10"
+m = s =~ r
+
+empty_span = m.Span("")
+neg_span = m.Span(-1)
+neg_start = m.Start(-1)
+neg_end = m.End(-1)
+
+r_slash = /a\/b/
+r_str = r_slash.Inspect()
+is_escaped = "a/b" is /^a\/b$/
+
+val = 0
+match s:
+    case /\d{4}/:
+        val = 42
+    case _:
+        val = 99
+`
+	env, _ := runEvalCode(t, input)
+
+	checkInt := func(varName string, expected int) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		iv, ok := Force(val).(IntValue)
+		if !ok {
+			t.Fatalf("%s not IntValue: %v", varName, val)
+		}
+		i64, _ := iv.ToInt()
+		if i64 != expected {
+			t.Fatalf("%s: expected %d, got %d", varName, expected, i64)
+		}
+	}
+
+	esVal, _ := env.Get("empty_span")
+	esTuple := Force(esVal).(*TupleValue)
+	s0, _ := Force(esTuple.Elements[0]).(IntValue).ToInt()
+	s1, _ := Force(esTuple.Elements[1]).(IntValue).ToInt()
+	if s0 != -1 || s1 != -1 {
+		t.Fatalf("expected (-1, -1), got (%d, %d)", s0, s1)
+	}
+
+	checkInt("neg_start", 5)
+	checkInt("neg_end", 7)
+
+	rStrVal, _ := env.Get("r_str")
+	if string(Force(rStrVal).(StringValue)) != "/a\\/b/" {
+		t.Fatalf("expected /a\\/b/, got %s", Force(rStrVal))
+	}
+
+	isEscVal, _ := env.Get("is_escaped")
+	if !bool(Force(isEscVal).(BoolValue)) {
+		t.Fatalf("expected is_escaped to be true")
+	}
+
+	checkInt("val", 42)
+}

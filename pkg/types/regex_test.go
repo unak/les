@@ -47,3 +47,44 @@ match s:
 		t.Fatalf("expected m to be %v, got %v", expectedMUnion, mType)
 	}
 }
+
+func TestRegexIsExprNarrowing(t *testing.T) {
+	input := `
+def check(x: String | Int):
+    if x is /^[0-9]+$/:
+        print x.Len()
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+}
+
+func TestRegexMatchCaseNarrowing(t *testing.T) {
+	input := `
+def check(x: String | Int):
+    match x:
+        case /^[0-9]+$/:
+            print x.Len()
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+}
