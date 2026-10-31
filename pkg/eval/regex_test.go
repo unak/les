@@ -434,3 +434,42 @@ b_incompat2 = lazy_incompat_tup is (/^\d+$/, String)
 	checkBool("b_incompat", false)
 	checkBool("b_incompat2", false)
 }
+
+func TestMatchCaseWildcardAndMultiParen(t *testing.T) {
+	input := `
+def classifyPair(p):
+    match p:
+        case (/^\d+$/, _):
+            return "digit-pair"
+        case {String: _}:
+            return "any-string-dict"
+        case ((/^[a-z]+$/)) as m:
+            return m[0]
+        case (true):
+            return "true-val"
+        case (...r) as allTup:
+            return "fallback-tup"
+
+r1 = classifyPair(("123", true))
+r2 = classifyPair({"k": 42})
+r3 = classifyPair("abc")
+r4 = classifyPair(true)
+r5 = classifyPair((1, 2, 3))
+`
+	env, _ := runEvalCode(t, input)
+	checkStr := func(varName, expected string) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		sv, ok := Force(val).(StringValue)
+		if !ok || string(sv) != expected {
+			t.Fatalf("%s: expected %q, got %v", varName, expected, val)
+		}
+	}
+	checkStr("r1", "digit-pair")
+	checkStr("r2", "any-string-dict")
+	checkStr("r3", "abc")
+	checkStr("r4", "true-val")
+	checkStr("r5", "fallback-tup")
+}

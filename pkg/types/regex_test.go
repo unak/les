@@ -241,4 +241,48 @@ def test(p: (String, Int)): String:
 	if errJunk == nil {
 		t.Fatalf(`expected error for regex with trailing junk`)
 	}
+
+	// Verify POSIX char class in pattern type annotation
+	nPosix, _, errPosix := inf.ParsePatternTypeAnnot(`/[[:alpha:]/]/`)
+	if errPosix != nil {
+		t.Fatalf(`failed to parse POSIX char class regex: %v`, errPosix)
+	}
+	if nPosix != TypeString {
+		t.Fatalf(`expected TypeString, got %v`, nPosix)
+	}
+
+	// Verify composite pattern with wildcard _
+	nTupWild, cTupWild, errTupWild := inf.ParsePatternTypeAnnot(`(/^\d+$/, _)`)
+	if errTupWild != nil {
+		t.Fatalf(`failed to parse composite tuple with _: %v`, errTupWild)
+	}
+	if nTupWild == nil || cTupWild != nil {
+		t.Fatalf(`expected non-nil narrowType and nil coveredType for (/^\d+$/, _)`)
+	}
+
+	nDictWild, cDictWild, errDictWild := inf.ParsePatternTypeAnnot(`{String: _}`)
+	if errDictWild != nil {
+		t.Fatalf(`failed to parse composite dict with _: %v`, errDictWild)
+	}
+	if nDictWild == nil || cDictWild == nil {
+		t.Fatalf(`expected non-nil narrowType and non-nil coveredType for {String: _}`)
+	}
+
+	// Verify (...r) exhaustiveness
+	codeRest := `
+def testRest(t: (Int, String)): Int:
+    match t:
+        case (...r):
+            return 42
+`
+	lRest := lexer.NewLexer(codeRest)
+	pRest := parser.NewParser(lRest)
+	progRest := pRest.ParseProgram()
+	if len(pRest.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, pRest.Errors())
+	}
+	infRest := NewInferencer()
+	if err := infRest.InferProgram(progRest); err != nil {
+		t.Fatalf(`expected (...r) to be exhaustive, got %v`, err)
+	}
 }

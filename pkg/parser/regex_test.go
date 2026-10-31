@@ -218,3 +218,61 @@ b = s is /Dict[0-9]/
 		t.Fatalf(`expected no parser errors for regex containing Dict[, got %v`, p.Errors())
 	}
 }
+
+func TestParserRegexPosixCharClass(t *testing.T) {
+	input := `r = /[[:alpha:]/]/`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`unexpected parser errors: %v`, p.Errors())
+	}
+	v, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf(`expected VarDecl, got %T`, prog.Body[0])
+	}
+	rlit, ok := v.Value.(*ast.RegexLit)
+	if !ok {
+		t.Fatalf(`expected RegexLit, got %T`, v.Value)
+	}
+	if rlit.Pattern != `[[:alpha:]/]` {
+		t.Fatalf(`expected pattern [[:alpha:]/], got %s`, rlit.Pattern)
+	}
+}
+
+func TestParserMultiParenRegexAndKeywords(t *testing.T) {
+	input := `
+match s:
+    case ((/^\d+$/)) as m:
+        print 1
+    case (true):
+        print 2
+    case (_):
+        print 3
+    case (...r):
+        print 4
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`unexpected parser errors: %v`, p.Errors())
+	}
+	es := prog.Body[0].(*ast.ExprStmt)
+	me := es.Value.(*ast.MatchExpr)
+	if len(me.Cases) != 4 {
+		t.Fatalf(`expected 4 cases, got %d`, len(me.Cases))
+	}
+	if me.Cases[0].RegexPattern == nil || me.Cases[0].AsName != `m` {
+		t.Fatalf(`expected non-nil RegexPattern and AsName m for case 0`)
+	}
+	if me.Cases[1].TuplePattern != nil {
+		t.Fatalf(`expected Case 1 not to be TuplePattern`)
+	}
+	if me.Cases[2].TuplePattern != nil {
+		t.Fatalf(`expected Case 2 not to be TuplePattern`)
+	}
+	if me.Cases[3].TuplePattern == nil || me.Cases[3].TuplePattern.RestName != `r` {
+		t.Fatalf(`expected Case 3 to be TuplePattern with restName r`)
+	}
+}

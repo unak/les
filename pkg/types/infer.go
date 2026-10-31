@@ -3271,16 +3271,16 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		retStr := strings.TrimSpace(string(runes[arrowIdx+2:]))
 
 		var argType Type
-		if strings.HasPrefix(argStr, "(") && strings.HasSuffix(argStr, ")") {
+		if ast.HasEnclosingDelims(argStr, '(', ')') {
 			inner := strings.TrimSpace(argStr[1 : len(argStr)-1])
 			if inner == "" {
 				argType = &TupleType{Elems: []Type{}}
 			} else {
-				elems, err := inf.parseTupleElements(inner)
+				elems, isVar, err := inf.parseTupleElements(inner)
 				if err != nil {
 					return nil, err
 				}
-				argType = &TupleType{Elems: elems}
+				argType = &TupleType{Elems: elems, IsVariadic: isVar}
 			}
 		} else if argStr == "" {
 			argType = &TupleType{Elems: []Type{}}
@@ -3327,7 +3327,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	}
 
 	// Tuple annotation or grouping: (...) or (Int, ...) or (Int, String) or ((Int) -> String)
-	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
+	if ast.HasEnclosingDelims(annot, '(', ')') {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "" {
 			return &TupleType{Elems: []Type{}}, nil
@@ -3335,54 +3335,14 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		if inner == "..." {
 			return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 		}
-		// Check if there is a top-level comma
-		hasTopLevelComma := false
-		pDepth := 0
-		bDepth := 0
-		brDepth := 0
-		innerRunes := []rune(inner)
-		for i := 0; i < len(innerRunes); i++ {
-			r := innerRunes[i]
-			if r == '/' {
-				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
-				if nextIdx > i {
-					i = nextIdx - 1
-					continue
-				}
-			}
-			if r == '(' {
-				pDepth++
-			} else if r == ')' {
-				pDepth--
-			} else if r == '[' {
-				bDepth++
-			} else if r == ']' {
-				bDepth--
-			} else if r == '{' {
-				brDepth++
-			} else if r == '}' {
-				brDepth--
-			} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
-				hasTopLevelComma = true
-				break
-			}
-		}
-
-		if !hasTopLevelComma {
+		if !ast.HasTopLevelComma(inner) {
 			// Single item in parens: grouping like ((Int) -> String) or (Int)
 			return inf.parseTypeAnnot(inner)
 		}
 
-		elems, err := inf.parseTupleElements(inner)
+		elems, isVariadic, err := inf.parseTupleElements(inner)
 		if err != nil {
 			return nil, err
-		}
-		isVariadic := false
-		for _, r := range strings.Split(inner, ",") {
-			if strings.TrimSpace(r) == "..." {
-				isVariadic = true
-				break
-			}
 		}
 		return &TupleType{
 			Elems:      elems,
@@ -3391,7 +3351,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	}
 
 	// Dict annotation: {...} or {Key: Value}
-	if strings.HasPrefix(annot, "{") && strings.HasSuffix(annot, "}") {
+	if ast.HasEnclosingDelims(annot, '{', '}') {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "..." {
 			return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
@@ -3450,25 +3410,35 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	if strings.HasSuffix(annot, "]") {
 		depth := 0
 		bracketIdx := -1
-		for i := len(runes) - 1; i >= 0; i-- {
-			if runes[i] == ']' {
-				depth++
-			} else if runes[i] == '[' {
-				depth--
-				if depth == 0 {
+		for i := 0; i < len(runes); i++ {
+			r := runes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '[' {
+				if depth == 0 && bracketIdx == -1 {
 					bracketIdx = i
+				}
+				depth++
+			} else if r == ']' {
+				depth--
+				if depth == 0 && i == len(runes)-1 {
 					break
 				}
 			}
 		}
-		if bracketIdx > 0 {
+		if bracketIdx > 0 && depth == 0 {
 			baseStr := strings.TrimSpace(string(runes[:bracketIdx]))
 			argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
 			baseType, err := inf.parseTypeAnnot(baseStr)
 			if err != nil {
 				return nil, err
 			}
-			argTypes, err := inf.parseTupleElements(argsStr)
+			argTypes, _, err := inf.parseTupleElements(argsStr)
 			if err != nil {
 				return nil, err
 			}
@@ -3518,8 +3488,11 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 
 func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 	annot = strings.TrimSpace(annot)
-	if annot == "" {
-		return TypeUnknown, nil, nil
+	if annot == "" || annot == "_" {
+		return TypeUnknown, TypeUnknown, nil
+	}
+	if annot == "true" || annot == "false" {
+		return TypeBool, nil, nil
 	}
 
 	// 1. Check top-level Union FIRST: A | B
@@ -3797,7 +3770,7 @@ func ParsePatternTypeAnnot(annot string) (Type, Type, error) {
 	return inf.parsePatternTypeAnnot(annot)
 }
 
-func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
+func (inf *Inferencer) parseTupleElements(inner string) ([]Type, bool, error) {
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
@@ -3833,17 +3806,22 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 	parts = append(parts, string(runes[start:]))
 
 	var elems []Type
+	isVariadic := false
 	for _, p := range parts {
 		trimmed := strings.TrimSpace(p)
-		if trimmed != "" && trimmed != "..." {
+		if trimmed == "..." {
+			isVariadic = true
+			continue
+		}
+		if trimmed != "" {
 			elem, err := inf.parseTypeAnnot(trimmed)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			elems = append(elems, elem)
 		}
 	}
-	return elems, nil
+	return elems, isVariadic, nil
 }
 
 func unifyTypeParams(paramType, argType Type, bindings map[string]Type) {
@@ -3973,17 +3951,16 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 				_ = caseScope.Declare(c.AsName, TypeMatch)
 			}
 		} else if c.TuplePattern != nil {
-			if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "_" {
-				anyTuple := &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
-				coveredTypes = append(coveredTypes, anyTuple)
-				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, anyTuple)
-				}
+			var tupleCovered Type
+			if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName != "" {
+				tupleCovered = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
 			} else if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "" {
-				emptyTup := &TupleType{Elems: []Type{}}
-				coveredTypes = append(coveredTypes, emptyTup)
+				tupleCovered = &TupleType{Elems: []Type{}}
+			}
+			if tupleCovered != nil {
+				coveredTypes = append(coveredTypes, tupleCovered)
 				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, emptyTup)
+					_ = caseScope.Declare(id.Name, tupleCovered)
 				}
 			}
 			for _, name := range c.TuplePattern.Elements {
@@ -3996,13 +3973,22 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 			}
 			if c.AsName != "" && c.AsName != "_" {
 				asT := targetT
-				if asT == nil || asT == TypeUnknown {
+				if tupleCovered != nil {
+					asT = tupleCovered
+				} else if asT == nil || asT == TypeUnknown {
 					asT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
 				}
 				_ = caseScope.Declare(c.AsName, asT)
 			}
 		} else {
 			pat := strings.TrimSpace(c.Pattern)
+			for ast.HasEnclosingDelims(pat, '(', ')') {
+				inner := strings.TrimSpace(pat[1 : len(pat)-1])
+				if ast.HasTopLevelComma(inner) {
+					break
+				}
+				pat = inner
+			}
 			if pat == "_" {
 				hasWildcard = true
 			} else if pat == "true" {

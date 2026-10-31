@@ -828,18 +828,28 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 	depth := 0
 	bracketIdx := -1
 	runes := []rune(annot)
-	for i := len(runes) - 1; i >= 0; i-- {
-		if runes[i] == ']' {
-			depth++
-		} else if runes[i] == '[' {
-			depth--
-			if depth == 0 {
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '[' {
+			if depth == 0 && bracketIdx == -1 {
 				bracketIdx = i
+			}
+			depth++
+		} else if r == ']' {
+			depth--
+			if depth == 0 && i == len(runes)-1 {
 				break
 			}
 		}
 	}
-	if bracketIdx <= 0 {
+	if bracketIdx <= 0 || depth != 0 {
 		return annot, nil, false
 	}
 	base := strings.TrimSpace(string(runes[:bracketIdx]))
@@ -4376,36 +4386,7 @@ func parseStringToInt(s string, radix int) IntValue {
 }
 
 func hasTopLevelComma(s string) bool {
-	pDepth := 0
-	bDepth := 0
-	brDepth := 0
-	runes := []rune(s)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-		if r == '/' {
-			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
-			if nextIdx > i {
-				i = nextIdx - 1
-				continue
-			}
-		}
-		if r == '(' {
-			pDepth++
-		} else if r == ')' {
-			pDepth--
-		} else if r == '[' {
-			bDepth++
-		} else if r == ']' {
-			bDepth--
-		} else if r == '{' {
-			brDepth++
-		} else if r == '}' {
-			brDepth--
-		} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
-			return true
-		}
-	}
-	return false
+	return ast.HasTopLevelComma(s)
 }
 
 func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {
@@ -4426,10 +4407,12 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		}
 	}
 	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
-	if ast.HasEnclosingDelims(typeAnnot, '(', ')') {
+	for ast.HasEnclosingDelims(typeAnnot, '(', ')') {
 		inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
-		if inner != "" && inner != "..." && !hasTopLevelComma(inner) {
-			return checkValueMatchesType(val, inner, optEnv...)
+		if inner != "" && inner != "..." && !ast.HasTopLevelComma(inner) {
+			typeAnnot = inner
+		} else {
+			break
 		}
 	}
 
@@ -4496,6 +4479,8 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	}
 
 	switch typeAnnot {
+	case "_", "Unknown":
+		return true
 	case "Nil", "nil":
 		_, ok := val.(NilValue)
 		return ok

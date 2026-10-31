@@ -3,6 +3,7 @@ package ast
 import (
 	"math/big"
 	"strings"
+	"unicode"
 )
 
 // Position holds source line and column numbers (1-indexed).
@@ -562,6 +563,19 @@ func SkipRegexInTypeAnnot(runes []rune, start int) int {
 			continue
 		}
 		if inCharClass {
+			if runes[i] == '[' && i+1 < len(runes) && runes[i+1] == ':' {
+				i += 2
+				for i+1 < len(runes) && !(runes[i] == ':' && runes[i+1] == ']') {
+					if runes[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				if i+1 < len(runes) && runes[i] == ':' && runes[i+1] == ']' {
+					i += 2
+				}
+				continue
+			}
 			if runes[i] == ']' && i > charClassStart {
 				inCharClass = false
 			}
@@ -577,9 +591,9 @@ func SkipRegexInTypeAnnot(runes []rune, start int) int {
 			i++
 			continue
 		}
-		if runes[i] == '/' {
+		if runes[i] == '/' && i > start+1 {
 			i++
-			for i < len(runes) && ((runes[i] >= 'a' && runes[i] <= 'z') || (runes[i] >= 'A' && runes[i] <= 'Z')) {
+			for i < len(runes) && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
 				i++
 			}
 			return i
@@ -615,6 +629,41 @@ func HasEnclosingDelims(s string, open, close rune) bool {
 			if depth == 0 {
 				return i == len(runes)-1
 			}
+		}
+	}
+	return false
+}
+
+// HasTopLevelComma returns true if s contains a comma at the top level
+// (outside parens, brackets, braces, and regex literals).
+func HasTopLevelComma(s string) bool {
+	pDepth := 0
+	bDepth := 0
+	brDepth := 0
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '[' {
+			bDepth++
+		} else if r == ']' {
+			bDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			return true
 		}
 	}
 	return false

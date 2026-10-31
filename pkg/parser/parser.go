@@ -816,21 +816,25 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			} else {
 				pattern = p.parseTypeAnnotString()
 				patCheck := strings.TrimSpace(pattern)
-				if ast.HasEnclosingDelims(patCheck, '(', ')') {
+				for ast.HasEnclosingDelims(patCheck, '(', ')') {
 					inner := strings.TrimSpace(patCheck[1 : len(patCheck)-1])
-					if strings.HasPrefix(inner, `/`) {
-						innerRunes := []rune(inner)
-						if ast.SkipRegexInTypeAnnot(innerRunes, 0) == len(innerRunes) {
-							lastSlash := strings.LastIndex(inner, `/`)
-							if lastSlash > 0 {
-								rawPat := inner[1:lastSlash]
-								flags := inner[lastSlash+1:]
-								pattern = inner
-								regexPat = &ast.RegexLit{
-									Position: cPos,
-									Pattern:  ast.UnescapeRegexPattern(rawPat),
-									Flags:    flags,
-								}
+					if ast.HasTopLevelComma(inner) {
+						break
+					}
+					patCheck = inner
+				}
+				if strings.HasPrefix(patCheck, `/`) {
+					innerRunes := []rune(patCheck)
+					if ast.SkipRegexInTypeAnnot(innerRunes, 0) == len(innerRunes) {
+						lastSlash := strings.LastIndex(patCheck, `/`)
+						if lastSlash > 0 {
+							rawPat := patCheck[1:lastSlash]
+							flags := patCheck[lastSlash+1:]
+							pattern = patCheck
+							regexPat = &ast.RegexLit{
+								Position: cPos,
+								Pattern:  ast.UnescapeRegexPattern(rawPat),
+								Flags:    flags,
 							}
 						}
 					}
@@ -928,8 +932,29 @@ func (p *Parser) isTupleDestructuringPattern() bool {
 		return false
 	}
 
-	if inside == `` || inside == `...` {
+	if !strings.HasPrefix(after, `:`) {
+		if strings.HasPrefix(after, `as`) {
+			restAfter := after[2:]
+			if len(restAfter) == 0 || restAfter[0] == ' ' || restAfter[0] == '\t' || restAfter[0] == ':' {
+				// valid as
+			} else {
+				return false
+			}
+		} else {
+			return false
+		}
+	}
+
+	if inside == `` {
 		return true
+	}
+	if strings.HasPrefix(inside, `...`) {
+		restName := strings.TrimSpace(inside[3:])
+		return restName == `` || restName == `_` || isDestructuringIdent(restName)
+	}
+
+	if !strings.ContainsRune(inside, ',') {
+		return false
 	}
 
 	elemRunes := []rune(inside)
@@ -963,6 +988,12 @@ func (p *Parser) isTupleDestructuringPattern() bool {
 
 func isDestructuringIdent(s string) bool {
 	if s == `` {
+		return false
+	}
+	switch s {
+	case `true`, `false`, `nil`, `and`, `or`, `not`, `is`, `in`, `as`, `def`, `return`,
+		`match`, `case`, `for`, `while`, `if`, `else`, `break`, `continue`, `let`, `var`,
+		`type`, `struct`, `interface`, `module`, `import`, `export`:
 		return false
 	}
 	runes := []rune(s)

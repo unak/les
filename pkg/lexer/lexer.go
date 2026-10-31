@@ -435,16 +435,32 @@ func (l *Lexer) canStartRegexLiteral() bool {
 			escaped = true
 			continue
 		}
+		if inCharClass {
+			if ch == '[' && i+1 < len(l.source) && l.source[i+1] == ':' {
+				i += 2
+				for i+1 < len(l.source) && l.source[i] != '\n' && l.source[i] != '\r' && !(l.source[i] == ':' && l.source[i+1] == ']') {
+					if l.source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				if i+1 < len(l.source) && l.source[i] == ':' && l.source[i+1] == ']' {
+					i++
+				}
+				continue
+			}
+			if ch == ']' {
+				if i == charClassStart+1 || (i == charClassStart+2 && l.source[charClassStart+1] == '^') {
+					continue
+				}
+				inCharClass = false
+				continue
+			}
+			continue
+		}
 		if ch == '[' && !inCharClass {
 			inCharClass = true
 			charClassStart = i
-			continue
-		}
-		if ch == ']' && inCharClass {
-			if i == charClassStart+1 || (i == charClassStart+2 && l.source[charClassStart+1] == '^') {
-				continue
-			}
-			inCharClass = false
 			continue
 		}
 		if ch == '/' && !inCharClass {
@@ -510,16 +526,42 @@ func (l *Lexer) readRegexLiteral() Token {
 			escaped = true
 			continue
 		}
+		if inCharClass {
+			if r == '[' && l.pos < len(l.source) && l.source[l.pos] == ':' {
+				sb.WriteRune(l.source[l.pos])
+				l.advance()
+				for l.pos < len(l.source) {
+					c := l.source[l.pos]
+					if c == '\n' || c == '\r' {
+						break
+					}
+					sb.WriteRune(c)
+					l.advance()
+					if c == '\\' && l.pos < len(l.source) {
+						sb.WriteRune(l.source[l.pos])
+						l.advance()
+						continue
+					}
+					if c == ':' && l.pos < len(l.source) && l.source[l.pos] == ']' {
+						sb.WriteRune(l.source[l.pos])
+						l.advance()
+						break
+					}
+				}
+				continue
+			}
+			if r == ']' {
+				if pos == charClassStart+1 || (pos == charClassStart+2 && l.source[charClassStart+1] == '^') {
+					continue
+				}
+				inCharClass = false
+				continue
+			}
+			continue
+		}
 		if r == '[' && !inCharClass {
 			inCharClass = true
 			charClassStart = pos
-			continue
-		}
-		if r == ']' && inCharClass {
-			if pos == charClassStart+1 || (pos == charClassStart+2 && l.source[charClassStart+1] == '^') {
-				continue
-			}
-			inCharClass = false
 			continue
 		}
 		if r == '/' && !inCharClass {
