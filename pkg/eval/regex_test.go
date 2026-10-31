@@ -505,3 +505,27 @@ func TestParseGenericTypeAnnotArrowAndMultipleBrackets(t *testing.T) {
 		t.Fatalf("expected distinct DictKeys for r1 and r2, got identical %v", k1)
 	}
 }
+
+func TestThunkBooleanPatternMatching(t *testing.T) {
+	input := `
+p1 = (1 == 2, 10)
+p2 = (1 == 1, 10)
+b1 = p1 is (true, Int)
+b2 = p2 is (true, Int)
+b3 = p1 is (false, Int)
+`
+	env, _ := runEvalCode(t, input)
+	checkBool := func(varName string, expected bool) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		bv, ok := Force(val).(BoolValue)
+		if !ok || bool(bv) != expected {
+			t.Fatalf("%s: expected %v, got %v", varName, expected, val)
+		}
+	}
+	checkBool("b1", false)
+	checkBool("b2", true)
+	checkBool("b3", true)
+}

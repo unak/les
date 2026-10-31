@@ -1559,3 +1559,117 @@ func ValidateRegex(pattern, flags string) error {
 	}
 	return nil
 }
+
+// TypesCanOverlap returns true if a runtime value could simultaneously belong to or match both t1 and t2.
+func TypesCanOverlap(t1, t2 Type) bool {
+	if t1 == nil || t2 == nil || t1 == TypeUnknown || t2 == TypeUnknown {
+		return true
+	}
+	if u1, ok := t1.(*UnionType); ok {
+		for _, m := range u1.Members {
+			if TypesCanOverlap(m, t2) {
+				return true
+			}
+		}
+		return false
+	}
+	if u2, ok := t2.(*UnionType); ok {
+		for _, m := range u2.Members {
+			if TypesCanOverlap(t1, m) {
+				return true
+			}
+		}
+		return false
+	}
+	if IsAssignableTo(t1, t2) || IsAssignableTo(t2, t1) {
+		return true
+	}
+	if tup1, ok := t1.(*TupleType); ok {
+		if tup2, ok := t2.(*TupleType); ok {
+			// Case 1: both fixed-length
+			if !tup1.IsVariadic && !tup2.IsVariadic {
+				if len(tup1.Elems) != len(tup2.Elems) {
+					return false
+				}
+				for i := range tup1.Elems {
+					if !TypesCanOverlap(tup1.Elems[i], tup2.Elems[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			// Case 2: tup1 fixed, tup2 variadic
+			if !tup1.IsVariadic && tup2.IsVariadic {
+				minReq := len(tup2.Elems) - 1
+				if len(tup1.Elems) < minReq {
+					return false
+				}
+				lastIdx2 := len(tup2.Elems) - 1
+				for i := range tup1.Elems {
+					var el2 Type
+					if i < lastIdx2 {
+						el2 = tup2.Elems[i]
+					} else {
+						el2 = tup2.Elems[lastIdx2]
+					}
+					if !TypesCanOverlap(tup1.Elems[i], el2) {
+						return false
+					}
+				}
+				return true
+			}
+			// Case 3: tup1 variadic, tup2 fixed
+			if tup1.IsVariadic && !tup2.IsVariadic {
+				minReq := len(tup1.Elems) - 1
+				if len(tup2.Elems) < minReq {
+					return false
+				}
+				lastIdx1 := len(tup1.Elems) - 1
+				for i := range tup2.Elems {
+					var el1 Type
+					if i < lastIdx1 {
+						el1 = tup1.Elems[i]
+					} else {
+						el1 = tup1.Elems[lastIdx1]
+					}
+					if !TypesCanOverlap(el1, tup2.Elems[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			// Case 4: both variadic
+			maxPrefix := len(tup1.Elems)
+			if len(tup2.Elems) > maxPrefix {
+				maxPrefix = len(tup2.Elems)
+			}
+			lastIdx1 := len(tup1.Elems) - 1
+			lastIdx2 := len(tup2.Elems) - 1
+			for i := 0; i < maxPrefix; i++ {
+				var el1, el2 Type
+				if i < lastIdx1 {
+					el1 = tup1.Elems[i]
+				} else {
+					el1 = tup1.Elems[lastIdx1]
+				}
+				if i < lastIdx2 {
+					el2 = tup2.Elems[i]
+				} else {
+					el2 = tup2.Elems[lastIdx2]
+				}
+				if !TypesCanOverlap(el1, el2) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	if d1, ok := t1.(*DictType); ok {
+		if d2, ok := t2.(*DictType); ok {
+			return TypesCanOverlap(d1.Key, d2.Key) && TypesCanOverlap(d1.Value, d2.Value)
+		}
+		return false
+	}
+	return false
+}

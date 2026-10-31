@@ -26,6 +26,46 @@ func removeNilFromType(t Type) Type {
 	return t
 }
 
+func splitTopLevelUnionParts(s string) []string {
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	braceDepth := 0
+	start := 0
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+			parts = append(parts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	if len(parts) > 0 {
+		parts = append(parts, string(runes[start:]))
+		return parts
+	}
+	return []string{s}
+}
+
 func narrowTypeByPattern(origT, patT Type) Type {
 	if origT == nil || origT == TypeUnknown {
 		if patT != nil {
@@ -36,31 +76,101 @@ func narrowTypeByPattern(origT, patT Type) Type {
 	if patT == nil || patT == TypeUnknown {
 		return origT
 	}
+	if patU, ok := patT.(*UnionType); ok {
+		var narrowed []Type
+		for _, pm := range patU.Members {
+			nT := narrowTypeByPattern(origT, pm)
+			if nT != nil && nT != TypeUnknown {
+				narrowed = append(narrowed, nT)
+			}
+		}
+		if len(narrowed) > 0 {
+			return NewUnionType(narrowed...)
+		}
+		return TypeUnknown
+	}
 	if u, ok := origT.(*UnionType); ok {
 		var narrowed []Type
 		for _, m := range u.Members {
-			if IsAssignableTo(m, patT) {
+			if TypesCanOverlap(m, patT) {
 				narrowed = append(narrowed, narrowTypeByPattern(m, patT))
 			}
 		}
 		if len(narrowed) > 0 {
 			return NewUnionType(narrowed...)
 		}
-		return patT
+		return TypeUnknown
 	}
 	if origTup, ok := origT.(*TupleType); ok {
 		if patTup, ok := patT.(*TupleType); ok {
-			var newElems []Type
-			for i := 0; i < len(origTup.Elems); i++ {
-				var pElem Type = TypeUnknown
-				if i < len(patTup.Elems) {
-					pElem = patTup.Elems[i]
-				} else if patTup.IsVariadic && len(patTup.Elems) > 0 {
-					pElem = patTup.Elems[len(patTup.Elems)-1]
+			if !origTup.IsVariadic && !patTup.IsVariadic {
+				if len(origTup.Elems) != len(patTup.Elems) {
+					return TypeUnknown
 				}
-				newElems = append(newElems, narrowTypeByPattern(origTup.Elems[i], pElem))
+				newElems := make([]Type, len(origTup.Elems))
+				for i := range origTup.Elems {
+					newElems[i] = narrowTypeByPattern(origTup.Elems[i], patTup.Elems[i])
+				}
+				return &TupleType{Elems: newElems, IsVariadic: false}
 			}
-			return &TupleType{Elems: newElems, IsVariadic: origTup.IsVariadic}
+			if !origTup.IsVariadic && patTup.IsVariadic {
+				minReq := len(patTup.Elems) - 1
+				if len(origTup.Elems) < minReq {
+					return TypeUnknown
+				}
+				lastIdxPat := len(patTup.Elems) - 1
+				newElems := make([]Type, len(origTup.Elems))
+				for i := range origTup.Elems {
+					var pElem Type
+					if i < lastIdxPat {
+						pElem = patTup.Elems[i]
+					} else {
+						pElem = patTup.Elems[lastIdxPat]
+					}
+					newElems[i] = narrowTypeByPattern(origTup.Elems[i], pElem)
+				}
+				return &TupleType{Elems: newElems, IsVariadic: false}
+			}
+			if origTup.IsVariadic && !patTup.IsVariadic {
+				minReq := len(origTup.Elems) - 1
+				if len(patTup.Elems) < minReq {
+					return TypeUnknown
+				}
+				lastIdxOrig := len(origTup.Elems) - 1
+				newElems := make([]Type, len(patTup.Elems))
+				for i := range patTup.Elems {
+					var oElem Type
+					if i < lastIdxOrig {
+						oElem = origTup.Elems[i]
+					} else {
+						oElem = origTup.Elems[lastIdxOrig]
+					}
+					newElems[i] = narrowTypeByPattern(oElem, patTup.Elems[i])
+				}
+				return &TupleType{Elems: newElems, IsVariadic: false}
+			}
+			maxLen := len(origTup.Elems)
+			if len(patTup.Elems) > maxLen {
+				maxLen = len(patTup.Elems)
+			}
+			lastIdxOrig := len(origTup.Elems) - 1
+			lastIdxPat := len(patTup.Elems) - 1
+			newElems := make([]Type, maxLen)
+			for i := 0; i < maxLen; i++ {
+				var oElem, pElem Type
+				if i < lastIdxOrig {
+					oElem = origTup.Elems[i]
+				} else {
+					oElem = origTup.Elems[lastIdxOrig]
+				}
+				if i < lastIdxPat {
+					pElem = patTup.Elems[i]
+				} else {
+					pElem = patTup.Elems[lastIdxPat]
+				}
+				newElems[i] = narrowTypeByPattern(oElem, pElem)
+			}
+			return &TupleType{Elems: newElems, IsVariadic: true}
 		}
 	}
 	if origDict, ok := origT.(*DictType); ok {
@@ -3701,7 +3811,10 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 			}
 			if trimmed == "..." {
 				isVariadic = true
-				break
+				continue
+			}
+			if isVariadic {
+				return nil, nil, fmt.Errorf("elements cannot follow '...' in tuple pattern '%s'", annot)
 			}
 			nEl, cEl, err := inf.parsePatternTypeAnnot(trimmed)
 			if err != nil {
@@ -3866,6 +3979,9 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, bool, error) {
 			continue
 		}
 		if trimmed != "" {
+			if isVariadic {
+				return nil, false, fmt.Errorf("elements cannot follow '...' in tuple type")
+			}
 			elem, err := inf.parseTypeAnnot(trimmed)
 			if err != nil {
 				return nil, false, err
@@ -3996,8 +4112,9 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 			if err := ValidateRegex(c.RegexPattern.Pattern, c.RegexPattern.Flags); err != nil {
 				return nil, false, inf.nodeErr(c.RegexPattern, "%s", err.Error())
 			}
+			narrowedTargetT := narrowTypeByPattern(targetT, TypeString)
 			if id, isId := e.Target.(*ast.Identifier); isId {
-				_ = caseScope.Declare(id.Name, TypeString)
+				_ = caseScope.Declare(id.Name, narrowedTargetT)
 			}
 			if c.AsName != "" && c.AsName != "_" {
 				_ = caseScope.Declare(c.AsName, TypeMatch)
@@ -4064,6 +4181,25 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 				}
 				pat = inner
 			}
+			parts := splitTopLevelUnionParts(pat)
+			for _, p := range parts {
+				tp := strings.TrimSpace(p)
+				for ast.HasEnclosingDelims(tp, '(', ')') {
+					inner := strings.TrimSpace(tp[1 : len(tp)-1])
+					if ast.HasTopLevelComma(inner) {
+						break
+					}
+					tp = inner
+				}
+				if tp == "true" {
+					hasTrue = true
+				} else if tp == "false" {
+					hasFalse = true
+				} else if tp == "_" {
+					hasWildcard = true
+				}
+			}
+
 			if pat == "_" {
 				hasWildcard = true
 				if c.AsName != "" && c.AsName != "_" {
@@ -4074,11 +4210,6 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 					_ = caseScope.Declare(c.AsName, asT)
 				}
 			} else if pat == "true" || pat == "false" {
-				if pat == "true" {
-					hasTrue = true
-				} else {
-					hasFalse = true
-				}
 				narrowedTargetT := narrowTypeByPattern(targetT, TypeBool)
 				if id, isId := e.Target.(*ast.Identifier); isId {
 					_ = caseScope.Declare(id.Name, narrowedTargetT)

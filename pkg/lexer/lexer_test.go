@@ -317,3 +317,22 @@ func TestLexerPostfixForceDivision(t *testing.T) {
 		}
 	}
 }
+
+func TestLexerRegexPOSIXAndNonPOSIXCharClass(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`/[[:]/`, `/[[:]/`},
+		{`/[[:a]/`, `/[[:a]/`},
+		{`/[[:alnum:]]/`, `/[[:alnum:]]/`},
+		{`/[[:^digit:]]/`, `/[[:^digit:]]/`},
+	}
+	for _, tt := range tests {
+		l := NewLexer(tt.input)
+		tok := l.NextToken()
+		if tok.Type != TokenRegex || tok.Literal != tt.expected {
+			t.Fatalf("expected TokenRegex with %q, got %v with %q", tt.expected, tok.Type, tok.Literal)
+		}
+	}
+}

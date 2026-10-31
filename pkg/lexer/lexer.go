@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"les/pkg/ast"
 )
 
 // Lexer produces tokens from source code with Python-like off-side indentation.
@@ -436,18 +438,11 @@ func (l *Lexer) canStartRegexLiteral() bool {
 			continue
 		}
 		if inCharClass {
-			if ch == '[' && i+1 < len(l.source) && l.source[i+1] == ':' {
-				i += 2
-				for i+1 < len(l.source) && l.source[i] != '\n' && l.source[i] != '\r' && !(l.source[i] == ':' && l.source[i+1] == ']') {
-					if l.source[i] == '\\' {
-						i++
-					}
-					i++
+			if ch == '[' {
+				if nextIdx := ast.SkipPOSIXCharClassInRunes(l.source, i); nextIdx > i {
+					i = nextIdx - 1
+					continue
 				}
-				if i+1 < len(l.source) && l.source[i] == ':' && l.source[i+1] == ']' {
-					i++
-				}
-				continue
 			}
 			if ch == ']' {
 				if i == charClassStart+1 || (i == charClassStart+2 && l.source[charClassStart+1] == '^') {
@@ -527,28 +522,12 @@ func (l *Lexer) readRegexLiteral() Token {
 			continue
 		}
 		if inCharClass {
-			if r == '[' && l.pos < len(l.source) && l.source[l.pos] == ':' {
-				sb.WriteRune(l.source[l.pos])
-				l.advance()
-				for l.pos < len(l.source) {
-					c := l.source[l.pos]
-					if c == '\n' || c == '\r' {
-						break
-					}
-					sb.WriteRune(c)
-					l.advance()
-					if c == '\\' && l.pos < len(l.source) {
-						sb.WriteRune(l.source[l.pos])
-						l.advance()
-						continue
-					}
-					if c == ':' && l.pos < len(l.source) && l.source[l.pos] == ']' {
-						sb.WriteRune(l.source[l.pos])
-						l.advance()
-						break
-					}
+			if r == '[' {
+				if nextIdx := ast.SkipPOSIXCharClassInRunes(l.source, pos); nextIdx > pos {
+					sb.WriteString(string(l.source[l.pos:nextIdx]))
+					l.pos = nextIdx
+					continue
 				}
-				continue
 			}
 			if r == ']' {
 				if pos == charClassStart+1 || (pos == charClassStart+2 && l.source[charClassStart+1] == '^') {

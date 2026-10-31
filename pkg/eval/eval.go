@@ -4406,18 +4406,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	if typeAnnot == "" {
 		return true
 	}
-	if thunk, ok := val.(*Thunk); ok {
-		if evaluated, isEval := PeekEvaluated(thunk); isEval {
-			val = evaluated
-		} else if !strings.Contains(typeAnnot, "/") {
-			return checkThunkInferredType(thunk, typeAnnot, optEnv...)
-		} else {
-			if !checkThunkInferredType(thunk, typeAnnot, optEnv...) {
-				return false
-			}
-			val = Force(thunk)
-		}
-	}
+
 	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
 	for ast.HasEnclosingDelims(typeAnnot, '(', ')') {
 		inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
@@ -4469,6 +4458,21 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 		}
 		return false
+	}
+
+	if thunk, ok := val.(*Thunk); ok {
+		if evaluated, isEval := PeekEvaluated(thunk); isEval {
+			val = evaluated
+		} else {
+			if !checkThunkInferredType(thunk, typeAnnot, optEnv...) {
+				return false
+			}
+			if requiresRuntimeValueCheck(typeAnnot) {
+				val = Force(thunk)
+			} else {
+				return true
+			}
+		}
 	}
 
 	if strings.HasPrefix(typeAnnot, "/") {
@@ -4905,54 +4909,21 @@ func checkThunkInferredType(thunk *Thunk, targetAnnot string, optEnv ...*Environ
 	return true
 }
 
-func typesCanOverlap(t1, t2 types.Type) bool {
-	if t1 == nil || t2 == nil || t1 == types.TypeUnknown || t2 == types.TypeUnknown {
+func requiresRuntimeValueCheck(typeAnnot string) bool {
+	if strings.Contains(typeAnnot, "/") {
 		return true
 	}
-	if u1, ok := t1.(*types.UnionType); ok {
-		for _, m := range u1.Members {
-			if typesCanOverlap(m, t2) {
-				return true
-			}
-		}
-		return false
-	}
-	if u2, ok := t2.(*types.UnionType); ok {
-		for _, m := range u2.Members {
-			if typesCanOverlap(t1, m) {
-				return true
-			}
-		}
-		return false
-	}
-	if types.IsAssignableTo(t1, t2) || types.IsAssignableTo(t2, t1) {
+	if typeAnnot == "true" || typeAnnot == "false" {
 		return true
 	}
-	if tup1, ok := t1.(*types.TupleType); ok {
-		if tup2, ok := t2.(*types.TupleType); ok {
-			if !tup1.IsVariadic && !tup2.IsVariadic && len(tup1.Elems) != len(tup2.Elems) {
-				return false
-			}
-			minLen := len(tup1.Elems)
-			if len(tup2.Elems) < minLen {
-				minLen = len(tup2.Elems)
-			}
-			for i := 0; i < minLen; i++ {
-				if !typesCanOverlap(tup1.Elems[i], tup2.Elems[i]) {
-					return false
-				}
-			}
-			return true
-		}
-		return false
-	}
-	if d1, ok := t1.(*types.DictType); ok {
-		if d2, ok := t2.(*types.DictType); ok {
-			return typesCanOverlap(d1.Key, d2.Key) && typesCanOverlap(d1.Value, d2.Value)
-		}
-		return false
+	if strings.HasPrefix(typeAnnot, "(") || strings.HasPrefix(typeAnnot, "{") {
+		return true
 	}
 	return false
+}
+
+func typesCanOverlap(t1, t2 types.Type) bool {
+	return types.TypesCanOverlap(t1, t2)
 }
 
 func splitTopLevelCommas(s string) []string {

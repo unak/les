@@ -546,6 +546,53 @@ func UnescapeRegexPattern(rawPat string) string {
 	return patSb.String()
 }
 
+// SkipPOSIXCharClass checks if s[start:] begins with a valid POSIX character class
+// such as [:alpha:] or [:^digit:] (format: [:^?[a-zA-Z]+:]).
+// If so, it returns the index in s immediately following :].
+// Otherwise, it returns start.
+func SkipPOSIXCharClass(s string, start int) int {
+	if start < 0 || start+3 >= len(s) || s[start] != '[' || s[start+1] != ':' {
+		return start
+	}
+	i := start + 2
+	if i < len(s) && s[i] == '^' {
+		i++
+	}
+	nameStart := i
+	for i < len(s) && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z')) {
+		i++
+	}
+	if i == nameStart {
+		return start
+	}
+	if i+1 < len(s) && s[i] == ':' && s[i+1] == ']' {
+		return i + 2
+	}
+	return start
+}
+
+// SkipPOSIXCharClassInRunes is the []rune variant of SkipPOSIXCharClass.
+func SkipPOSIXCharClassInRunes(runes []rune, start int) int {
+	if start < 0 || start+3 >= len(runes) || runes[start] != '[' || runes[start+1] != ':' {
+		return start
+	}
+	i := start + 2
+	if i < len(runes) && runes[i] == '^' {
+		i++
+	}
+	nameStart := i
+	for i < len(runes) && ((runes[i] >= 'a' && runes[i] <= 'z') || (runes[i] >= 'A' && runes[i] <= 'Z')) {
+		i++
+	}
+	if i == nameStart {
+		return start
+	}
+	if i+1 < len(runes) && runes[i] == ':' && runes[i+1] == ']' {
+		return i + 2
+	}
+	return start
+}
+
 // SkipRegexInTypeAnnot checks if runes[start] starts a regex literal (/pattern/flags).
 // If so, it scans past the closing / and trailing flags, respecting escaped characters
 // and character classes ([]...], [^]...]), and returns the index after the regex literal.
@@ -563,18 +610,11 @@ func SkipRegexInTypeAnnot(runes []rune, start int) int {
 			continue
 		}
 		if inCharClass {
-			if runes[i] == '[' && i+1 < len(runes) && runes[i+1] == ':' {
-				i += 2
-				for i+1 < len(runes) && !(runes[i] == ':' && runes[i+1] == ']') {
-					if runes[i] == '\\' {
-						i++
-					}
-					i++
+			if runes[i] == '[' {
+				if nextIdx := SkipPOSIXCharClassInRunes(runes, i); nextIdx > i {
+					i = nextIdx
+					continue
 				}
-				if i+1 < len(runes) && runes[i] == ':' && runes[i+1] == ']' {
-					i += 2
-				}
-				continue
 			}
 			if runes[i] == ']' && i > charClassStart {
 				inCharClass = false

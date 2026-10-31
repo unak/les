@@ -975,15 +975,22 @@ func (p *Parser) isTupleDestructuringPattern() bool {
 			}
 			return false
 		}
-		if el == `...` || el == `_` {
-			continue
-		}
-		if strings.HasPrefix(el, `...`) {
+		if el == `...` || strings.HasPrefix(el, `...`) {
+			isLast := (idx == len(elems)-1) || (idx == len(elems)-2 && elems[len(elems)-1] == ``)
+			if !isLast {
+				return false
+			}
+			if el == `...` {
+				continue
+			}
 			restName := strings.TrimSpace(el[3:])
 			if restName == `` || restName == `_` || isDestructuringIdent(restName) {
 				continue
 			}
 			return false
+		}
+		if el == `_` {
+			continue
 		}
 		if !isDestructuringIdent(el) {
 			return false

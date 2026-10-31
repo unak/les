@@ -377,3 +377,70 @@ def testBindings(x: Int, b: Bool): Int:
 		t.Fatalf(`expected bindings to typecheck, got %v`, err)
 	}
 }
+
+func TestTypesCanOverlapVariadicTuple(t *testing.T) {
+	tupVarInt := &TupleType{Elems: []Type{TypeInt}, IsVariadic: true}
+	tupFixed2Int := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: false}
+	tupVarIntStr := &TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: true}
+	tupVarStr := &TupleType{Elems: []Type{TypeString}, IsVariadic: true}
+
+	if !TypesCanOverlap(tupVarInt, tupFixed2Int) {
+		t.Fatalf("expected (Int, ...) and (Int, Int) to overlap")
+	}
+	tupEmpty := &TupleType{Elems: []Type{}}
+	if TypesCanOverlap(tupVarIntStr, tupEmpty) {
+		t.Fatalf("expected (Int, String, ...) and () NOT to overlap")
+	}
+	if TypesCanOverlap(tupVarInt, tupVarStr) {
+		t.Fatalf("expected (Int, ...) and (String, ...) NOT to overlap")
+	}
+}
+
+func TestParseTupleTypeNonFinalRest(t *testing.T) {
+	inf := NewInferencer()
+	_, _, errPat := inf.ParsePatternTypeAnnot("(..., Int)")
+	if errPat == nil {
+		t.Fatalf("expected error for non-final '...' in tuple pattern")
+	}
+	_, _, errTyp := inf.parseTupleElements("..., Int")
+	if errTyp == nil {
+		t.Fatalf("expected error for non-final '...' in tuple type")
+	}
+}
+
+func TestNarrowTypeByPatternVariadicAndUnion(t *testing.T) {
+	tupVarInt := &TupleType{Elems: []Type{TypeInt}, IsVariadic: true}
+	tupFixed2Int := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: false}
+	narrowed := narrowTypeByPattern(tupVarInt, tupFixed2Int)
+	if tup, ok := narrowed.(*TupleType); !ok || tup.IsVariadic || len(tup.Elems) != 2 {
+		t.Fatalf("expected fixed 2-elem tuple, got %v", narrowed)
+	}
+
+	unionT := NewUnionType(tupVarInt, TypeString)
+	narrowedUnion := narrowTypeByPattern(unionT, tupFixed2Int)
+	if tup, ok := narrowedUnion.(*TupleType); !ok || tup.IsVariadic || len(tup.Elems) != 2 {
+		t.Fatalf("expected fixed 2-elem tuple from union, got %v", narrowedUnion)
+	}
+}
+
+func TestMatchUnionTrueFalseExhaustiveness(t *testing.T) {
+	lines := []string{
+		"def test(b: Bool | Int) -> Int:",
+		"    match b:",
+		"        case true | Int:",
+		"            return 1",
+		"        case false:",
+		"            return 2",
+	}
+	code := strings.Join(lines, string(rune(10)))
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("expected exhaustive match for true | Int and false, got: %v", err)
+	}
+}

@@ -276,3 +276,21 @@ match s:
 		t.Fatalf(`expected Case 3 to be TuplePattern with restName r`)
 	}
 }
+
+func TestParseTuplePatternNonFinalRest(t *testing.T) {
+	input := `
+match pair:
+    case (...r, a):
+        print 1
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) == 0 {
+		es := prog.Body[0].(*ast.ExprStmt)
+		me := es.Value.(*ast.MatchExpr)
+		if me.Cases[0].TuplePattern != nil {
+			t.Fatalf("expected (...r, a) NOT to be parsed as TuplePattern")
+		}
+	}
+}
