@@ -654,7 +654,7 @@ func (p *Parser) parseTypeAnnotString() string {
 	braceDepth := 0
 	for {
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenRBracket) || p.curTokenIs(lexer.TokenRBrace) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) {
+			if p.curTokenIs(lexer.TokenComma) || p.curTokenIs(lexer.TokenRParen) || p.curTokenIs(lexer.TokenRBracket) || p.curTokenIs(lexer.TokenRBrace) || p.curTokenIs(lexer.TokenNewline) || p.curTokenIs(lexer.TokenSemicolon) || p.curTokenIs(lexer.TokenEOF) || p.curTokenIs(lexer.TokenAssign) || p.curTokenIs(lexer.TokenColon) || (p.curTokenIs(lexer.TokenIdent) && p.curToken.Literal == "as") {
 				break
 			}
 		}
@@ -673,7 +673,7 @@ func (p *Parser) parseTypeAnnotString() string {
 		}
 		parts = append(parts, p.curToken.Literal)
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenRBracket) || p.peekTokenIs(lexer.TokenRBrace) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) {
+			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenRBracket) || p.peekTokenIs(lexer.TokenRBrace) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) || (p.peekTokenIs(lexer.TokenIdent) && p.peekToken.Literal == "as") {
 				break
 			}
 			if p.peekTokenIs(lexer.TokenPipe) {
@@ -804,10 +804,32 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			var pattern string
 			var tuplePat *ast.TuplePattern
 
-			if p.curTokenIs(lexer.TokenLParen) {
+			var regexPat *ast.RegexLit
+			var asName string
+			if p.curTokenIs(lexer.TokenRegex) {
+				pattern = p.curToken.Literal
+				if rlit, ok := p.parsePrefix().(*ast.RegexLit); ok {
+					regexPat = rlit
+				}
+			} else if p.curTokenIs(lexer.TokenLParen) {
 				tuplePat, pattern = p.parseTuplePattern()
 			} else {
 				pattern = p.parseTypeAnnotString()
+			}
+
+			if p.curTokenIs(lexer.TokenIdent) && p.curToken.Literal == "as" {
+				p.nextToken() // consume 'as'
+				if p.curTokenIs(lexer.TokenIdent) {
+					asName = p.curToken.Literal
+					p.nextToken()
+				}
+			} else if p.peekTokenIs(lexer.TokenIdent) && p.peekToken.Literal == "as" {
+				p.nextToken() // advance to 'as'
+				p.nextToken() // advance to identifier
+				if p.curTokenIs(lexer.TokenIdent) {
+					asName = p.curToken.Literal
+					p.nextToken()
+				}
 			}
 
 			if p.curTokenIs(lexer.TokenColon) {
@@ -821,6 +843,8 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			cases = append(cases, ast.MatchCase{
 				Position:     cPos,
 				Pattern:      pattern,
+				RegexPattern: regexPat,
+				AsName:       asName,
 				TuplePattern: tuplePat,
 				Body:         body,
 			})
@@ -912,7 +936,7 @@ func (p *Parser) isMemberAssignOnCurrentLine() bool {
 		i++
 	}
 	afterIdent := strings.TrimSpace(string(runes[i:]))
-	return strings.HasPrefix(afterIdent, "=") && !strings.HasPrefix(afterIdent, "==") && !strings.HasPrefix(afterIdent, "=>")
+	return strings.HasPrefix(afterIdent, "=") && !strings.HasPrefix(afterIdent, "==") && !strings.HasPrefix(afterIdent, "=>") && !strings.HasPrefix(afterIdent, "=~")
 }
 
 func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
@@ -959,7 +983,7 @@ func (p *Parser) isUnpackParenDeclStart() bool {
 					j++
 				}
 				if j < len(runes) && runes[j] == '=' {
-					if j+1 < len(runes) && (runes[j+1] == '=' || runes[j+1] == '>') {
+					if j+1 < len(runes) && (runes[j+1] == '=' || runes[j+1] == '>' || runes[j+1] == '~') {
 						return false
 					}
 					return true
@@ -1224,7 +1248,7 @@ func (p *Parser) canStartArgument() bool {
 		return hasSpace
 	case lexer.TokenMinus, lexer.TokenPlus:
 		return p.isUnaryMinusOrPlusArg()
-	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil,
+	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil, lexer.TokenRegex,
 		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch, lexer.TokenForce:
 		return true
 	default:
@@ -1296,6 +1320,23 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.BoolLit{Position: pos, Value: p.curToken.Literal == "true"}
 	case lexer.TokenNil:
 		return &ast.NilLit{Position: pos}
+	case lexer.TokenRegex:
+		lit := p.curToken.Literal
+		// literal is /pattern/flags
+		lastSlash := strings.LastIndex(lit, "/")
+		rawPat := lit[1:lastSlash]
+		flags := lit[lastSlash+1:]
+		// Unescape \/ to /
+		var patSb strings.Builder
+		for i := 0; i < len(rawPat); i++ {
+			if rawPat[i] == '\\' && i+1 < len(rawPat) && rawPat[i+1] == '/' {
+				patSb.WriteByte('/')
+				i++
+			} else {
+				patSb.WriteByte(rawPat[i])
+			}
+		}
+		return &ast.RegexLit{Position: pos, Pattern: patSb.String(), Flags: flags}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot, lexer.TokenTilde:
 		op := p.curToken.Literal
 		p.nextToken()
@@ -1592,7 +1633,7 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_LOGICAL_OR
 	case lexer.TokenAnd:
 		return PREC_LOGICAL_AND
-	case lexer.TokenEq, lexer.TokenNotEq:
+	case lexer.TokenEq, lexer.TokenNotEq, lexer.TokenRegexMatch:
 		return PREC_EQUALITY
 	case lexer.TokenIs:
 		return PREC_IS
@@ -1633,7 +1674,7 @@ func (p *Parser) curPrecedence() int {
 		return PREC_LOGICAL_OR
 	case lexer.TokenAnd:
 		return PREC_LOGICAL_AND
-	case lexer.TokenEq, lexer.TokenNotEq:
+	case lexer.TokenEq, lexer.TokenNotEq, lexer.TokenRegexMatch:
 		return PREC_EQUALITY
 	case lexer.TokenIs:
 		return PREC_IS
@@ -1699,6 +1740,14 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenIs:
 		tok := p.curToken
 		p.nextToken() // consume 'is'
+		if p.curTokenIs(lexer.TokenRegex) {
+			annot := p.curToken.Literal
+			return &ast.IsExpr{
+				Position:  pos,
+				Expr:      left,
+				TypeAnnot: annot,
+			}
+		}
 		var typeParts []string
 		parenDepth := 0
 		bracketDepth := 0
@@ -1742,7 +1791,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			TypeAnnot: annot,
 		}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
-		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenEq, lexer.TokenNotEq, lexer.TokenRegexMatch, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
 		lexer.TokenAnd, lexer.TokenOr,
 		lexer.TokenPipe, lexer.TokenCaret, lexer.TokenAmpersand,
 		lexer.TokenLShift, lexer.TokenRShift:
@@ -2160,7 +2209,7 @@ func isValidDictAnnotationContent(inner string) bool {
 func isOperatorMethodToken(t lexer.TokenType) bool {
 	switch t {
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
-		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenEq, lexer.TokenRegexMatch, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
 		lexer.TokenTilde, lexer.TokenAmpersand, lexer.TokenPipe, lexer.TokenCaret,
 		lexer.TokenLShift, lexer.TokenRShift,
 		lexer.TokenLBracket:
@@ -2173,7 +2222,7 @@ func isOperatorMethodToken(t lexer.TokenType) bool {
 func (p *Parser) parseOperatorMethodName() string {
 	switch p.curToken.Type {
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenStar, lexer.TokenSlash, lexer.TokenPercent,
-		lexer.TokenEq, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
+		lexer.TokenEq, lexer.TokenRegexMatch, lexer.TokenLt, lexer.TokenLte, lexer.TokenGt, lexer.TokenGte,
 		lexer.TokenTilde, lexer.TokenAmpersand, lexer.TokenPipe, lexer.TokenCaret,
 		lexer.TokenLShift, lexer.TokenRShift:
 		op := p.curToken.Literal

@@ -21,6 +21,8 @@ const (
 	TypeBytes  PrimType = "Bytes"
 	TypeBool    PrimType = "Bool"
 	TypeNil     PrimType = "Nil"
+	TypeRegex   PrimType = "Regex"
+	TypeMatch   PrimType = "Match"
 	TypeUnknown PrimType = "Unknown"
 )
 
@@ -779,7 +781,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 
 	if mName == "Len" {
 		switch t {
-		case TypeString, TypeBytes:
+		case TypeString, TypeBytes, TypeMatch:
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{}},
 				Ret: TypeInt,
@@ -855,11 +857,86 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		}, true
 	}
 
+	if t == TypeRegex {
+		switch mName {
+		case "Pattern":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Flags":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Test":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString}}, Ret: TypeBool}, true
+		case "Match":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString}}, Ret: NewUnionType(TypeMatch, TypeNil)}, true
+		case "FindAll":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{TypeString, TypeInt}},
+				MinArity: 1,
+				MaxArity: 2,
+				Ret:      &TupleType{Elems: []Type{TypeMatch}, IsVariadic: true},
+			}, true
+		case "Replace":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString, TypeString}}, Ret: TypeString}, true
+		case "ReplaceAll":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString, TypeString}}, Ret: TypeString}, true
+		case "Split":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{TypeString, TypeInt}},
+				MinArity: 1,
+				MaxArity: 2,
+				Ret:      &TupleType{Elems: []Type{TypeString}, IsVariadic: true},
+			}, true
+		case "=~":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString}}, Ret: NewUnionType(TypeMatch, TypeNil)}, true
+		}
+	}
+
+	if t == TypeString && mName == "=~" {
+		return &FuncType{Arg: &TupleType{Elems: []Type{TypeRegex}}, Ret: NewUnionType(TypeMatch, TypeNil)}, true
+	}
+
+	if t == TypeMatch {
+		switch mName {
+		case "Group":
+			return &FuncType{Arg: &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}}, Ret: NewUnionType(TypeString, TypeNil)}, true
+		case "Groups":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: &TupleType{Elems: []Type{NewUnionType(TypeString, TypeNil)}, IsVariadic: true}}, true
+		case "NamedGroups":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: &DictType{Key: TypeString, Value: NewUnionType(TypeString, TypeNil)}}, true
+		case "Start":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeInt,
+			}, true
+		case "End":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeInt,
+			}, true
+		case "Span":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      &TupleType{Elems: []Type{TypeInt, TypeInt}},
+			}, true
+		case "Text":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Target":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Regex":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeRegex}, true
+		}
+	}
+
 	// Built-in operator methods
 	switch mName {
 	case "==":
 		switch t {
-		case TypeInt, TypeFloat, TypeString, TypeBytes, TypeBool, TypeNil:
+		case TypeInt, TypeFloat, TypeString, TypeBytes, TypeBool, TypeNil, TypeRegex, TypeMatch:
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{t}},
 				Ret: TypeBool,
@@ -1045,6 +1122,12 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			}, true
 		}
 	case "[]":
+		if t == TypeMatch {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			}, true
+		}
 		if t == TypeString {
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeInt}},

@@ -8,25 +8,27 @@ import (
 
 // Lexer produces tokens from source code with Python-like off-side indentation.
 type Lexer struct {
-	source      []rune
-	pos         int
-	line        int
-	col         int
-	indentStack []int
-	pending     []Token
-	parenDepth  int // bracket/brace/paren depth disables newlines/indents
+	source        []rune
+	pos           int
+	line          int
+	col           int
+	indentStack   []int
+	pending       []Token
+	parenDepth    int // bracket/brace/paren depth disables newlines/indents
+	lastTokenType TokenType
 }
 
 // NewLexer creates a new Lexer instance.
 func NewLexer(input string) *Lexer {
 	return &Lexer{
-		source:      []rune(input),
-		pos:         0,
-		line:        1,
-		col:         1,
-		indentStack: []int{0},
-		pending:     make([]Token, 0),
-		parenDepth:  0,
+		source:        []rune(input),
+		pos:           0,
+		line:          1,
+		col:           1,
+		indentStack:   []int{0},
+		pending:       make([]Token, 0),
+		parenDepth:    0,
+		lastTokenType: TokenEOF,
 	}
 }
 
@@ -44,6 +46,12 @@ func (l *Lexer) PeekRestOfLine() string {
 }
 
 func (l *Lexer) NextToken() Token {
+	tok := l.nextTokenInternal()
+	l.lastTokenType = tok.Type
+	return tok
+}
+
+func (l *Lexer) nextTokenInternal() Token {
 	if len(l.pending) > 0 {
 		tok := l.pending[0]
 		l.pending = l.pending[1:]
@@ -188,6 +196,13 @@ func (l *Lexer) NextToken() Token {
 			return l.readString(r)
 		}
 
+		// Regex literal or slash
+		if r == '/' {
+			if l.canStartRegexLiteral() {
+				return l.readRegexLiteral()
+			}
+		}
+
 		// Numbers
 		if unicode.IsDigit(r) {
 			return l.readNumber()
@@ -202,6 +217,11 @@ func (l *Lexer) NextToken() Token {
 		if l.pos+1 < len(l.source) {
 			two := string(l.source[l.pos : l.pos+2])
 			switch two {
+			case "=~":
+				t := Token{Type: TokenRegexMatch, Literal: "=~", Line: l.line, Col: l.col}
+				l.advance()
+				l.advance()
+				return t
 			case "==":
 				t := Token{Type: TokenEq, Literal: "==", Line: l.line, Col: l.col}
 				l.advance()
@@ -372,6 +392,134 @@ func (l *Lexer) NextToken() Token {
 	}
 }
 
+func (l *Lexer) canStartRegexLiteral() bool {
+	switch l.lastTokenType {
+	case TokenIdent, TokenInt, TokenFloat, TokenString, TokenBool, TokenNil,
+		TokenRegex, TokenRParen, TokenRBracket, TokenRBrace, TokenDef, TokenDot, TokenPipeGreater:
+		return false
+	}
+
+	// Scan forward on current line to find closing '/'
+	inCharClass := false
+	escaped := false
+	foundClose := false
+	closePos := -1
+
+	for i := l.pos + 1; i < len(l.source); i++ {
+		ch := l.source[i]
+		if ch == '\n' || ch == '\r' {
+			break
+		}
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			escaped = true
+			continue
+		}
+		if ch == '[' && !inCharClass {
+			inCharClass = true
+			continue
+		}
+		if ch == ']' && inCharClass {
+			inCharClass = false
+			continue
+		}
+		if ch == '/' && !inCharClass {
+			if i > l.pos+1 { // pattern non-empty
+				foundClose = true
+				closePos = i
+				break
+			}
+			// if i == l.pos+1, "//" is empty pattern, not regex
+			return false
+		}
+	}
+
+	if !foundClose {
+		return false
+	}
+
+	// Validate trailing flags immediately after closing '/'
+	for i := closePos + 1; i < len(l.source); i++ {
+		ch := l.source[i]
+		if unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '_' {
+			switch ch {
+			case 'i', 'm', 's', 'U':
+				// valid flag
+			default:
+				// invalid regex flag character adjacent to regex literal
+				return false
+			}
+		} else {
+			break
+		}
+	}
+
+	return true
+}
+
+func (l *Lexer) readRegexLiteral() Token {
+	startLine := l.line
+	startCol := l.col
+
+	var sb strings.Builder
+	sb.WriteRune(l.source[l.pos]) // leading '/'
+	l.advance()
+
+	inCharClass := false
+	escaped := false
+
+	for l.pos < len(l.source) {
+		r := l.source[l.pos]
+		if r == '\n' || r == '\r' {
+			break
+		}
+		sb.WriteRune(r)
+		l.advance()
+
+		if escaped {
+			escaped = false
+			continue
+		}
+		if r == '\\' {
+			escaped = true
+			continue
+		}
+		if r == '[' && !inCharClass {
+			inCharClass = true
+			continue
+		}
+		if r == ']' && inCharClass {
+			inCharClass = false
+			continue
+		}
+		if r == '/' && !inCharClass {
+			// Closing slash reached
+			break
+		}
+	}
+
+	// Read optional flags
+	for l.pos < len(l.source) {
+		r := l.source[l.pos]
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+			sb.WriteRune(r)
+			l.advance()
+		} else {
+			break
+		}
+	}
+
+	return Token{
+		Type:    TokenRegex,
+		Literal: sb.String(),
+		Line:    startLine,
+		Col:     startCol,
+	}
+}
+
 func (l *Lexer) advance() {
 	if l.pos < len(l.source) {
 		if l.source[l.pos] == '\n' {
@@ -444,8 +592,8 @@ func (l *Lexer) readNumber() Token {
 	startCol := l.col
 	var sb strings.Builder
 
-	// Check for radix prefix: 0b, 0o, 0d, 0x
-	if l.pos+1 < len(l.source) && l.source[l.pos] == '0' {
+	// Check for radix prefixes: 0b, 0o, 0d, 0x
+	if l.source[l.pos] == '0' && l.pos+1 < len(l.source) {
 		nextR := l.source[l.pos+1]
 		var isRadixDigit func(rune) bool
 		switch nextR {

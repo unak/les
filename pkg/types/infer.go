@@ -7,6 +7,26 @@ import (
 	"les/pkg/ast"
 )
 
+func removeNilFromType(t Type) Type {
+	if t == TypeNil {
+		return TypeNil
+	}
+	if u, ok := t.(*UnionType); ok {
+		var nonNil []Type
+		for _, m := range u.Members {
+			if m != TypeNil {
+				nonNil = append(nonNil, m)
+			}
+		}
+		if len(nonNil) == 0 {
+			return TypeNil
+		}
+		return NewUnionType(nonNil...)
+	}
+	return t
+}
+
+
 // Scope tracks lexical bindings and detects duplicate declarations in the same scope.
 type Scope struct {
 	parent   *Scope
@@ -133,6 +153,13 @@ var BuiltinGetsFuncType = &FuncType{
 	Ret: NewUnionType(TypeString, TypeNil),
 }
 
+var BuiltinRegexFuncType = &FuncType{
+	Arg:      &TupleType{Elems: []Type{TypeString, TypeString}},
+	MinArity: 1,
+	MaxArity: 2,
+	Ret:      TypeRegex,
+}
+
 var BuiltinEqualIface = &InterfaceType{
 	Name: "Equal",
 	Methods: map[string]*FuncType{
@@ -242,6 +269,8 @@ func NewInferencer() *Inferencer {
 	_ = rootScope.Declare("Bytes", BuiltinBytesFuncType)
 	// Built-in gets: () -> String | Nil
 	_ = rootScope.Declare("gets", BuiltinGetsFuncType)
+	// Built-in Regex: (pattern: String, [flags: String]) -> Regex
+	_ = rootScope.Declare("Regex", BuiltinRegexFuncType)
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -682,6 +711,46 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 				}
 			}
 			thenScope := NewScope(inf.scope)
+			elseScope := NewScope(inf.scope)
+			if s.Cond != nil {
+				if bin, ok := s.Cond.(*ast.BinaryExpr); ok {
+					if bin.Op == "!=" {
+						if id, ok := bin.Left.(*ast.Identifier); ok {
+							if _, isNil := bin.Right.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						} else if id, ok := bin.Right.(*ast.Identifier); ok {
+							if _, isNil := bin.Left.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						}
+					} else if bin.Op == "==" {
+						if id, ok := bin.Left.(*ast.Identifier); ok {
+							if _, isNil := bin.Right.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						} else if id, ok := bin.Right.(*ast.Identifier); ok {
+							if _, isNil := bin.Left.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						}
+					}
+				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
+					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
+						if patT, err := inf.parseTypeAnnot(isExpr.TypeAnnot); err == nil {
+							_ = thenScope.Declare(id.Name, patT)
+						}
+					}
+				}
+			}
 			prevScope := inf.scope
 			inf.scope = thenScope
 			thenFT, thenCanFT, err := inf.inferBlock(s.ThenBody)
@@ -691,7 +760,6 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 			}
 
 			if len(s.ElseBody) > 0 {
-				elseScope := NewScope(inf.scope)
 				inf.scope = elseScope
 				elseFT, elseCanFT, err := inf.inferBlock(s.ElseBody)
 				inf.scope = prevScope
@@ -1923,6 +1991,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		return TypeBool, nil
 	case *ast.NilLit:
 		return TypeNil, nil
+	case *ast.RegexLit:
+		return TypeRegex, nil
 	case *ast.ForceExpr:
 		return inf.inferExpr(e.Expr)
 	case *ast.Identifier:
@@ -2237,6 +2307,17 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return TypeFloat, nil
 			}
 			return TypeInt, nil
+		case "=~":
+			if (leftT == TypeString && rightT == TypeRegex) || (leftT == TypeRegex && rightT == TypeString) {
+				return NewUnionType(TypeMatch, TypeNil), nil
+			}
+			if leftT == TypeUnknown || rightT == TypeUnknown {
+				if leftT == TypeString || leftT == TypeRegex || rightT == TypeString || rightT == TypeRegex {
+					return NewUnionType(TypeMatch, TypeNil), nil
+				}
+				return TypeUnknown, nil
+			}
+			return nil, inf.nodeErr(e, "operator =~ expects String and Regex, got %s and %s", leftT, rightT)
 		case "==", "!=", "<", "<=", ">", ">=":
 			return TypeBool, nil
 		case "&&", "||":
@@ -2806,6 +2887,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if bSig, ok := LookupBuiltinTypeMethod(targetT, e.Member); ok {
 			return bSig, nil
 		}
+		if u, ok := targetT.(*UnionType); ok {
+			nonNilT := removeNilFromType(u)
+			if nonNilT != TypeNil {
+				if bSig, ok := LookupBuiltinTypeMethod(nonNilT, e.Member); ok {
+					return bSig, nil
+				}
+			}
+		}
 		return nil, inf.nodeErr(e, "cannot access member '%s' on non-struct/interface type %s", e.Member, targetT)
 	case *ast.NamedArgExpr:
 		return inf.inferExpr(e.Value)
@@ -2932,6 +3021,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeString, nil
 		} else if effTargetT == TypeBytes {
 			return TypeInt, nil
+		} else if effTargetT == TypeMatch || removeNilFromType(effTargetT) == TypeMatch {
+			idxT, err := inf.inferExpr(e.Index)
+			if err != nil {
+				return nil, err
+			}
+			if idxT != TypeUnknown && !IsAssignableTo(idxT, NewUnionType(TypeInt, TypeString)) {
+				return nil, inf.nodeErr(e.Index, "match index must be Int or String, got %s", idxT)
+			}
+			if intLit, ok := e.Index.(*ast.IntLit); ok && intLit.BigValue == nil && intLit.Value == 0 {
+				return TypeString, nil
+			}
+			return NewUnionType(TypeString, TypeNil), nil
 		}
 		return TypeUnknown, nil
 	case *ast.ModuleAccessExpr:
@@ -3181,9 +3282,17 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}, nil
 	}
 
+	if strings.HasPrefix(annot, "/") {
+		return TypeRegex, nil
+	}
+
 	switch annot {
 	case "Int":
 		return TypeInt, nil
+	case "Regex":
+		return TypeRegex, nil
+	case "Match":
+		return TypeMatch, nil
 	case "Float":
 		return TypeFloat, nil
 	case "String":
@@ -3531,7 +3640,12 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 
 	for _, c := range e.Cases {
 		caseScope := NewScope(inf.scope)
-		if c.TuplePattern != nil {
+		if c.RegexPattern != nil {
+			coveredTypes = append(coveredTypes, TypeString)
+			if c.AsName != "" && c.AsName != "_" {
+				_ = caseScope.Declare(c.AsName, TypeMatch)
+			}
+		} else if c.TuplePattern != nil {
 			if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "_" {
 				anyTuple := &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
 				coveredTypes = append(coveredTypes, anyTuple)
@@ -3570,6 +3684,9 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 				// If target is an identifier, narrow its type inside this case scope
 				if id, isId := e.Target.(*ast.Identifier); isId {
 					_ = caseScope.Declare(id.Name, patT)
+				}
+				if c.AsName != "" && c.AsName != "_" {
+					_ = caseScope.Declare(c.AsName, patT)
 				}
 			}
 		}

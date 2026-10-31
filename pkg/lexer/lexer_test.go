@@ -243,3 +243,36 @@ func TestLexerBitwiseOperators(t *testing.T) {
 		}
 	}
 }
+
+func TestLexerRegexAndMatchTokens(t *testing.T) {
+	input := `/foo/i =~ "foobar"
+a / b
+/hello\/world/
+/[a-z/]/m
+`
+	l := NewLexer(input)
+	expected := []struct {
+		tokType TokenType
+		literal string
+	}{
+		{TokenRegex, "/foo/i"},
+		{TokenRegexMatch, "=~"},
+		{TokenString, "foobar"},
+		{TokenNewline, "\n"},
+		{TokenIdent, "a"},
+		{TokenSlash, "/"},
+		{TokenIdent, "b"},
+		{TokenNewline, "\n"},
+		{TokenRegex, "/hello\\/world/"},
+		{TokenNewline, "\n"},
+		{TokenRegex, "/[a-z/]/m"},
+		{TokenEOF, ""},
+	}
+
+	for i, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp.tokType || (exp.literal != "\n" && tok.Literal != exp.literal) {
+			t.Fatalf("[%d] expected %v (%q), got %v (%q)", i, exp.tokType, exp.literal, tok.Type, tok.Literal)
+		}
+	}
+}

@@ -151,6 +151,17 @@ func (n *NilLit) node()         {}
 func (n *NilLit) expr()         {}
 func (n *NilLit) Pos() Position { return n.Position }
 
+// RegexLit represents regex literal, e.g. /pattern/flags.
+type RegexLit struct {
+	Position Position
+	Pattern  string
+	Flags    string
+}
+
+func (r *RegexLit) node()         {}
+func (r *RegexLit) expr()         {}
+func (r *RegexLit) Pos() Position { return r.Position }
+
 // TupleLit represents tuple literal, e.g. (1, 2, 3), (), (1,).
 type TupleLit struct {
 	Position   Position
@@ -282,6 +293,8 @@ func (tp *TuplePattern) Pos() Position { return tp.Position }
 type MatchCase struct {
 	Position     Position
 	Pattern      string        // type name ("Int", "_") or representation
+	RegexPattern *RegexLit     // non-nil if regex pattern in case
+	AsName       string        // variable name bound via 'as <ident>', or empty
 	TuplePattern *TuplePattern // non-nil if tuple unpacking pattern (e.g. (h, ...t))
 	Body         []Stmt
 }
