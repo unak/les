@@ -3581,7 +3581,7 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 	}
 
 	// 2. Tuple pattern or grouping: (...)
-	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
+	if ast.HasEnclosingDelims(annot, '(', ')') {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "" {
 			emptyTup := &TupleType{Elems: []Type{}}
@@ -3699,7 +3699,7 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 	}
 
 	// 3. Dict pattern: {...}
-	if strings.HasPrefix(annot, "{") && strings.HasSuffix(annot, "}") {
+	if ast.HasEnclosingDelims(annot, '{', '}') {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "..." {
 			varDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}
@@ -3762,17 +3762,20 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 
 	// 4. Single regex literal: /pattern/flags
 	if strings.HasPrefix(annot, "/") {
-		lastSlash := strings.LastIndex(annot, "/")
-		if lastSlash <= 0 {
-			return nil, nil, fmt.Errorf("invalid regex literal in pattern: %s", annot)
+		annotRunes := []rune(annot)
+		if ast.SkipRegexInTypeAnnot(annotRunes, 0) == len(annotRunes) {
+			lastSlash := strings.LastIndex(annot, "/")
+			if lastSlash <= 0 {
+				return nil, nil, fmt.Errorf("invalid regex literal in pattern: %s", annot)
+			}
+			rawPat := annot[1:lastSlash]
+			flags := annot[lastSlash+1:]
+			pat := ast.UnescapeRegexPattern(rawPat)
+			if err := ValidateRegex(pat, flags); err != nil {
+				return nil, nil, err
+			}
+			return TypeString, nil, nil
 		}
-		rawPat := annot[1:lastSlash]
-		flags := annot[lastSlash+1:]
-		pat := ast.UnescapeRegexPattern(rawPat)
-		if err := ValidateRegex(pat, flags); err != nil {
-			return nil, nil, err
-		}
-		return TypeString, nil, nil
 	}
 
 	// 5. Ordinary type annotation
@@ -3990,6 +3993,13 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 			}
 			if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
 				_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
+			}
+			if c.AsName != "" && c.AsName != "_" {
+				asT := targetT
+				if asT == nil || asT == TypeUnknown {
+					asT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+				}
+				_ = caseScope.Declare(c.AsName, asT)
 			}
 		} else {
 			pat := strings.TrimSpace(c.Pattern)

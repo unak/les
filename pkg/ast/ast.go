@@ -588,3 +588,34 @@ func SkipRegexInTypeAnnot(runes []rune, start int) int {
 	}
 	return start
 }
+
+// HasEnclosingDelims returns true if s starts with open and ends with close,
+// and the opening delimiter matches the final character at index len(runes)-1
+// without closing earlier. Regex literals inside are skipped.
+func HasEnclosingDelims(s string, open, close rune) bool {
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) < 2 || runes[0] != open || runes[len(runes)-1] != close {
+		return false
+	}
+	depth := 0
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == open {
+			depth++
+		} else if r == close {
+			depth--
+			if depth == 0 {
+				return i == len(runes)-1
+			}
+		}
+	}
+	return false
+}

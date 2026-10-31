@@ -816,7 +816,7 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			} else {
 				pattern = p.parseTypeAnnotString()
 				patCheck := strings.TrimSpace(pattern)
-				if strings.HasPrefix(patCheck, `(`) && strings.HasSuffix(patCheck, `)`) {
+				if ast.HasEnclosingDelims(patCheck, '(', ')') {
 					inner := strings.TrimSpace(patCheck[1 : len(patCheck)-1])
 					if strings.HasPrefix(inner, `/`) {
 						innerRunes := []rune(inner)
@@ -890,25 +890,87 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 }
 
 func (p *Parser) isTupleDestructuringPattern() bool {
-	if p.peekTokenIs(lexer.TokenRParen) {
-		return true
-	}
-	if p.peekTokenIs(lexer.TokenDot) {
-		return true
-	}
-	if !p.peekTokenIs(lexer.TokenIdent) {
+	if !p.curTokenIs(lexer.TokenLParen) {
 		return false
 	}
-	lit := p.peekToken.Literal
-	if lit != `_` && !unicode.IsLower(rune(lit[0])) {
-		return false
-	}
-	rest := p.l.PeekRestOfLine()
-	for _, r := range rest {
-		if r == ')' {
-			break
+	fullRest := p.peekToken.Literal + p.l.PeekRestOfLine()
+	runes := []rune(fullRest)
+
+	depth := 1
+	closingIdx := -1
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
 		}
-		if r == '|' || r == ':' || r == '/' {
+		if r == '(' {
+			depth++
+		} else if r == ')' {
+			depth--
+			if depth == 0 {
+				closingIdx = i
+				break
+			}
+		}
+	}
+	if closingIdx == -1 {
+		return false
+	}
+
+	inside := strings.TrimSpace(string(runes[:closingIdx]))
+	after := strings.TrimSpace(string(runes[closingIdx+1:]))
+
+	if strings.HasPrefix(after, `|`) || strings.HasPrefix(after, `->`) {
+		return false
+	}
+
+	if inside == `` || inside == `...` {
+		return true
+	}
+
+	elemRunes := []rune(inside)
+	var elems []string
+	start := 0
+	for i := 0; i < len(elemRunes); i++ {
+		if elemRunes[i] == ',' {
+			elems = append(elems, strings.TrimSpace(string(elemRunes[start:i])))
+			start = i + 1
+		}
+	}
+	elems = append(elems, strings.TrimSpace(string(elemRunes[start:])))
+
+	for _, el := range elems {
+		if el == `` || el == `...` || el == `_` {
+			continue
+		}
+		if strings.HasPrefix(el, `...`) {
+			restName := strings.TrimSpace(el[3:])
+			if restName == `` || restName == `_` || isDestructuringIdent(restName) {
+				continue
+			}
+			return false
+		}
+		if !isDestructuringIdent(el) {
+			return false
+		}
+	}
+	return true
+}
+
+func isDestructuringIdent(s string) bool {
+	if s == `` {
+		return false
+	}
+	runes := []rune(s)
+	if runes[0] != '_' && !unicode.IsLower(runes[0]) {
+		return false
+	}
+	for _, r := range runes[1:] {
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
 			return false
 		}
 	}
@@ -2145,14 +2207,6 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 	if annot == "" {
 		return
 	}
-	if strings.Contains(annot, "Dict[") || strings.Contains(annot, "Dict [") {
-		p.addError(line, col, "invalid type annotation '%s': 'Dict[...]' is not supported (use '{Key: Value}' for dictionaries)", annot)
-		return
-	}
-	if strings.Contains(annot, "Tuple[") || strings.Contains(annot, "Tuple [") {
-		p.addError(line, col, "invalid type annotation '%s': 'Tuple[...]' is not supported (use '(T1, T2)' for tuples)", annot)
-		return
-	}
 	runes := []rune(annot)
 	var braceStack []int
 	var bracketStack []int
@@ -2164,6 +2218,22 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 				i = nextIdx - 1
 				continue
 			}
+		}
+		if i+5 <= len(runes) && string(runes[i:i+5]) == "Dict[" {
+			p.addError(line, col, "invalid type annotation '%s': 'Dict[...]' is not supported (use '{Key: Value}' for dictionaries)", annot)
+			return
+		}
+		if i+6 <= len(runes) && string(runes[i:i+6]) == "Dict [" {
+			p.addError(line, col, "invalid type annotation '%s': 'Dict[...]' is not supported (use '{Key: Value}' for dictionaries)", annot)
+			return
+		}
+		if i+6 <= len(runes) && string(runes[i:i+6]) == "Tuple[" {
+			p.addError(line, col, "invalid type annotation '%s': 'Tuple[...]' is not supported (use '(T1, T2)' for tuples)", annot)
+			return
+		}
+		if i+7 <= len(runes) && string(runes[i:i+7]) == "Tuple [" {
+			p.addError(line, col, "invalid type annotation '%s': 'Tuple[...]' is not supported (use '(T1, T2)' for tuples)", annot)
+			return
 		}
 		if r == '{' {
 			braceStack = append(braceStack, i)

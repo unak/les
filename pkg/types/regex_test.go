@@ -213,7 +213,7 @@ func TestRegexTupleAndDictPatternInference(t *testing.T) {
 def test(p: (String, Int)): String:
     match p:
         case (/^\d+$/, Int):
-            return " digit-pair\
+            return "digit-pair"
 `
 	l := lexer.NewLexer(input)
 	p := parser.NewParser(l)
@@ -225,5 +225,20 @@ def test(p: (String, Int)): String:
 	err2 := inf2.InferProgram(prog)
 	if err2 == nil {
 		t.Fatalf(`expected exhaustiveness error for tuple regex pattern`)
+	}
+
+	// Verify nested func type with enclosing parens is not treated as tuple
+	nFunc, _, errFunc := inf.ParsePatternTypeAnnot(`((String) -> ()) -> ()`)
+	if errFunc != nil {
+		t.Fatalf(`failed to parse nested func type: %v`, errFunc)
+	}
+	if _, ok := nFunc.(*FuncType); !ok {
+		t.Fatalf(`expected FuncType, got %T`, nFunc)
+	}
+
+	// Verify single regex literal trailing junk rejected
+	_, _, errJunk := inf.ParsePatternTypeAnnot(`/abc/ extra`)
+	if errJunk == nil {
+		t.Fatalf(`expected error for regex with trailing junk`)
 	}
 }

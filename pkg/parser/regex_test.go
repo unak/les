@@ -169,3 +169,52 @@ match s:
 		t.Fatalf(`expected pattern {String: /(?i:abc)/}, got %s`, me.Cases[2].Pattern)
 	}
 }
+
+func TestParserRegexPatternDisambiguation(t *testing.T) {
+	input := `
+match x:
+    case () | Int:
+        print 1
+    case () -> Int:
+        print 2
+    case (io.Reader, Int):
+        print 3
+    case (a, b):
+        print 4
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`unexpected parser errors: %v`, p.Errors())
+	}
+	es := prog.Body[0].(*ast.ExprStmt)
+	me := es.Value.(*ast.MatchExpr)
+	if len(me.Cases) != 4 {
+		t.Fatalf(`expected 4 cases, got %d`, len(me.Cases))
+	}
+	if me.Cases[0].TuplePattern != nil {
+		t.Fatalf(`expected Case 0 not to be TuplePattern, got %v`, me.Cases[0].TuplePattern)
+	}
+	if me.Cases[1].TuplePattern != nil {
+		t.Fatalf(`expected Case 1 not to be TuplePattern, got %v`, me.Cases[1].TuplePattern)
+	}
+	if me.Cases[2].TuplePattern != nil {
+		t.Fatalf(`expected Case 2 not to be destructuring TuplePattern, got %v`, me.Cases[2].TuplePattern)
+	}
+	if me.Cases[3].TuplePattern == nil {
+		t.Fatalf(`expected Case 3 to be destructuring TuplePattern`)
+	}
+}
+
+func TestParserRegexDictValidation(t *testing.T) {
+	input := `
+b = s is /Dict[0-9]/
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	_ = p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`expected no parser errors for regex containing Dict[, got %v`, p.Errors())
+	}
+}

@@ -2095,6 +2095,9 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 					}
 					caseEnv.Set(c.TuplePattern.RestName, &TupleValue{Elements: restElements, IsVariadic: tVal.IsVariadic})
 				}
+				if c.AsName != "" && c.AsName != "_" {
+					caseEnv.Set(c.AsName, tVal)
+				}
 				return caseEnv.evalBlock(c.Body)
 			}
 
@@ -4423,33 +4426,10 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		}
 	}
 	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
-	if strings.HasPrefix(typeAnnot, "(") && strings.HasSuffix(typeAnnot, ")") {
+	if ast.HasEnclosingDelims(typeAnnot, '(', ')') {
 		inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
 		if inner != "" && inner != "..." && !hasTopLevelComma(inner) {
-			matched := true
-			pD := 0
-			runes := []rune(inner)
-			for i := 0; i < len(runes); i++ {
-				if runes[i] == '/' {
-					nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
-					if nextIdx > i {
-						i = nextIdx - 1
-						continue
-					}
-				}
-				if runes[i] == '(' {
-					pD++
-				} else if runes[i] == ')' {
-					pD--
-					if pD < 0 {
-						matched = false
-						break
-					}
-				}
-			}
-			if matched && pD == 0 {
-				return checkValueMatchesType(val, inner, optEnv...)
-			}
+			return checkValueMatchesType(val, inner, optEnv...)
 		}
 	}
 
@@ -4497,15 +4477,18 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	}
 
 	if strings.HasPrefix(typeAnnot, "/") {
-		lastSlash := strings.LastIndex(typeAnnot, "/")
-		if lastSlash > 0 {
-			rawPat := typeAnnot[1:lastSlash]
-			flags := typeAnnot[lastSlash+1:]
-			pat := ast.UnescapeRegexPattern(rawPat)
-			rv, err := CompileRegex(pat, flags)
-			if err == nil {
-				if sv, ok := val.(StringValue); ok {
-					return rv.Re.MatchString(string(sv))
+		annotRunes := []rune(typeAnnot)
+		if ast.SkipRegexInTypeAnnot(annotRunes, 0) == len(annotRunes) {
+			lastSlash := strings.LastIndex(typeAnnot, "/")
+			if lastSlash > 0 {
+				rawPat := typeAnnot[1:lastSlash]
+				flags := typeAnnot[lastSlash+1:]
+				pat := ast.UnescapeRegexPattern(rawPat)
+				rv, err := CompileRegex(pat, flags)
+				if err == nil {
+					if sv, ok := val.(StringValue); ok {
+						return rv.Re.MatchString(string(sv))
+					}
 				}
 			}
 		}
@@ -4606,7 +4589,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				}
 			}
 		}
-		if strings.HasPrefix(typeAnnot, "{") && strings.HasSuffix(typeAnnot, "}") {
+		if ast.HasEnclosingDelims(typeAnnot, '{', '}') {
 			dVal, ok := val.(*DictValue)
 			if !ok {
 				return false
@@ -4681,7 +4664,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			return true
 		}
 		// Check tuple type annotation: (T1, T2, ...) or (T, ...)
-		if strings.HasPrefix(typeAnnot, "(") && strings.HasSuffix(typeAnnot, ")") {
+		if ast.HasEnclosingDelims(typeAnnot, '(', ')') {
 			tVal, ok := val.(*TupleValue)
 			if !ok {
 				return false
