@@ -276,3 +276,32 @@ a / b
 		}
 	}
 }
+
+func TestLexerRegexParenAndCharClass(t *testing.T) {
+	input := `/[^]/]/
+(
+/first/
+/second/
+)
+`
+	l := NewLexer(input)
+	expected := []struct {
+		tokType TokenType
+		literal string
+	}{
+		{TokenRegex, `/[^]/]/`},
+		{TokenNewline, "\n"},
+		{TokenLParen, `(`},
+		{TokenRegex, `/first/`},
+		{TokenRegex, `/second/`},
+		{TokenRParen, `)`},
+		{TokenEOF, ""},
+	}
+
+	for i, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp.tokType || (exp.literal != "\n" && tok.Literal != exp.literal) {
+			t.Fatalf("[%d] expected %v (%q), got %v (%q)", i, exp.tokType, exp.literal, tok.Type, tok.Literal)
+		}
+	}
+}

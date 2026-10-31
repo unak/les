@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"les/pkg/ast"
 )
 
 // Type represents a Les static type.
@@ -1525,21 +1527,7 @@ func ValidateTypeConstraints(typeParams []TypeParamDef, typeArgs []Type) error {
 
 // UnescapeRegexPattern unescapes \/ to / while preserving \\.
 func UnescapeRegexPattern(rawPat string) string {
-	var patSb strings.Builder
-	for i := 0; i < len(rawPat); i++ {
-		if rawPat[i] == '\\' && i+1 < len(rawPat) {
-			if rawPat[i+1] == '/' {
-				patSb.WriteByte('/')
-			} else {
-				patSb.WriteByte('\\')
-				patSb.WriteByte(rawPat[i+1])
-			}
-			i++
-		} else {
-			patSb.WriteByte(rawPat[i])
-		}
-	}
-	return patSb.String()
+	return ast.UnescapeRegexPattern(rawPat)
 }
 
 // ValidateRegex verifies pattern and flags compile under Go regexp syntax.

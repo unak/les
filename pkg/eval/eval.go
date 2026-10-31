@@ -2052,24 +2052,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.IsExpr:
 		val := Force(NewThunk(e.Expr, env))
-		annot := strings.TrimSpace(e.TypeAnnot)
-		if strings.HasPrefix(annot, "/") {
-			lastSlash := strings.LastIndex(annot, "/")
-			if lastSlash <= 0 {
-				return nil, fmt.Errorf("invalid regex literal in 'is': %s", annot)
-			}
-			rawPat := annot[1:lastSlash]
-			flags := annot[lastSlash+1:]
-			rv, err := CompileRegex(types.UnescapeRegexPattern(rawPat), flags)
-			if err != nil {
-				return nil, err
-			}
-			if sv, ok := val.(StringValue); ok {
-				return BoolValue(rv.Re.MatchString(string(sv))), nil
-			}
-			return BoolValue(false), nil
-		}
-		matches := checkValueMatchesType(val, annot, env)
+		matches := checkValueMatchesType(val, e.TypeAnnot, env)
 		return BoolValue(matches), nil
 
 	case *ast.MatchExpr:
@@ -4389,6 +4372,39 @@ func parseStringToInt(s string, radix int) IntValue {
 	return NewIntValue(v)
 }
 
+func hasTopLevelComma(s string) bool {
+	pDepth := 0
+	bDepth := 0
+	brDepth := 0
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '[' {
+			bDepth++
+		} else if r == ']' {
+			bDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {
 	typeAnnot = strings.TrimSpace(typeAnnot)
 	if typeAnnot == "" {
@@ -4397,40 +4413,44 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	if thunk, ok := val.(*Thunk); ok {
 		if evaluated, isEval := PeekEvaluated(thunk); isEval {
 			val = evaluated
-		} else {
+		} else if !strings.Contains(typeAnnot, "/") {
 			return checkThunkInferredType(thunk, typeAnnot, optEnv...)
+		} else {
+			val = Force(thunk)
 		}
 	}
-	if strings.HasPrefix(typeAnnot, "/") {
-		lastSlash := strings.LastIndex(typeAnnot, "/")
-		if lastSlash > 0 {
-			rawPat := typeAnnot[1:lastSlash]
-			flags := typeAnnot[lastSlash+1:]
-			var patSb strings.Builder
-			for i := 0; i < len(rawPat); i++ {
-				if rawPat[i] == '\\' && i+1 < len(rawPat) {
-					if rawPat[i+1] == '/' {
-						patSb.WriteByte('/')
-					} else {
-						patSb.WriteByte('\\')
-						patSb.WriteByte(rawPat[i+1])
+	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
+	if strings.HasPrefix(typeAnnot, "(") && strings.HasSuffix(typeAnnot, ")") {
+		inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
+		if inner != "" && inner != "..." && !hasTopLevelComma(inner) {
+			matched := true
+			pD := 0
+			runes := []rune(inner)
+			for i := 0; i < len(runes); i++ {
+				if runes[i] == '/' {
+					nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+					if nextIdx > i {
+						i = nextIdx - 1
+						continue
 					}
-					i++
-				} else {
-					patSb.WriteByte(rawPat[i])
+				}
+				if runes[i] == '(' {
+					pD++
+				} else if runes[i] == ')' {
+					pD--
+					if pD < 0 {
+						matched = false
+						break
+					}
 				}
 			}
-			rv, err := CompileRegex(patSb.String(), flags)
-			if err == nil {
-				if sv, ok := val.(StringValue); ok {
-					return rv.Re.MatchString(string(sv))
-				}
+			if matched && pD == 0 {
+				return checkValueMatchesType(val, inner, optEnv...)
 			}
 		}
-		return false
 	}
 
-	// Check top-level union: A | B (respecting parens, brackets, braces)
+	// Check top-level union: A | B (respecting parens, brackets, braces, and regex literals)
 	var unionParts []string
 	pDepth := 0
 	bDepth := 0
@@ -4439,6 +4459,13 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	runes := []rune(typeAnnot)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			pDepth++
 		} else if r == ')' {
@@ -4461,6 +4488,22 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		for _, p := range unionParts {
 			if checkValueMatchesType(val, strings.TrimSpace(p), optEnv...) {
 				return true
+			}
+		}
+		return false
+	}
+
+	if strings.HasPrefix(typeAnnot, "/") {
+		lastSlash := strings.LastIndex(typeAnnot, "/")
+		if lastSlash > 0 {
+			rawPat := typeAnnot[1:lastSlash]
+			flags := typeAnnot[lastSlash+1:]
+			pat := ast.UnescapeRegexPattern(rawPat)
+			rv, err := CompileRegex(pat, flags)
+			if err == nil {
+				if sv, ok := val.(StringValue); ok {
+					return rv.Re.MatchString(string(sv))
+				}
 			}
 		}
 		return false
@@ -4620,14 +4663,8 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					return false
 				}
 				// Check value:
-				if evaluatedVal, ok := PeekEvaluated(v); ok {
-					if !checkValueMatchesType(evaluatedVal, valAnnot, optEnv...) {
-						return false
-					}
-				} else if thunk, ok := v.(*Thunk); ok {
-					if !checkThunkInferredType(thunk, valAnnot, optEnv...) {
-						return false
-					}
+				if !checkValueMatchesType(v, valAnnot, optEnv...) {
+					return false
 				}
 			}
 			return true
@@ -4694,14 +4731,8 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						return false
 					}
 				}
-				if evaluatedVal, ok := PeekEvaluated(el); ok {
-					if !checkValueMatchesType(evaluatedVal, expectedAnnot, optEnv...) {
-						return false
-					}
-				} else if thunk, ok := el.(*Thunk); ok {
-					if !checkThunkInferredType(thunk, expectedAnnot, optEnv...) {
-						return false
-					}
+				if !checkValueMatchesType(el, expectedAnnot, optEnv...) {
+					return false
 				}
 			}
 			return true
@@ -4892,6 +4923,13 @@ func splitTopLevelCommas(s string) []string {
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			pDepth++
 		} else if r == ')' {

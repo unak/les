@@ -1,6 +1,9 @@
 package ast
 
-import "math/big"
+import (
+	"math/big"
+	"strings"
+)
 
 // Position holds source line and column numbers (1-indexed).
 type Position struct {
@@ -522,3 +525,66 @@ type InterfaceDef struct {
 func (i *InterfaceDef) node()         {}
 func (i *InterfaceDef) stmt()         {}
 func (i *InterfaceDef) Pos() Position { return i.Position }
+
+// UnescapeRegexPattern unescapes \/ to / while preserving \\.
+func UnescapeRegexPattern(rawPat string) string {
+	var patSb strings.Builder
+	for i := 0; i < len(rawPat); i++ {
+		if rawPat[i] == '\\' && i+1 < len(rawPat) {
+			if rawPat[i+1] == '/' {
+				patSb.WriteByte('/')
+			} else {
+				patSb.WriteByte('\\')
+				patSb.WriteByte(rawPat[i+1])
+			}
+			i++
+		} else {
+			patSb.WriteByte(rawPat[i])
+		}
+	}
+	return patSb.String()
+}
+
+// SkipRegexInTypeAnnot checks if runes[start] starts a regex literal (/pattern/flags).
+// If so, it scans past the closing / and trailing flags, respecting escaped characters
+// and character classes ([]...], [^]...]), and returns the index after the regex literal.
+// If it is not a valid regex literal or has no closing slash, it returns start.
+func SkipRegexInTypeAnnot(runes []rune, start int) int {
+	if start < 0 || start >= len(runes) || runes[start] != '/' {
+		return start
+	}
+	i := start + 1
+	inCharClass := false
+	charClassStart := -1
+	for i < len(runes) {
+		if runes[i] == '\\' {
+			i += 2
+			continue
+		}
+		if inCharClass {
+			if runes[i] == ']' && i > charClassStart {
+				inCharClass = false
+			}
+			i++
+			continue
+		}
+		if runes[i] == '[' {
+			inCharClass = true
+			charClassStart = i + 1
+			if i+1 < len(runes) && runes[i+1] == '^' {
+				charClassStart = i + 2
+			}
+			i++
+			continue
+		}
+		if runes[i] == '/' {
+			i++
+			for i < len(runes) && ((runes[i] >= 'a' && runes[i] <= 'z') || (runes[i] >= 'A' && runes[i] <= 'Z')) {
+				i++
+			}
+			return i
+		}
+		i++
+	}
+	return start
+}

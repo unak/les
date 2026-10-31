@@ -285,3 +285,121 @@ end2 = m2.End("x")
 	checkInt("start2", 0)
 	checkInt("end2", 3)
 }
+
+func TestRegexInUnionIsExpr(t *testing.T) {
+	input := `
+b1 = "123" is /^\d+$/ | Int
+b2 = 123 is /^\d+$/ | Int
+b3 = "abc" is /^\d+$/ | Int
+b4 = "hello" is (/^[a-z]+$/ | Int)
+b5 = "xyz" is (/^a|b$/ | String)
+`
+	env, _ := runEvalCode(t, input)
+	checkBool := func(varName string, expected bool) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		bv, ok := Force(val).(BoolValue)
+		if !ok || bool(bv) != expected {
+			t.Fatalf("%s: expected %v, got %v", varName, expected, val)
+		}
+	}
+	checkBool("b1", true)
+	checkBool("b2", true)
+	checkBool("b3", false)
+	checkBool("b4", true)
+	checkBool("b5", true)
+}
+
+func TestRegexThunkMatching(t *testing.T) {
+	input := `
+lazy_bad = "abc" + "def"
+lazy_good = "123" + "456"
+b1 = lazy_bad is /^\d+$/
+b2 = lazy_good is /^\d+$/
+b3 = (lazy_bad, 1) is (/^\d+$/, Int)
+b4 = (lazy_good, 1) is (/^\d+$/, Int)
+`
+	env, _ := runEvalCode(t, input)
+	checkBool := func(varName string, expected bool) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		bv, ok := Force(val).(BoolValue)
+		if !ok || bool(bv) != expected {
+			t.Fatalf("%s: expected %v, got %v", varName, expected, val)
+		}
+	}
+	checkBool("b1", false)
+	checkBool("b2", true)
+	checkBool("b3", false)
+	checkBool("b4", true)
+}
+
+func TestMatchValueDictKeyDifferentSpans(t *testing.T) {
+	input := `
+s = "abc_abc"
+matches = /abc/.FindAll(s)
+m1 = matches[0]
+m2 = matches[1]
+d = {m1: 10, m2: 20}
+v1 = d[m1]
+v2 = d[m2]
+size = d.Len()
+`
+	env, _ := runEvalCode(t, input)
+	checkInt := func(varName string, expected int) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		iv, ok := Force(val).(IntValue)
+		if !ok {
+			t.Fatalf("%s not IntValue: %v", varName, val)
+		}
+		i, _ := iv.ToInt()
+		if i != expected {
+			t.Fatalf("%s: expected %d, got %d", varName, expected, i)
+		}
+	}
+	checkInt("size", 2)
+	checkInt("v1", 10)
+	checkInt("v2", 20)
+}
+
+func TestMatchCaseUnionRegexExecution(t *testing.T) {
+	input := `
+def classify(x):
+    match x:
+        case /^\d+$/ | Int:
+            return "number"
+        case /[a/b]/ | String:
+            return "string"
+        case _:
+            return "other"
+
+r1 = classify("123")
+r2 = classify(456)
+r3 = classify("a/b")
+r4 = classify("xyz")
+r5 = classify(true)
+`
+	env, _ := runEvalCode(t, input)
+	checkStr := func(varName, expected string) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		sv, ok := Force(val).(StringValue)
+		if !ok || string(sv) != expected {
+			t.Fatalf("%s: expected %q, got %v", varName, expected, val)
+		}
+	}
+	checkStr("r1", "number")
+	checkStr("r2", "number")
+	checkStr("r3", "string")
+	checkStr("r4", "string")
+	checkStr("r5", "other")
+}

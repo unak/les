@@ -108,3 +108,84 @@ func TestInvalidRegexTypeErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestRegexInUnionTypeAnnotation(t *testing.T) {
+	input := `
+def check(x: String | Int):
+    if x is /^[0-9]+$/ | Int:
+        print "matched"
+    if x is (/^a|b$/ | Int):
+        print "union with regex containing pipe"
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+}
+
+func TestTypeParamRegexMatchMismatch(t *testing.T) {
+	input := `
+def check[T: String](x: T):
+    m = x =~ 123
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err == nil {
+		t.Fatalf("expected type error for x =~ 123 with T: String")
+	}
+}
+
+func TestProhibitRegexInOrdinaryTypeAnnotation(t *testing.T) {
+	cases := []string{
+		`x: /foo/ = "bar"`,
+		`def f(x: /^\d+$/): pass`,
+		`struct S:
+    x: /foo/`,
+	}
+	for _, input := range cases {
+		l := lexer.NewLexer(input)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			continue
+		}
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected type error for regex in ordinary type annotation %q", input)
+		}
+	}
+}
+
+func TestRegexMatchExhaustivenessNotCovered(t *testing.T) {
+	input := `
+def test(s: String): String:
+    match s:
+        case /^\d+$/:
+            return "digit"
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err == nil {
+		t.Fatalf("expected exhaustiveness/return mismatch error for regex case in String-returning function")
+	}
+}

@@ -745,10 +745,8 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 					}
 				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
 					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
-						if strings.HasPrefix(isExpr.TypeAnnot, "/") {
-							_ = thenScope.Declare(id.Name, TypeString)
-						} else if patT, err := inf.parseTypeAnnot(isExpr.TypeAnnot); err == nil {
-							_ = thenScope.Declare(id.Name, patT)
+						if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
+							_ = thenScope.Declare(id.Name, narrowT)
 						}
 					}
 				}
@@ -2252,6 +2250,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			// so that operand types and concatenation are correctly validated and computed.
 			if _, isTupleConstraint := tp.Constraint.(*TupleType); !isTupleConstraint {
 				if bSig, ok := LookupBuiltinTypeMethod(tp.Constraint, e.Op); ok {
+					if pT, ok := getFirstParamType(bSig); ok && !IsAssignableTo(rightT, pT) {
+						return nil, inf.nodeErr(e.Right, "type mismatch in operator '%s': expected %s, got %s", e.Op, pT, rightT)
+					}
 					if bSig.Ret == TypeBool {
 						return TypeBool, nil
 					}
@@ -2313,11 +2314,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return TypeInt, nil
 		case "=~":
-			if (leftT == TypeString && rightT == TypeRegex) || (leftT == TypeRegex && rightT == TypeString) {
+			if (effLeftT == TypeString && effRightT == TypeRegex) || (effLeftT == TypeRegex && effRightT == TypeString) {
 				return NewUnionType(TypeMatch, TypeNil), nil
 			}
-			if leftT == TypeUnknown || rightT == TypeUnknown {
-				if leftT == TypeString || leftT == TypeRegex || rightT == TypeString || rightT == TypeRegex {
+			if effLeftT == TypeUnknown || effRightT == TypeUnknown {
+				if effLeftT == TypeString || effLeftT == TypeRegex || effRightT == TypeString || effRightT == TypeRegex {
 					return NewUnionType(TypeMatch, TypeNil), nil
 				}
 				return TypeUnknown, nil
@@ -3053,20 +3054,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if strings.HasPrefix(e.TypeAnnot, "/") {
-			lastSlash := strings.LastIndex(e.TypeAnnot, "/")
-			if lastSlash <= 0 {
-				return nil, inf.nodeErr(e, "invalid regex literal in 'is': %s", e.TypeAnnot)
-			}
-			rawPat := e.TypeAnnot[1:lastSlash]
-			flags := e.TypeAnnot[lastSlash+1:]
-			pat := UnescapeRegexPattern(rawPat)
-			if err := ValidateRegex(pat, flags); err != nil {
+		if e.TypeAnnot != "" {
+			if _, _, err := inf.parsePatternTypeAnnot(e.TypeAnnot); err != nil {
 				return nil, inf.nodeErr(e, "%s", err.Error())
-			}
-		} else if e.TypeAnnot != "" {
-			if _, err := inf.parseTypeAnnot(e.TypeAnnot); err != nil {
-				return nil, err
 			}
 		}
 		return TypeBool, nil
@@ -3202,6 +3192,13 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	runes := []rune(annot)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			parenDepth++
 		} else if r == ')' {
@@ -3244,6 +3241,13 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	braceDepth = 0
 	for i := 0; i < len(runes)-1; i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			parenDepth++
 		} else if r == ')' {
@@ -3298,6 +3302,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}, nil
 	}
 
+
 	switch annot {
 	case "Int":
 		return TypeInt, nil
@@ -3335,7 +3340,16 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		pDepth := 0
 		bDepth := 0
 		brDepth := 0
-		for _, r := range inner {
+		innerRunes := []rune(inner)
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
 			if r == '(' {
 				pDepth++
 			} else if r == ')' {
@@ -3494,6 +3508,134 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	return nil, fmt.Errorf("unknown type '%s'", annot)
 }
 
+func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
+	annot = strings.TrimSpace(annot)
+	if annot == "" {
+		return TypeUnknown, nil, nil
+	}
+
+	// Unwrap enclosing grouping parens if no top-level comma (e.g. (/^\d+$/ | Int))
+	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner != "" && inner != "..." {
+			hasTopLevelComma := false
+			pDepth := 0
+			bDepth := 0
+			brDepth := 0
+			innerRunes := []rune(inner)
+			for i := 0; i < len(innerRunes); i++ {
+				r := innerRunes[i]
+				if r == '/' {
+					nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+					if nextIdx > i {
+						i = nextIdx - 1
+						continue
+					}
+				}
+				if r == '(' {
+					pDepth++
+				} else if r == ')' {
+					pDepth--
+				} else if r == '[' {
+					bDepth++
+				} else if r == ']' {
+					bDepth--
+				} else if r == '{' {
+					brDepth++
+				} else if r == '}' {
+					brDepth--
+				} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+					hasTopLevelComma = true
+					break
+				}
+			}
+			if !hasTopLevelComma {
+				return inf.parsePatternTypeAnnot(inner)
+			}
+		}
+	}
+
+	// Check top-level Union: A | B
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	braceDepth := 0
+	start := 0
+	runes := []rune(annot)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+			parts = append(parts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	if len(parts) > 0 {
+		parts = append(parts, string(runes[start:]))
+		var narrowMembers []Type
+		var coveredMembers []Type
+		for _, p := range parts {
+			pt := strings.TrimSpace(p)
+			if pt == "" {
+				return nil, nil, fmt.Errorf("invalid union type: empty member in '%s'", annot)
+			}
+			nMember, cMember, err := inf.parsePatternTypeAnnot(pt)
+			if err != nil {
+				return nil, nil, err
+			}
+			narrowMembers = append(narrowMembers, nMember)
+			if cMember != nil {
+				coveredMembers = append(coveredMembers, cMember)
+			}
+		}
+		var finalCovered Type
+		if len(coveredMembers) > 0 {
+			finalCovered = NewUnionType(coveredMembers...)
+		}
+		return NewUnionType(narrowMembers...), finalCovered, nil
+	}
+
+	// Single regex literal: /pattern/flags
+	if strings.HasPrefix(annot, "/") {
+		lastSlash := strings.LastIndex(annot, "/")
+		if lastSlash <= 0 {
+			return nil, nil, fmt.Errorf("invalid regex literal in pattern: %s", annot)
+		}
+		rawPat := annot[1:lastSlash]
+		flags := annot[lastSlash+1:]
+		pat := ast.UnescapeRegexPattern(rawPat)
+		if err := ValidateRegex(pat, flags); err != nil {
+			return nil, nil, err
+		}
+		return TypeString, nil, nil
+	}
+
+	// Ordinary type annotation
+	t, err := inf.parseTypeAnnot(annot)
+	if err != nil {
+		return nil, nil, err
+	}
+	return t, t, nil
+}
+
 func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 	var parts []string
 	parenDepth := 0
@@ -3503,6 +3645,13 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 	runes := []rune(inner)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			parenDepth++
 		} else if r == ')' {
@@ -3693,17 +3842,19 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 			} else if pat == "false" {
 				hasFalse = true
 			} else if pat != "" {
-				patT, err := inf.parseTypeAnnot(pat)
+				narrowT, coveredT, err := inf.parsePatternTypeAnnot(pat)
 				if err != nil {
 					return nil, false, err
 				}
-				coveredTypes = append(coveredTypes, patT)
+				if coveredT != nil {
+					coveredTypes = append(coveredTypes, coveredT)
+				}
 				// If target is an identifier, narrow its type inside this case scope
 				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, patT)
+					_ = caseScope.Declare(id.Name, narrowT)
 				}
 				if c.AsName != "" && c.AsName != "_" {
-					_ = caseScope.Declare(c.AsName, patT)
+					_ = caseScope.Declare(c.AsName, narrowT)
 				}
 			}
 		}

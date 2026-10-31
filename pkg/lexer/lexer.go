@@ -110,6 +110,7 @@ func (l *Lexer) nextTokenInternal() Token {
 
 			if l.parenDepth > 0 {
 				// Inside brackets/parentheses, ignore newlines and indentation
+				l.lastTokenType = TokenNewline
 				continue
 			}
 
@@ -401,6 +402,7 @@ func (l *Lexer) canStartRegexLiteral() bool {
 
 	// Scan forward on current line to find closing '/'
 	inCharClass := false
+	charClassStart := -1
 	escaped := false
 	foundClose := false
 	closePos := -1
@@ -420,9 +422,13 @@ func (l *Lexer) canStartRegexLiteral() bool {
 		}
 		if ch == '[' && !inCharClass {
 			inCharClass = true
+			charClassStart = i
 			continue
 		}
 		if ch == ']' && inCharClass {
+			if i == charClassStart+1 || (i == charClassStart+2 && l.source[charClassStart+1] == '^') {
+				continue
+			}
 			inCharClass = false
 			continue
 		}
@@ -469,10 +475,12 @@ func (l *Lexer) readRegexLiteral() Token {
 	l.advance()
 
 	inCharClass := false
+	charClassStart := -1
 	escaped := false
 
 	for l.pos < len(l.source) {
 		r := l.source[l.pos]
+		pos := l.pos
 		if r == '\n' || r == '\r' {
 			break
 		}
@@ -489,9 +497,13 @@ func (l *Lexer) readRegexLiteral() Token {
 		}
 		if r == '[' && !inCharClass {
 			inCharClass = true
+			charClassStart = pos
 			continue
 		}
 		if r == ']' && inCharClass {
+			if pos == charClassStart+1 || (pos == charClassStart+2 && l.source[charClassStart+1] == '^') {
+				continue
+			}
 			inCharClass = false
 			continue
 		}

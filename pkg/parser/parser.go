@@ -806,7 +806,7 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 
 			var regexPat *ast.RegexLit
 			var asName string
-			if p.curTokenIs(lexer.TokenRegex) {
+			if p.curTokenIs(lexer.TokenRegex) && !p.peekTokenIs(lexer.TokenPipe) {
 				pattern = p.curToken.Literal
 				if rlit, ok := p.parsePrefix().(*ast.RegexLit); ok {
 					regexPat = rlit
@@ -1330,22 +1330,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 		lastSlash := strings.LastIndex(lit, "/")
 		rawPat := lit[1:lastSlash]
 		flags := lit[lastSlash+1:]
-		// Unescape \/ to /
-		var patSb strings.Builder
-		for i := 0; i < len(rawPat); i++ {
-			if rawPat[i] == '\\' && i+1 < len(rawPat) {
-				if rawPat[i+1] == '/' {
-					patSb.WriteByte('/')
-				} else {
-					patSb.WriteByte('\\')
-					patSb.WriteByte(rawPat[i+1])
-				}
-				i++
-			} else {
-				patSb.WriteByte(rawPat[i])
-			}
-		}
-		return &ast.RegexLit{Position: pos, Pattern: patSb.String(), Flags: flags}
+		pattern := ast.UnescapeRegexPattern(rawPat)
+		return &ast.RegexLit{Position: pos, Pattern: pattern, Flags: flags}
 	case lexer.TokenPlus, lexer.TokenMinus, lexer.TokenNot, lexer.TokenTilde:
 		op := p.curToken.Literal
 		p.nextToken()
@@ -1749,21 +1735,13 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	case lexer.TokenIs:
 		tok := p.curToken
 		p.nextToken() // consume 'is'
-		if p.curTokenIs(lexer.TokenRegex) {
-			annot := p.curToken.Literal
-			return &ast.IsExpr{
-				Position:  pos,
-				Expr:      left,
-				TypeAnnot: annot,
-			}
-		}
 		var typeParts []string
 		parenDepth := 0
 		bracketDepth := 0
 		braceDepth := 0
 		for {
 			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) && !p.curTokenIs(lexer.TokenRegex) {
 					break
 				}
 			}
@@ -2132,7 +2110,15 @@ func (p *Parser) validateTypeAnnotation(annot string, line, col int) {
 	runes := []rune(annot)
 	var braceStack []int
 	var bracketStack []int
-	for i, r := range runes {
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '{' {
 			braceStack = append(braceStack, i)
 		} else if r == '}' {

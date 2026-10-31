@@ -524,7 +524,17 @@ func makeDictKeyWithVisited(v Value, visited map[any]bool, depth int) DictKey {
 	case *RegexValue:
 		return DictKey{Type: "Regex", Key: val.String()}
 	case *MatchValue:
-		return DictKey{Type: "Match", Key: val.String()}
+		var sb strings.Builder
+		sb.WriteString(val.Target)
+		sb.WriteString(":")
+		if val.Regex != nil {
+			sb.WriteString(val.Regex.String())
+		}
+		sb.WriteString(":")
+		for _, sp := range val.Spans {
+			sb.WriteString(fmt.Sprintf("[%d,%d]", sp[0], sp[1]))
+		}
+		return DictKey{Type: "Match", Key: sb.String()}
 	case *TupleValue:
 		if visited[val] || depth > maxInspectDepth {
 			return DictKey{Type: "Tuple", Key: "(...)"}

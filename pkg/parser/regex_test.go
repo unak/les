@@ -103,3 +103,33 @@ match s:
 		t.Fatalf("expected parser error for missing identifier after as")
 	}
 }
+
+func TestParseMatchCaseUnionStartingWithRegex(t *testing.T) {
+	input := `
+match s:
+    case /^\d+$/ | Int:
+        print 1
+    case /[a/b]/ | String as m:
+        print 2
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+	es := prog.Body[0].(*ast.ExprStmt)
+	me := es.Value.(*ast.MatchExpr)
+	if len(me.Cases) != 2 {
+		t.Fatalf("expected 2 cases, got %d", len(me.Cases))
+	}
+	if me.Cases[0].Pattern != "/^\\d+$/ | Int" {
+		t.Fatalf("case 0: expected pattern %q, got %q", "/^\\d+$/ | Int", me.Cases[0].Pattern)
+	}
+	if me.Cases[1].Pattern != "/[a/b]/ | String" {
+		t.Fatalf("case 1: expected pattern %q, got %q", "/[a/b]/ | String", me.Cases[1].Pattern)
+	}
+	if me.Cases[1].AsName != "m" {
+		t.Fatalf("case 1: expected asName 'm', got %q", me.Cases[1].AsName)
+	}
+}
