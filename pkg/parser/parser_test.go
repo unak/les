@@ -1922,6 +1922,47 @@ func TestParseInfiniteTupleInvalidElementsAfterEllipsis(t *testing.T) {
 	}
 }
 
+func TestParseIsExprBoolAndEmpty(t *testing.T) {
+	validInputs := []struct {
+		code     string
+		expected string
+	}{
+		{"x is true", "true"},
+		{"x is false", "false"},
+		{"x is true | false", "true | false"},
+		{"x is false | Int", "false | Int"},
+	}
+	for _, tt := range validInputs {
+		l := lexer.NewLexer(tt.code)
+		p := NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("unexpected parse error for %q: %v", tt.code, p.Errors())
+		}
+		es, ok := prog.Body[0].(*ast.ExprStmt)
+		if !ok {
+			t.Fatalf("expected ExprStmt for %q", tt.code)
+		}
+		isExpr, ok := es.Value.(*ast.IsExpr)
+		if !ok || isExpr.TypeAnnot != tt.expected {
+			t.Fatalf("for %q, expected TypeAnnot %q, got %+v", tt.code, tt.expected, es.Value)
+		}
+	}
+
+	invalidInputs := []string{
+		"x is",
+		"x is :",
+	}
+	for _, in := range invalidInputs {
+		l := lexer.NewLexer(in)
+		p := NewParser(l)
+		_ = p.ParseProgram()
+		if len(p.Errors()) == 0 {
+			t.Fatalf("expected parser error for %q", in)
+		}
+	}
+}
+
 
 
 

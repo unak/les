@@ -395,17 +395,18 @@ func IsAssignableTo(src, target Type) bool {
 		}
 	}
 
+	// If src is UnionType, every member of src must be assignable to target
+	if uSrc, ok := src.(*UnionType); ok {
+		for _, sm := range uSrc.Members {
+			if !IsAssignableTo(sm, target) {
+				return false
+			}
+		}
+		return true
+	}
+
 	// If target is UnionType, src must match at least one member
 	if uTarget, ok := target.(*UnionType); ok {
-		// If src is also UnionType, every member of src must be assignable to target
-		if uSrc, ok := src.(*UnionType); ok {
-			for _, sm := range uSrc.Members {
-				if !IsAssignableTo(sm, target) {
-					return false
-				}
-			}
-			return true
-		}
 		for _, m := range uTarget.Members {
 			if IsAssignableTo(src, m) {
 				return true
@@ -420,14 +421,9 @@ func IsAssignableTo(src, target Type) bool {
 			srcArgs, sIsTuple := fSrc.effectiveArgType().(*TupleType)
 			targetArgs, tIsTuple := fTarget.effectiveArgType().(*TupleType)
 			if sIsTuple && tIsTuple {
-				if len(srcArgs.Elems) != len(targetArgs.Elems) {
+				// Contravariant parameter tuple: targetArgs must be assignable to srcArgs
+				if !IsAssignableTo(targetArgs, srcArgs) {
 					return false
-				}
-				for i := range srcArgs.Elems {
-					// Contravariant parameter types
-					if !IsAssignableTo(targetArgs.Elems[i], srcArgs.Elems[i]) {
-						return false
-					}
 				}
 			} else {
 				if !IsAssignableTo(fTarget.effectiveArgType(), fSrc.effectiveArgType()) {
@@ -1586,6 +1582,12 @@ func TypesCanOverlap(t1, t2 Type) bool {
 	}
 	if tup1, ok := t1.(*TupleType); ok {
 		if tup2, ok := t2.(*TupleType); ok {
+			if tup1.IsVariadic && len(tup1.Elems) == 0 {
+				tup1 = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
+			if tup2.IsVariadic && len(tup2.Elems) == 0 {
+				tup2 = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
 			// Case 1: both fixed-length
 			if !tup1.IsVariadic && !tup2.IsVariadic {
 				if len(tup1.Elems) != len(tup2.Elems) {

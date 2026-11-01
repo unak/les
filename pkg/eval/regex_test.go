@@ -529,3 +529,48 @@ b3 = p1 is (false, Int)
 	checkBool("b2", true)
 	checkBool("b3", true)
 }
+
+
+func TestIsExprBoolEvaluation(t *testing.T) {
+	input := `
+t = true
+f = false
+b1 = t is true
+b2 = t is false
+b3 = f is true
+b4 = f is false
+
+res = 0
+if t is false:
+    res = 1
+else:
+    res = 2
+`
+	env, _ := runEvalCode(t, input)
+	checkBool := func(varName string, expected bool) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf(`%s not found in env`, varName)
+		}
+		bv, ok := Force(val).(BoolValue)
+		if !ok || bool(bv) != expected {
+			t.Fatalf(`%s: expected %v, got %v`, varName, expected, val)
+		}
+	}
+	checkInt := func(varName string, expected int) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf(`%s not found in env`, varName)
+		}
+		iv, ok := Force(val).(IntValue)
+		i64, _ := iv.ToInt()
+		if !ok || i64 != expected {
+			t.Fatalf(`%s: expected %d, got %v`, varName, expected, val)
+		}
+	}
+	checkBool(`b1`, true)
+	checkBool(`b2`, false)
+	checkBool(`b3`, false)
+	checkBool(`b4`, true)
+	checkInt(`res`, 2)
+}

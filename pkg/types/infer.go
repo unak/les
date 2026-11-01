@@ -79,9 +79,11 @@ func narrowTypeByPattern(origT, patT Type) Type {
 	if patU, ok := patT.(*UnionType); ok {
 		var narrowed []Type
 		for _, pm := range patU.Members {
-			nT := narrowTypeByPattern(origT, pm)
-			if nT != nil && nT != TypeUnknown {
-				narrowed = append(narrowed, nT)
+			if TypesCanOverlap(origT, pm) {
+				nT := narrowTypeByPattern(origT, pm)
+				if nT != nil && nT != TypeUnknown {
+					narrowed = append(narrowed, nT)
+				}
 			}
 		}
 		if len(narrowed) > 0 {
@@ -103,6 +105,12 @@ func narrowTypeByPattern(origT, patT Type) Type {
 	}
 	if origTup, ok := origT.(*TupleType); ok {
 		if patTup, ok := patT.(*TupleType); ok {
+			if origTup.IsVariadic && len(origTup.Elems) == 0 {
+				origTup = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
+			if patTup.IsVariadic && len(patTup.Elems) == 0 {
+				patTup = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
 			if !origTup.IsVariadic && !patTup.IsVariadic {
 				if len(origTup.Elems) != len(patTup.Elems) {
 					return TypeUnknown
@@ -185,6 +193,91 @@ func narrowTypeByPattern(origT, patT Type) Type {
 		return origT
 	}
 	return patT
+}
+
+func extractTupleBindingTypes(t Type, numElements int, hasRest bool) ([]Type, Type, bool) {
+	if t == nil || t == TypeUnknown {
+		elemUnknowns := make([]Type, numElements)
+		for i := range elemUnknowns {
+			elemUnknowns[i] = TypeUnknown
+		}
+		var restT Type
+		if hasRest {
+			restT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+		}
+		return elemUnknowns, restT, false
+	}
+	if tup, ok := t.(*TupleType); ok {
+		elems := make([]Type, numElements)
+		for i := 0; i < numElements; i++ {
+			var elemT Type = TypeUnknown
+			if i < len(tup.Elems) {
+				elemT = tup.Elems[i]
+			} else if tup.IsVariadic && len(tup.Elems) > 0 {
+				elemT = tup.Elems[len(tup.Elems)-1]
+			}
+			elems[i] = elemT
+		}
+		var restT Type
+		if hasRest {
+			var restElemT Type = TypeUnknown
+			if tup.IsVariadic && len(tup.Elems) > 0 {
+				restElemT = tup.Elems[len(tup.Elems)-1]
+			} else if len(tup.Elems) > numElements {
+				restElemT = tup.Elems[numElements]
+			}
+			restT = &TupleType{Elems: []Type{restElemT}, IsVariadic: true}
+		}
+		return elems, restT, true
+	}
+	if u, ok := t.(*UnionType); ok {
+		var memberTupleTypes []*TupleType
+		for _, m := range u.Members {
+			if tup, ok := m.(*TupleType); ok {
+				memberTupleTypes = append(memberTupleTypes, tup)
+			}
+		}
+		if len(memberTupleTypes) > 0 {
+			elems := make([]Type, numElements)
+			for i := 0; i < numElements; i++ {
+				var iMembers []Type
+				for _, mt := range memberTupleTypes {
+					var el Type = TypeUnknown
+					if i < len(mt.Elems) {
+						el = mt.Elems[i]
+					} else if mt.IsVariadic && len(mt.Elems) > 0 {
+						el = mt.Elems[len(mt.Elems)-1]
+					}
+					iMembers = append(iMembers, el)
+				}
+				elems[i] = NewUnionType(iMembers...)
+			}
+			var restT Type
+			if hasRest {
+				var restMembers []Type
+				for _, mt := range memberTupleTypes {
+					var rEl Type = TypeUnknown
+					if mt.IsVariadic && len(mt.Elems) > 0 {
+						rEl = mt.Elems[len(mt.Elems)-1]
+					} else if len(mt.Elems) > numElements {
+						rEl = mt.Elems[numElements]
+					}
+					restMembers = append(restMembers, rEl)
+				}
+				restT = &TupleType{Elems: []Type{NewUnionType(restMembers...)}, IsVariadic: true}
+			}
+			return elems, restT, true
+		}
+	}
+	elemUnknowns := make([]Type, numElements)
+	for i := range elemUnknowns {
+		elemUnknowns[i] = TypeUnknown
+	}
+	var restT Type
+	if hasRest {
+		restT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+	}
+	return elemUnknowns, restT, false
 }
 
 
@@ -1157,36 +1250,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if err != nil {
 			return err
 		}
-		if tt, ok := valT.(*TupleType); ok {
-			for i, name := range s.Pattern.Elements {
-				if name != "_" {
-					var elemT Type = TypeUnknown
-					if i < len(tt.Elems) {
-						elemT = tt.Elems[i]
-					} else if tt.IsVariadic && len(tt.Elems) > 0 {
-						elemT = tt.Elems[len(tt.Elems)-1]
-					}
-					_ = inf.scope.Declare(name, elemT)
-				}
+		elemTypes, restType, _ := extractTupleBindingTypes(valT, len(s.Pattern.Elements), s.Pattern.RestName != "")
+		for i, name := range s.Pattern.Elements {
+			if name != "_" {
+				_ = inf.scope.Declare(name, elemTypes[i])
 			}
-			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-				var restElemT Type = TypeUnknown
-				if tt.IsVariadic && len(tt.Elems) > 0 {
-					restElemT = tt.Elems[len(tt.Elems)-1]
-				} else if len(tt.Elems) > len(s.Pattern.Elements) {
-					restElemT = tt.Elems[len(s.Pattern.Elements)]
-				}
-				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{restElemT}, IsVariadic: true})
-			}
-		} else {
-			for _, name := range s.Pattern.Elements {
-				if name != "_" {
-					_ = inf.scope.Declare(name, TypeUnknown)
-				}
-			}
-			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
-			}
+		}
+		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
+			_ = inf.scope.Declare(s.Pattern.RestName, restType)
 		}
 		return nil
 
@@ -3216,10 +3287,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if e.TypeAnnot != "" {
-			if _, _, err := inf.parsePatternTypeAnnot(e.TypeAnnot); err != nil {
-				return nil, inf.nodeErr(e, "%s", err.Error())
-			}
+		if _, _, err := inf.parsePatternTypeAnnot(e.TypeAnnot); err != nil {
+			return nil, inf.nodeErr(e, "%s", err.Error())
 		}
 		return TypeBool, nil
 	case *ast.MatchExpr:
@@ -3664,7 +3733,10 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 
 func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 	annot = strings.TrimSpace(annot)
-	if annot == "" || annot == "_" {
+	if annot == "" {
+		return nil, nil, fmt.Errorf("empty type annotation or pattern")
+	}
+	if annot == "_" {
 		return TypeUnknown, TypeUnknown, nil
 	}
 	if annot == "true" || annot == "false" {
@@ -3804,14 +3876,17 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 		allCovered := true
 		isVariadic := false
 
-		for _, p := range rawParts {
+		for idx, p := range rawParts {
 			trimmed := strings.TrimSpace(p)
-			if trimmed == "" {
-				continue
-			}
 			if trimmed == "..." {
 				isVariadic = true
 				continue
+			}
+			if trimmed == "" {
+				if idx == len(rawParts)-1 && len(rawParts) >= 2 {
+					continue
+				}
+				return nil, nil, fmt.Errorf("empty element in tuple pattern '%s'", annot)
 			}
 			if isVariadic {
 				return nil, nil, fmt.Errorf("elements cannot follow '...' in tuple pattern '%s'", annot)
@@ -3828,6 +3903,12 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 			}
 		}
 
+		if isVariadic && len(narrowElems) == 0 {
+			narrowElems = []Type{TypeUnknown}
+		}
+		if isVariadic && len(coveredElems) == 0 {
+			coveredElems = []Type{TypeUnknown}
+		}
 		narrowT := &TupleType{Elems: narrowElems, IsVariadic: isVariadic}
 		var coveredT Type
 		if allCovered && len(coveredElems) == len(narrowElems) {
@@ -3972,22 +4053,29 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, bool, error) {
 
 	var elems []Type
 	isVariadic := false
-	for _, p := range parts {
+	for idx, p := range parts {
 		trimmed := strings.TrimSpace(p)
 		if trimmed == "..." {
 			isVariadic = true
 			continue
 		}
-		if trimmed != "" {
-			if isVariadic {
-				return nil, false, fmt.Errorf("elements cannot follow '...' in tuple type")
+		if trimmed == "" {
+			if idx == len(parts)-1 && len(parts) >= 2 {
+				continue
 			}
-			elem, err := inf.parseTypeAnnot(trimmed)
-			if err != nil {
-				return nil, false, err
-			}
-			elems = append(elems, elem)
+			return nil, false, fmt.Errorf("empty element in tuple type")
 		}
+		if isVariadic {
+			return nil, false, fmt.Errorf("elements cannot follow '...' in tuple type")
+		}
+		elem, err := inf.parseTypeAnnot(trimmed)
+		if err != nil {
+			return nil, false, err
+		}
+		elems = append(elems, elem)
+	}
+	if isVariadic && len(elems) == 0 {
+		elems = []Type{TypeUnknown}
 	}
 	return elems, isVariadic, nil
 }
@@ -4137,36 +4225,14 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 				_ = caseScope.Declare(id.Name, narrowedTupleT)
 			}
 
-			if tup, ok := narrowedTupleT.(*TupleType); ok {
-				for i, name := range c.TuplePattern.Elements {
-					if name != "_" {
-						var elemT Type = TypeUnknown
-						if i < len(tup.Elems) {
-							elemT = tup.Elems[i]
-						} else if tup.IsVariadic && len(tup.Elems) > 0 {
-							elemT = tup.Elems[len(tup.Elems)-1]
-						}
-						_ = caseScope.Declare(name, elemT)
-					}
+			elemTypes, restType, _ := extractTupleBindingTypes(narrowedTupleT, len(c.TuplePattern.Elements), c.TuplePattern.RestName != "")
+			for i, name := range c.TuplePattern.Elements {
+				if name != "_" {
+					_ = caseScope.Declare(name, elemTypes[i])
 				}
-				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-					var restElemT Type = TypeUnknown
-					if tup.IsVariadic && len(tup.Elems) > 0 {
-						restElemT = tup.Elems[len(tup.Elems)-1]
-					} else if len(tup.Elems) > len(c.TuplePattern.Elements) {
-						restElemT = tup.Elems[len(c.TuplePattern.Elements)]
-					}
-					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{restElemT}, IsVariadic: true})
-				}
-			} else {
-				for _, name := range c.TuplePattern.Elements {
-					if name != "_" {
-						_ = caseScope.Declare(name, TypeUnknown)
-					}
-				}
-				if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-					_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
-				}
+			}
+			if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
+				_ = caseScope.Declare(c.TuplePattern.RestName, restType)
 			}
 
 			if c.AsName != "" && c.AsName != "_" {

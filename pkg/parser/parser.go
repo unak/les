@@ -1893,7 +1893,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		braceDepth := 0
 		for {
 			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) && !p.curTokenIs(lexer.TokenRegex) {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenBool) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) && !p.curTokenIs(lexer.TokenRegex) {
 					break
 				}
 			}
@@ -1921,6 +1921,9 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 				}
 			}
 			p.nextToken()
+		}
+		if len(typeParts) == 0 {
+			p.addError(tok.Line, tok.Col, "expected type annotation or pattern after 'is'")
 		}
 		annot := normalizeTypeAnnot(typeParts)
 		p.validateTypeAnnotation(annot, tok.Line, tok.Col)

@@ -444,3 +444,62 @@ func TestMatchUnionTrueFalseExhaustiveness(t *testing.T) {
 		t.Fatalf("expected exhaustive match for true | Int and false, got: %v", err)
 	}
 }
+
+func TestNarrowTypeByPatternUnionNotWidening(t *testing.T) {
+	unionIntStr := NewUnionType(TypeInt, TypeString)
+	narrowed := narrowTypeByPattern(TypeInt, unionIntStr)
+	if !narrowed.Equals(TypeInt) {
+		t.Fatalf("expected narrowTypeByPattern(Int, Int | String) to be Int, got %v", narrowed)
+	}
+}
+
+func TestTupleUnionDestructuringInMatch(t *testing.T) {
+	lines := []string{
+		"def test(pair: (Int, String) | (Int, Bool)) -> Int:",
+		"    match pair:",
+		"        case (a, b):",
+		"            var x: Int = a",
+		"            var y: String | Bool = b",
+		"            return x",
+	}
+	code := strings.Join(lines, string(rune(10)))
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("expected tuple union destructuring to typecheck, got: %v", err)
+	}
+}
+
+func TestTupleEmptyNonTrailingElementRejected(t *testing.T) {
+	inf := NewInferencer()
+	for _, in := range []string{"(,)", "(Int, , String)"} {
+		if _, _, err := inf.ParsePatternTypeAnnot(in); err == nil {
+			t.Fatalf("expected error for pattern %q", in)
+		}
+	}
+	for _, in := range []string{",", "Int, , String"} {
+		if _, _, err := inf.parseTupleElements(in); err == nil {
+			t.Fatalf("expected error for tuple elements %q", in)
+		}
+	}
+}
+
+func TestVariadicTupleNormalizationAndFuncAssignability(t *testing.T) {
+	inf := NewInferencer()
+	ft1, err1 := inf.parseTypeAnnot("(...) -> Int")
+	if err1 != nil {
+		t.Fatalf("failed to parse (...) -> Int: %v", err1)
+	}
+	ft2, err2 := inf.parseTypeAnnot("(Int, ...) -> Int")
+	if err2 != nil {
+		t.Fatalf("failed to parse (Int, ...) -> Int: %v", err2)
+	}
+	if !IsAssignableTo(ft1, ft2) {
+		t.Fatalf("expected (...) -> Int to be assignable to (Int, ...) -> Int")
+	}
+}
