@@ -634,6 +634,63 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 					continue
 				}
 			}
+			if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
+				if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
+					return false
+				}
+				if !IsAssignableTo(fnT.Ret, TypeBool) {
+					return false
+				}
+				if len(target.TypeArgs) == 1 {
+					tup, ok := fnT.Arg.(*TupleType)
+					if ok && len(tup.Elems) == 1 {
+						if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
+							return false
+						}
+					}
+				}
+				continue
+			}
+			if target.Name == "Numeric" {
+				if mName == "Int" {
+					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeInt) {
+						return false
+					}
+					continue
+				}
+				if mName == "Float" {
+					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeFloat) {
+						return false
+					}
+					continue
+				}
+				if mName == "Abs" {
+					if fnT.MinArgs() > 0 {
+						return false
+					}
+					if len(target.TypeArgs) == 1 && !IsAssignableTo(fnT.Ret, target.TypeArgs[0]) {
+						return false
+					}
+					continue
+				}
+				if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+					if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
+						return false
+					}
+					if len(target.TypeArgs) == 1 {
+						expectedT := target.TypeArgs[0]
+						if !IsAssignableTo(fnT.Ret, expectedT) {
+							return false
+						}
+						if tup, ok := fnT.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+							if !IsAssignableTo(expectedT, tup.Elems[0]) {
+								return false
+							}
+						}
+					}
+					continue
+				}
+			}
 			matched := targetSig.Equals(fnT)
 			if !matched && len(fnT.Overloads) > 0 {
 				for _, ov := range fnT.Overloads {
@@ -660,8 +717,8 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 		if !ok {
 			return false
 		}
-		if (target.Name == "Equal" || target.Name == "Comparable") && (mName == "==" || mName == "<") {
-			// For Equal/Comparable, builtin method must accept 1 argument and return Bool
+		if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
+			// For Equatable/Comparable/Numeric, builtin method must accept 1 argument and return Bool
 			if srcSig.Ret != TypeBool {
 				return false
 			}
@@ -670,6 +727,43 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				return false
 			}
 			continue
+		}
+		if target.Name == "Numeric" {
+			if mName == "Int" {
+				if srcSig.Ret != TypeInt || srcSig.MinArgs() > 0 {
+					return false
+				}
+				continue
+			}
+			if mName == "Float" {
+				if srcSig.Ret != TypeFloat || srcSig.MinArgs() > 0 {
+					return false
+				}
+				continue
+			}
+			if mName == "Abs" {
+				if srcSig.MinArgs() > 0 {
+					return false
+				}
+				if len(target.TypeArgs) == 1 && !IsAssignableTo(srcSig.Ret, target.TypeArgs[0]) {
+					return false
+				}
+				continue
+			}
+			if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+				if len(target.TypeArgs) == 1 {
+					expectedT := target.TypeArgs[0]
+					if !IsAssignableTo(srcSig.Ret, expectedT) {
+						return false
+					}
+					if tup, ok := srcSig.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+						if !IsAssignableTo(expectedT, tup.Elems[0]) {
+							return false
+						}
+					}
+				}
+				continue
+			}
 		}
 		if target.Name == "Indexable" {
 			if mName == "Len" {
@@ -853,6 +947,38 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			MinArity: 0,
 			MaxArity: 1,
 			Ret:      TypeString,
+		}, true
+	}
+	if mName == "Float" && (t == TypeInt || t == TypeFloat) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeFloat,
+		}, true
+	}
+	if mName == "Int" && (t == TypeInt || t == TypeFloat) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeInt,
+		}, true
+	}
+	if mName == "Abs" {
+		if t == TypeInt {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeInt,
+			}, true
+		}
+		if t == TypeFloat {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeFloat,
+			}, true
+		}
+	}
+	if (mName == "Floor" || mName == "Ceil" || mName == "Round") && (t == TypeInt || t == TypeFloat) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeInt,
 		}, true
 	}
 

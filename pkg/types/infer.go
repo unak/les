@@ -435,11 +435,14 @@ var BuiltinRegexFuncType = &FuncType{
 	Ret:      TypeRegex,
 }
 
-var BuiltinEqualIface = &InterfaceType{
-	Name: "Equal",
+var BuiltinEquatableIface = &InterfaceType{
+	Name: "Equatable",
+	TypeParams: []TypeParamDef{
+		{Name: "T"},
+	},
 	Methods: map[string]*FuncType{
 		"==": {
-			Arg:      &TupleType{Elems: []Type{TypeUnknown}},
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
 			Ret:      TypeBool,
@@ -450,21 +453,70 @@ var BuiltinEqualIface = &InterfaceType{
 
 var BuiltinComparableIface = &InterfaceType{
 	Name: "Comparable",
+	TypeParams: []TypeParamDef{
+		{Name: "T"},
+	},
 	Methods: map[string]*FuncType{
 		"==": {
-			Arg:      &TupleType{Elems: []Type{TypeUnknown}},
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
 			Ret:      TypeBool,
 		},
 		"<": {
-			Arg:      &TupleType{Elems: []Type{TypeUnknown}},
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
 			Ret:      TypeBool,
 		},
 	},
-	Embedded: []*InterfaceType{BuiltinEqualIface},
+	Embedded: []*InterfaceType{BuiltinEquatableIface},
+}
+
+var BuiltinNumericIface = &InterfaceType{
+	Name: "Numeric",
+	TypeParams: []TypeParamDef{
+		{Name: "T"},
+	},
+	Methods: map[string]*FuncType{
+		"Int": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeInt,
+		},
+		"Float": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeFloat,
+		},
+		"Abs": {
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: &TypeParamType{Name: "T"},
+		},
+		"+": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      &TypeParamType{Name: "T"},
+		},
+		"-": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      &TypeParamType{Name: "T"},
+		},
+		"*": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      &TypeParamType{Name: "T"},
+		},
+		"/": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      &TypeParamType{Name: "T"},
+		},
+	},
+	Embedded: []*InterfaceType{BuiltinComparableIface},
 }
 
 var BuiltinShowIface = &InterfaceType{
@@ -529,9 +581,10 @@ func NewInferencer() *Inferencer {
 	// Built-in Show interface: Inspect(): String, Type(): String
 	_ = rootScope.Declare("Show", BuiltinShowIface)
 
-	// Built-in Equal & Comparable interfaces
-	_ = rootScope.Declare("Equal", BuiltinEqualIface)
+	// Built-in Equatable, Comparable & Numeric interfaces
+	_ = rootScope.Declare("Equatable", BuiltinEquatableIface)
 	_ = rootScope.Declare("Comparable", BuiltinComparableIface)
+	_ = rootScope.Declare("Numeric", BuiltinNumericIface)
 
 	// Built-in Indexable interface
 	_ = rootScope.Declare("Indexable", BuiltinIndexableIface)

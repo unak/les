@@ -899,6 +899,12 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 #### `Int`
 - **Methods**:
   - `n.Type(): String`: Returns `"Int"`. Satisfies `interface Show`.
+  - `n.Float(): Float`: Returns the 64-bit floating-point representation of `n`. For large multi-precision integers exceeding the `Float` range, returns `+Inf` or `-Inf`.
+  - `n.Int(): Int`: Returns `n` (identity conversion).
+  - `n.Abs(): Int`: Returns the absolute value of `n`. If `n == math.MinInt64`, it is automatically promoted to an arbitrary-precision integer.
+  - `n.Floor(): Int`: Returns `n` (identity rounding).
+  - `n.Ceil(): Int`: Returns `n` (identity rounding).
+  - `n.Round(): Int`: Returns `n` (identity rounding).
   - `n.Chr(): String`: Returns a 1-rune string corresponding to the Unicode code point `n`. Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
     ```python
     65.Chr()         # "A"
@@ -923,6 +929,12 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
 #### `Float`
 - **Methods**:
   - `f.Type(): String`: Returns `"Float"`. Satisfies `interface Show`.
+  - `f.Int(): Int`: Converts `f` to an integer, truncating fractional digits towards zero (Ruby-style `.to_i`). Exceeding standard 64-bit integer range produces an arbitrary-precision integer (`IntValue`). Calling `Int()` on `NaN` or `±Inf` raises a runtime error.
+  - `f.Float(): Float`: Returns `f` (identity conversion).
+  - `f.Abs(): Float`: Returns the absolute value of `f`.
+  - `f.Floor(): Int`: Returns the largest integer less than or equal to `f` (Ruby-style). Calling `Floor()` on `NaN` or `±Inf` raises a runtime error.
+  - `f.Ceil(): Int`: Returns the smallest integer greater than or equal to `f` (Ruby-style). Calling `Ceil()` on `NaN` or `±Inf` raises a runtime error.
+  - `f.Round(): Int`: Returns the integer nearest to `f`, rounding half away from zero (四捨五入). Calling `Round()` on `NaN` or `±Inf` raises a runtime error.
   - `f.Inspect(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (IEEE 754 floating-point operations).
@@ -1069,6 +1081,43 @@ interface Indexable[K, V]:
   - `String` satisfies `Indexable[Int, String]`
   - `Bytes` satisfies `Indexable[Int, Int]`
 - **Unspecialized Form**: `val is Indexable` matches any indexable collection without type argument specialization.
+
+#### `interface Equatable[T]`
+Declares the contract for types supporting equality comparison (`==`):
+```python
+interface Equatable[T]:
+    def ==(other: T) -> Bool
+```
+- **Implicit Satisfaction**: All primitive types (`Int`, `Float`, `String`, `Bytes`, `Bool`, `Nil`, `Regex`, `Match`, `Tuple`, `Dict`) and user-defined structs implementing `def ==(other)` implicitly satisfy `Equatable[T]`.
+- **Unspecialized Form**: `val is Equatable` matches any equatable value without type argument specialization.
+
+#### `interface Comparable[T]`
+Declares the contract for types supporting relational ordering (`<`) and equality (`==`):
+```python
+interface Comparable[T] is Equatable[T]:
+    def ==(other: T) -> Bool
+    def <(other: T) -> Bool
+```
+- **Implicit Satisfaction**: Naturally ordered types (`Int`, `Float`, `String`, `Bytes`) and user-defined structs implementing `<` and `==` satisfy `Comparable[T]`.
+- **Unspecialized Form**: `val is Comparable` matches any comparable value without type argument specialization.
+
+#### `interface Numeric[T]`
+Declares the contract for numeric types supporting conversion to `Int` and `Float`, absolute value inspection, and arithmetic operators:
+```python
+interface Numeric[T] is Comparable[T]:
+    def Int() -> Int
+    def Float() -> Float
+    def Abs() -> T
+    def +(other: T) -> T
+    def -(other: T) -> T
+    def *(other: T) -> T
+    def /(other: T) -> T
+```
+- **Implicit Satisfaction**:
+  - `Int` satisfies `Numeric[Int]` and unspecialized `Numeric`.
+  - `Float` satisfies `Numeric[Float]` and unspecialized `Numeric`.
+  - User-defined structs implementing `.Int()`, `.Float()`, `.Abs()`, `+`, `-`, `*`, `/`, and comparison methods satisfy `Numeric[T]`.
+- **Unspecialized Form**: `val is Numeric` matches any numeric type.
 
 ### 5. Built-in Modules
 

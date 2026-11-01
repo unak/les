@@ -1512,7 +1512,7 @@ neq: Bool = v1 != v2
 neg: Vec2 = -v1
 elem: Int = v1[0]
 
-eqObj: Equal = v1
+eqObj: Equatable = v1
 cmpInt: Comparable = 42
 cmpStr: Comparable = "abc"
 `
@@ -2081,5 +2081,53 @@ func TestInfiniteTupleNotAssignableToFiniteTuple(t *testing.T) {
 	}
 	if IsAssignableTo(intInf, intStringInf) {
 		t.Errorf("expected (Int, ...) to NOT be assignable to (Int, String, ...)")
+	}
+}
+
+func TestNumericAndEquatableInterfaceInference(t *testing.T) {
+	code := `
+n1: Numeric = 42
+n2: Numeric = 3.14
+n3: Numeric[Int] = 100
+n4: Numeric[Float] = 2.5
+
+eq1: Equatable = 42
+eq2: Equatable = 3.14
+eq3: Equatable[Int] = 42
+
+cmp1: Comparable = 42
+cmp2: Comparable = 3.14
+cmp3: Comparable[Float] = 3.14
+
+f_val = 42.Float()
+i_val = (3.14).Int()
+a_val = (-42).Abs()
+fl_val = (3.7).Floor()
+ce_val = (3.2).Ceil()
+ro_val = (1.5).Round()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	if fT, ok := inf.scope.Lookup("f_val"); !ok || fT != TypeFloat {
+		t.Errorf("expected f_val to be Float, got %v", fT)
+	}
+	if iT, ok := inf.scope.Lookup("i_val"); !ok || iT != TypeInt {
+		t.Errorf("expected i_val to be Int, got %v", iT)
+	}
+	if aT, ok := inf.scope.Lookup("a_val"); !ok || aT != TypeInt {
+		t.Errorf("expected a_val to be Int, got %v", aT)
+	}
+	if flT, ok := inf.scope.Lookup("fl_val"); !ok || flT != TypeInt {
+		t.Errorf("expected fl_val to be Int, got %v", flT)
+	}
+	if ceT, ok := inf.scope.Lookup("ce_val"); !ok || ceT != TypeInt {
+		t.Errorf("expected ce_val to be Int, got %v", ceT)
+	}
+	if roT, ok := inf.scope.Lookup("ro_val"); !ok || roT != TypeInt {
+		t.Errorf("expected ro_val to be Int, got %v", roT)
 	}
 }

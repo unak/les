@@ -367,9 +367,9 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Equal interface definition: ==(other: T): Bool
-	ev.builtinsEnv.Set("Equal", &InterfaceDefValue{
-		Name: "Equal",
+	// Built-in Equatable interface definition: ==(other: T): Bool
+	ev.builtinsEnv.Set("Equatable", &InterfaceDefValue{
+		Name: "Equatable",
 		TypeParams: []ast.TypeParam{
 			{Name: "T"},
 		},
@@ -390,7 +390,7 @@ func (ev *Evaluator) registerBuiltins() {
 		TypeParams: []ast.TypeParam{
 			{Name: "T"},
 		},
-		Embedded: []string{"Equal[T]"},
+		Embedded: []string{"Equatable[T]"},
 		Methods: map[string]ast.MethodSig{
 			"==": {
 				Name: "==",
@@ -428,6 +428,60 @@ func (ev *Evaluator) registerBuiltins() {
 				Name:       "Len",
 				Params:     []ast.FuncParam{},
 				ReturnType: "Int",
+			},
+		},
+	})
+
+	// Built-in Numeric interface definition: Int(): Int, Float(): Float, Abs(): T, +: T, -: T, *: T, /: T
+	ev.builtinsEnv.Set("Numeric", &InterfaceDefValue{
+		Name: "Numeric",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+		},
+		Embedded: []string{"Comparable[T]"},
+		Methods: map[string]ast.MethodSig{
+			"Int": {
+				Name:       "Int",
+				Params:     []ast.FuncParam{},
+				ReturnType: "Int",
+			},
+			"Float": {
+				Name:       "Float",
+				Params:     []ast.FuncParam{},
+				ReturnType: "Float",
+			},
+			"Abs": {
+				Name:       "Abs",
+				Params:     []ast.FuncParam{},
+				ReturnType: "T",
+			},
+			"+": {
+				Name: "+",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "T",
+			},
+			"-": {
+				Name: "-",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "T",
+			},
+			"*": {
+				Name: "*",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "T",
+			},
+			"/": {
+				Name: "/",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "T",
 			},
 		},
 	})
@@ -3145,6 +3199,196 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			}
 			return bf, nil
 		}
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Int",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Int() takes 0 arguments, got %d", len(args))
+					}
+					return fv.ToInt()
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "Int"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Int",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Int() takes 0 arguments, got %d", len(args))
+					}
+					return iv, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Int"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "Float" {
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Float",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Float() takes 0 arguments, got %d", len(args))
+					}
+					return FloatValue(iv.ToFloat()), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Float"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Float",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Float() takes 0 arguments, got %d", len(args))
+					}
+					return fv, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "Float"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "Abs" {
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Abs",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Abs() takes 0 arguments, got %d", len(args))
+					}
+					return iv.Abs(), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Abs"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Abs",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Abs() takes 0 arguments, got %d", len(args))
+					}
+					return fv.Abs(), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "Abs"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "Floor" {
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Floor",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Floor() takes 0 arguments, got %d", len(args))
+					}
+					return iv, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Floor"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Floor",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Floor() takes 0 arguments, got %d", len(args))
+					}
+					return fv.Floor()
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "Floor"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "Ceil" {
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Ceil",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Ceil() takes 0 arguments, got %d", len(args))
+					}
+					return iv, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Ceil"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Ceil",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Ceil() takes 0 arguments, got %d", len(args))
+					}
+					return fv.Ceil()
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "Ceil"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "Round" {
+		if iv, ok := val.(IntValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Round",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Round() takes 0 arguments, got %d", len(args))
+					}
+					return iv, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeInt, "Round"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "Round",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Round() takes 0 arguments, got %d", len(args))
+					}
+					return fv.Round()
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "Round"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
 	}
 	if member == "IsValidString" {
 		if bv, ok := val.(BytesValue); ok {
@@ -5137,9 +5381,27 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 					if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "String") {
 						return false
 					}
-				} else if iface.Name == "Equal" || iface.Name == "Comparable" {
+				} else if iface.Name == "Equatable" || iface.Name == "Equal" || iface.Name == "Comparable" {
 					if expectedCount != 1 || (sig.ReturnType != "" && sig.ReturnType != "Bool") {
 						return false
+					}
+				} else if iface.Name == "Numeric" {
+					if mName == "Int" {
+						if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "Int") {
+							return false
+						}
+					} else if mName == "Float" {
+						if expectedCount != 0 || (sig.ReturnType != "" && sig.ReturnType != "Float") {
+							return false
+						}
+					} else if mName == "Abs" {
+						if expectedCount != 0 {
+							return false
+						}
+					} else if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+						if expectedCount != 1 {
+							return false
+						}
 					}
 				} else if iface.Name == "Indexable" {
 					if mName == "Len" {

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"errors"
+	"math"
 	"fmt"
 	"io"
 	"os"
@@ -4100,18 +4101,18 @@ print "|"
 print (-5) |> +
 print "|"
 
-# Equal & Comparable interfaces
-print (42 is Equal)
+# Equatable & Comparable interfaces
+print (42 is Equatable)
 print "|"
 print (42 is Comparable)
 print "|"
-print ("abc" is Equal)
+print ("abc" is Equatable)
 print "|"
 print ("abc" is Comparable)
 print "|"
 print ((Bytes("abc")) is Comparable)
 print "|"
-print (v1 is Equal)
+print (v1 is Equatable)
 print "|"
 print (v1 is Comparable)
 print "|"
@@ -4121,7 +4122,7 @@ print (v2 > v1)
 print "|"
 print (v2 >= v1)
 print "|"
-print ((|x|: x) is Equal)
+print ((|x|: x) is Equatable)
 print "|"
 print ((1, 2).[].Type())
 print "|"
@@ -5711,6 +5712,164 @@ return (...)
 	_, errS2 := runLesCode(errSlice2)
 	if errS2 == nil || !strings.Contains(errS2.Error(), "cannot use negative index on infinite tuple") {
 		t.Fatalf("expected negative slice end error, got: %v", errS2)
+	}
+}
+
+func TestIntAndFloatMethodsAndNumericInterface(t *testing.T) {
+	code := `
+# 1. Int conversion, rounding, and abs
+i1 = 42.Float()
+i2 = (-10).Float()
+i3 = 0.Float()
+i4 = 42.Int()
+i5 = (-42).Abs()
+i6 = 42.Abs()
+i7 = 0.Abs()
+i8 = 42.Floor()
+i9 = 42.Ceil()
+i10 = 42.Round()
+
+# 2. Float conversion, rounding, and abs
+f1 = (42.5).Int()
+f2 = (-42.5).Int()
+f3 = (0.0).Int()
+f4 = (-0.0).Int()
+f5 = (3.14).Float()
+f6 = (-3.14).Abs()
+f7 = (3.14).Abs()
+
+# 3. Ruby-style Float rounding: Floor, Ceil, Round
+fl1 = (3.2).Floor()
+fl2 = (3.7).Floor()
+fl3 = (-3.2).Floor()
+fl4 = (-3.7).Floor()
+
+ce1 = (3.2).Ceil()
+ce2 = (3.7).Ceil()
+ce3 = (-3.2).Ceil()
+ce4 = (-3.7).Ceil()
+
+ro1 = (1.5).Round()
+ro2 = (-1.5).Round()
+ro3 = (1.4).Round()
+ro4 = (-1.4).Round()
+ro5 = (2.5).Round()
+ro6 = (-2.5).Round()
+
+# 4. Equatable, Comparable, Numeric interface tests
+is_eq1 = 42 is Equatable
+is_eq2 = 3.14 is Equatable
+is_eq3 = "abc" is Equatable
+
+is_cmp1 = 42 is Comparable
+is_cmp2 = 3.14 is Comparable
+is_cmp3 = "abc" is Comparable
+
+is_num1 = 42 is Numeric
+is_num2 = 3.14 is Numeric
+is_num3 = "abc" is Numeric
+
+is_num_int = 42 is Numeric[Int]
+is_num_flt = 3.14 is Numeric[Float]
+is_num_wrong1 = 42 is Numeric[Float]
+is_num_wrong2 = 3.14 is Numeric[Int]
+
+print i1, " ", i2, " ", i3, " | ", \
+      i4, " ", i5, " ", i6, " ", i7, " | ", \
+      i8, " ", i9, " ", i10, " | ", \
+      f1, " ", f2, " ", f3, " ", f4, " | ", \
+      f5, " ", f6, " ", f7, " | ", \
+      fl1, " ", fl2, " ", fl3, " ", fl4, " | ", \
+      ce1, " ", ce2, " ", ce3, " ", ce4, " | ", \
+      ro1, " ", ro2, " ", ro3, " ", ro4, " ", ro5, " ", ro6, " | ", \
+      is_eq1, " ", is_eq2, " ", is_eq3, " | ", \
+      is_cmp1, " ", is_cmp2, " ", is_cmp3, " | ", \
+      is_num1, " ", is_num2, " ", is_num3, " | ", \
+      is_num_int, " ", is_num_flt, " ", is_num_wrong1, " ", is_num_wrong2
+`
+	out, err := runLesCode(code)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	expected := "42 -10 0 | 42 42 42 0 | 42 42 42 | 42 -42 0 0 | 3.14 3.14 3.14 | 3 3 -4 -4 | 4 4 -3 -3 | 2 -2 1 -1 3 -3 | true true true | true true true | true true false | true true false false"
+	if out != expected {
+		t.Fatalf("expected %q, got %q", expected, out)
+	}
+
+	// 5. Large multi-precision and boundary checks
+	codeBig := `
+b1 = (-9223372036854775808).Abs()
+b2 = (18446744073709551616.0).Int()
+b3 = "100000000000000000000000".Int().Float()
+print b1, " | ", b2, " | ", b3
+`
+	outBig, errBig := runLesCode(codeBig)
+	if errBig != nil {
+		t.Fatalf("unexpected eval error on big numbers: %v", errBig)
+	}
+	expectedBig := "9223372036854775808 | 18446744073709551616 | 1e+23"
+	if outBig != expectedBig {
+		t.Fatalf("expected %q, got %q", expectedBig, outBig)
+	}
+
+	// 6. Generic function constrained by Numeric
+	codeGen := `
+def add_and_abs[N: Numeric[N]](a: N, b: N) -> N:
+    (a + b).Abs()
+
+res1 = add_and_abs(-10, -32)
+res2 = add_and_abs(-1.25, -2.75)
+print res1, " | ", res2
+`
+	outGen, errGen := runLesCode(codeGen)
+	if errGen != nil {
+		t.Fatalf("unexpected eval error on generic Numeric: %v", errGen)
+	}
+	expectedGen := "42 | 4"
+	if outGen != expectedGen {
+		t.Fatalf("expected %q, got %q", expectedGen, outGen)
+	}
+
+	// 7. Error cases for arguments
+	badArgs := []string{
+		"42.Float(1)",
+		"42.Int(1)",
+		"42.Abs(1)",
+		"42.Floor(1)",
+		"42.Ceil(1)",
+		"42.Round(1)",
+		"(3.14).Int(1)",
+		"(3.14).Float(1)",
+		"(3.14).Abs(1)",
+		"(3.14).Floor(1)",
+		"(3.14).Ceil(1)",
+		"(3.14).Round(1)",
+	}
+	for _, bad := range badArgs {
+		_, err := runLesCode(bad)
+		if err == nil {
+			t.Fatalf("expected error for bad argument call %s, got nil", bad)
+		}
+	}
+
+	// 8. Direct Go FloatValue NaN and Inf conversion errors
+	if _, err := FloatValue(math.NaN()).ToInt(); err == nil {
+		t.Fatalf("expected error converting NaN to Int, got nil")
+	}
+	if _, err := FloatValue(math.Inf(1)).ToInt(); err == nil {
+		t.Fatalf("expected error converting +Inf to Int, got nil")
+	}
+	if _, err := FloatValue(math.Inf(-1)).ToInt(); err == nil {
+		t.Fatalf("expected error converting -Inf to Int, got nil")
+	}
+	if _, err := FloatValue(math.NaN()).Floor(); err == nil {
+		t.Fatalf("expected error converting NaN to Floor, got nil")
+	}
+	if _, err := FloatValue(math.NaN()).Ceil(); err == nil {
+		t.Fatalf("expected error converting NaN to Ceil, got nil")
+	}
+	if _, err := FloatValue(math.NaN()).Round(); err == nil {
+		t.Fatalf("expected error converting NaN to Round, got nil")
 	}
 }
 

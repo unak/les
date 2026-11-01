@@ -99,6 +99,29 @@ func (v IntValue) Format(radix int) (string, error) {
 	return strconv.FormatInt(v.small, radix), nil
 }
 
+// ToFloat returns the float64 representation of the IntValue.
+func (v IntValue) ToFloat() float64 {
+	if v.big != nil {
+		f, _ := new(big.Float).SetInt(v.big).Float64()
+		return f
+	}
+	return float64(v.small)
+}
+
+// Abs returns the absolute value of the IntValue.
+func (v IntValue) Abs() IntValue {
+	if v.big == nil {
+		if v.small == math.MinInt64 {
+			return NewIntValueFromBig(new(big.Int).Abs(big.NewInt(math.MinInt64)))
+		}
+		if v.small < 0 {
+			return NewIntValue(-v.small)
+		}
+		return v
+	}
+	return NewIntValueFromBig(new(big.Int).Abs(v.big))
+}
+
 // Equal reports whether two IntValue instances have equal value.
 func (v IntValue) Equal(other IntValue) bool {
 	if v.big == nil && other.big == nil {
@@ -280,6 +303,54 @@ func (v IntValue) Rsh(shift IntValue) (IntValue, error) {
 type FloatValue float64
 
 func (v FloatValue) String() string { return fmt.Sprintf("%g", v) }
+
+func floatToRoundedIntValue(f float64, fnName string) (IntValue, error) {
+	if math.IsNaN(f) {
+		return IntValue{}, fmt.Errorf("cannot convert NaN to Int in %s()", fnName)
+	}
+	if math.IsInf(f, 0) {
+		return IntValue{}, fmt.Errorf("cannot convert Inf to Int in %s()", fnName)
+	}
+	if f > math.MinInt64 && f < math.MaxInt64 {
+		return NewIntValue(int64(f)), nil
+	}
+	bf := new(big.Float).SetFloat64(f)
+	bi, _ := bf.Int(nil)
+	return NewIntValueFromBig(bi), nil
+}
+
+// ToInt converts FloatValue to IntValue truncating towards zero.
+func (v FloatValue) ToInt() (IntValue, error) {
+	f := float64(v)
+	trunc := math.Trunc(f)
+	return floatToRoundedIntValue(trunc, "Int")
+}
+
+// Floor converts FloatValue to IntValue rounded down towards -infinity.
+func (v FloatValue) Floor() (IntValue, error) {
+	f := float64(v)
+	floor := math.Floor(f)
+	return floatToRoundedIntValue(floor, "Floor")
+}
+
+// Ceil converts FloatValue to IntValue rounded up towards +infinity.
+func (v FloatValue) Ceil() (IntValue, error) {
+	f := float64(v)
+	ceil := math.Ceil(f)
+	return floatToRoundedIntValue(ceil, "Ceil")
+}
+
+// Round converts FloatValue to IntValue rounded half away from zero.
+func (v FloatValue) Round() (IntValue, error) {
+	f := float64(v)
+	round := math.Round(f)
+	return floatToRoundedIntValue(round, "Round")
+}
+
+// Abs returns the absolute value of FloatValue.
+func (v FloatValue) Abs() FloatValue {
+	return FloatValue(math.Abs(float64(v)))
+}
 
 type StringValue string
 
