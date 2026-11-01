@@ -1091,6 +1091,12 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			Ret: TypeInt,
 		}, true
 	}
+	if (mName == "IsNaN" || mName == "IsInfinite" || mName == "IsFinite") && t == TypeFloat {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeBool,
+		}, true
+	}
 
 	if t == TypeRegex {
 		switch mName {

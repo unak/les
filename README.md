@@ -935,6 +935,9 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `f.Floor(): Int`: Returns the largest integer less than or equal to `f` (Ruby-style). Calling `Floor()` on `NaN` or `±Inf` raises a runtime error.
   - `f.Ceil(): Int`: Returns the smallest integer greater than or equal to `f` (Ruby-style). Calling `Ceil()` on `NaN` or `±Inf` raises a runtime error.
   - `f.Round(): Int`: Returns the integer nearest to `f`, rounding half away from zero (四捨五入). Calling `Round()` on `NaN` or `±Inf` raises a runtime error.
+  - `f.IsNaN(): Bool`: Returns `true` if `f` is IEEE 754 NaN (Not-a-Number), `false` otherwise.
+  - `f.IsInfinite(): Bool`: Returns `true` if `f` is positive or negative infinity (`±Inf`), `false` otherwise.
+  - `f.IsFinite(): Bool`: Returns `true` if `f` is a finite number (neither `NaN` nor `±Inf`), `false` otherwise.
   - `f.Inspect(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
 - **Operators**:
   - Arithmetic: `+`, `-`, `*`, `/` (IEEE 754 floating-point operations).

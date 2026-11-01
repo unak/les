@@ -355,6 +355,22 @@ func (v FloatValue) Abs() FloatValue {
 	return FloatValue(math.Abs(float64(v)))
 }
 
+// IsNaN returns true if FloatValue is IEEE 754 NaN.
+func (v FloatValue) IsNaN() BoolValue {
+	return BoolValue(math.IsNaN(float64(v)))
+}
+
+// IsInfinite returns true if FloatValue is positive or negative infinity.
+func (v FloatValue) IsInfinite() BoolValue {
+	return BoolValue(math.IsInf(float64(v), 0))
+}
+
+// IsFinite returns true if FloatValue is neither NaN nor infinity.
+func (v FloatValue) IsFinite() BoolValue {
+	f := float64(v)
+	return BoolValue(!math.IsNaN(f) && !math.IsInf(f, 0))
+}
+
 type StringValue string
 
 func (v StringValue) String() string { return string(v) }

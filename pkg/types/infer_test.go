@@ -2105,6 +2105,9 @@ a_val = (-42).Abs()
 fl_val = (3.7).Floor()
 ce_val = (3.2).Ceil()
 ro_val = (1.5).Round()
+is_nan = (3.14).IsNaN()
+is_inf = (3.14).IsInfinite()
+is_fin = (3.14).IsFinite()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()
@@ -2129,6 +2132,15 @@ ro_val = (1.5).Round()
 	}
 	if roT, ok := inf.scope.Lookup("ro_val"); !ok || roT != TypeInt {
 		t.Errorf("expected ro_val to be Int, got %v", roT)
+	}
+	if isNanT, ok := inf.scope.Lookup("is_nan"); !ok || isNanT != TypeBool {
+		t.Errorf("expected is_nan to be Bool, got %v", isNanT)
+	}
+	if isInfT, ok := inf.scope.Lookup("is_inf"); !ok || isInfT != TypeBool {
+		t.Errorf("expected is_inf to be Bool, got %v", isInfT)
+	}
+	if isFinT, ok := inf.scope.Lookup("is_fin"); !ok || isFinT != TypeBool {
+		t.Errorf("expected is_fin to be Bool, got %v", isFinT)
 	}
 
 	// Incompatible generic assignments must fail
