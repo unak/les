@@ -5871,5 +5871,20 @@ print res1, " | ", res2
 	if _, err := FloatValue(math.NaN()).Round(); err == nil {
 		t.Fatalf("expected error converting NaN to Round, got nil")
 	}
+
+	// 9. Script-level Inf and NaN conversion errors
+	scriptErrCases := []string{
+		"(1e300 * 1e300).Int()",
+		"((-1e300) * 1e300).Int()",
+		"((1e300 * 1e300) - (1e300 * 1e300)).Int()",
+		"(1e300 * 1e300).Floor()",
+		"(1e300 * 1e300).Ceil()",
+		"(1e300 * 1e300).Round()",
+	}
+	for _, sc := range scriptErrCases {
+		if _, err := runLesCode(sc); err == nil {
+			t.Fatalf("expected runtime error for %s, got nil", sc)
+		}
+	}
 }
 

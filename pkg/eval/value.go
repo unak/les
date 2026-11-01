@@ -119,7 +119,10 @@ func (v IntValue) Abs() IntValue {
 		}
 		return v
 	}
-	return NewIntValueFromBig(new(big.Int).Abs(v.big))
+	if v.big.Sign() < 0 {
+		return NewIntValueFromBig(new(big.Int).Abs(v.big))
+	}
+	return v
 }
 
 // Equal reports whether two IntValue instances have equal value.
@@ -311,7 +314,7 @@ func floatToRoundedIntValue(f float64, fnName string) (IntValue, error) {
 	if math.IsInf(f, 0) {
 		return IntValue{}, fmt.Errorf("cannot convert Inf to Int in %s()", fnName)
 	}
-	if f > math.MinInt64 && f < math.MaxInt64 {
+	if f >= math.MinInt64 && f < math.MaxInt64 {
 		return NewIntValue(int64(f)), nil
 	}
 	bf := new(big.Float).SetFloat64(f)

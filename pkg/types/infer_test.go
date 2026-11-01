@@ -2130,4 +2130,20 @@ ro_val = (1.5).Round()
 	if roT, ok := inf.scope.Lookup("ro_val"); !ok || roT != TypeInt {
 		t.Errorf("expected ro_val to be Int, got %v", roT)
 	}
+
+	// Incompatible generic assignments must fail
+	badCodes := []string{
+		"x: Equatable[String] = 42",
+		"y: Comparable[String] = 42",
+		"z: Numeric[String] = 42",
+		"w: Numeric[Float] = 42",
+		"v: Numeric[Int] = 3.14",
+	}
+	for _, bad := range badCodes {
+		bProg := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		bInf := NewInferencer()
+		if err := bInf.InferProgram(bProg); err == nil {
+			t.Errorf("expected type inference error for %q, got nil", bad)
+		}
+	}
 }

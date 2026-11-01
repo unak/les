@@ -1094,7 +1094,8 @@ interface Equatable[T]:
 #### `interface Comparable[T]`
 Declares the contract for types supporting relational ordering (`<`) and equality (`==`):
 ```python
-interface Comparable[T] is Equatable[T]:
+interface Comparable[T]:
+    Equatable[T]
     def ==(other: T) -> Bool
     def <(other: T) -> Bool
 ```
@@ -1104,7 +1105,8 @@ interface Comparable[T] is Equatable[T]:
 #### `interface Numeric[T]`
 Declares the contract for numeric types supporting conversion to `Int` and `Float`, absolute value inspection, and arithmetic operators:
 ```python
-interface Numeric[T] is Comparable[T]:
+interface Numeric[T]:
+    Comparable[T]
     def Int() -> Int
     def Float() -> Float
     def Abs() -> T

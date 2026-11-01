@@ -726,6 +726,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok || len(tup.Elems) != 1 {
 				return false
 			}
+			if len(target.TypeArgs) == 1 {
+				if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
+					return false
+				}
+			}
 			continue
 		}
 		if target.Name == "Numeric" {
