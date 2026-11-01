@@ -561,6 +561,11 @@ func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
 			Ret: TypeString,
 		}, true
 	}
+	for _, emb := range i.Embedded {
+		if m, ok := emb.LookupMethod(name); ok {
+			return m, true
+		}
+	}
 	return nil, false
 }
 
@@ -593,7 +598,69 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok {
 				return false
 			}
+			if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
+				if srcSig.MinArgs() > 1 || (srcSig.MaxArgs() >= 0 && srcSig.MaxArgs() < 1) {
+					return false
+				}
+				if !IsAssignableTo(srcSig.Ret, TypeBool) {
+					return false
+				}
+				if len(target.TypeArgs) == 1 {
+					tup, ok := srcSig.Arg.(*TupleType)
+					if ok && len(tup.Elems) == 1 {
+						if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
+							return false
+						}
+					}
+				}
+				continue
+			}
+			if target.Name == "Numeric" {
+				if mName == "Int" {
+					if srcSig.MinArgs() > 0 || !IsAssignableTo(srcSig.Ret, TypeInt) {
+						return false
+					}
+					continue
+				}
+				if mName == "Float" {
+					if srcSig.MinArgs() > 0 || !IsAssignableTo(srcSig.Ret, TypeFloat) {
+						return false
+					}
+					continue
+				}
+				if mName == "Abs" {
+					if srcSig.MinArgs() > 0 {
+						return false
+					}
+					if len(target.TypeArgs) == 1 && !IsAssignableTo(srcSig.Ret, target.TypeArgs[0]) {
+						return false
+					}
+					continue
+				}
+				if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+					if srcSig.MinArgs() > 1 || (srcSig.MaxArgs() >= 0 && srcSig.MaxArgs() < 1) {
+						return false
+					}
+					if len(target.TypeArgs) == 1 {
+						expectedT := target.TypeArgs[0]
+						if !IsAssignableTo(srcSig.Ret, expectedT) {
+							return false
+						}
+						if tup, ok := srcSig.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+							if !IsAssignableTo(expectedT, tup.Elems[0]) {
+								return false
+							}
+						}
+					}
+					continue
+				}
+			}
 			if !targetSig.Equals(srcSig) {
+				return false
+			}
+		}
+		for _, emb := range target.Embedded {
+			if !ImplementsInterface(src, emb) {
 				return false
 			}
 		}
@@ -701,6 +768,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				}
 			}
 			if !matched {
+				return false
+			}
+		}
+		for _, emb := range target.Embedded {
+			if !ImplementsInterface(src, emb) {
 				return false
 			}
 		}
@@ -827,6 +899,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			}
 		}
 		if !matched {
+			return false
+		}
+	}
+	for _, emb := range target.Embedded {
+		if !ImplementsInterface(src, emb) {
 			return false
 		}
 	}

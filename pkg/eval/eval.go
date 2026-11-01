@@ -440,6 +440,20 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 		Embedded: []string{"Comparable[T]"},
 		Methods: map[string]ast.MethodSig{
+			"==": {
+				Name: "==",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
+			},
+			"<": {
+				Name: "<",
+				Params: []ast.FuncParam{
+					{Name: "other", TypeAnnot: "T"},
+				},
+				ReturnType: "Bool",
+			},
 			"Int": {
 				Name:       "Int",
 				Params:     []ast.FuncParam{},

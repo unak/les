@@ -479,6 +479,18 @@ var BuiltinNumericIface = &InterfaceType{
 		{Name: "T"},
 	},
 	Methods: map[string]*FuncType{
+		"==": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      TypeBool,
+		},
+		"<": {
+			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
+			MinArity: 1,
+			MaxArity: 1,
+			Ret:      TypeBool,
+		},
 		"Int": {
 			Arg: &TupleType{Elems: []Type{}},
 			Ret: TypeInt,

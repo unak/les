@@ -2138,6 +2138,19 @@ ro_val = (1.5).Round()
 		"z: Numeric[String] = 42",
 		"w: Numeric[Float] = 42",
 		"v: Numeric[Int] = 3.14",
+		`
+struct NoCmp:
+    val: Int
+    def Int() -> Int: self.val
+    def Float() -> Float: self.val.Float()
+    def Abs() -> NoCmp: self
+    def +(other: NoCmp) -> NoCmp: self
+    def -(other: NoCmp) -> NoCmp: self
+    def *(other: NoCmp) -> NoCmp: self
+    def /(other: NoCmp) -> NoCmp: self
+
+nc: Numeric = NoCmp(10)
+`,
 	}
 	for _, bad := range badCodes {
 		bProg := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
@@ -2145,5 +2158,28 @@ ro_val = (1.5).Round()
 		if err := bInf.InferProgram(bProg); err == nil {
 			t.Errorf("expected type inference error for %q, got nil", bad)
 		}
+	}
+
+	// Subtyping hierarchy and generic relational operators
+	hierarchyCode := `
+num_val: Numeric[Int] = 42
+cmp_spec: Comparable[Int] = num_val
+cmp_raw: Comparable = num_val
+eq_spec: Equatable[Int] = num_val
+eq_raw: Equatable = num_val
+
+def min_val[N: Numeric[N]](a: N, b: N) -> N:
+    if a < b:
+        a
+    else:
+        b
+
+def are_equal[N: Numeric[N]](a: N, b: N) -> Bool:
+    a == b
+`
+	hProg := parser.NewParser(lexer.NewLexer(hierarchyCode)).ParseProgram()
+	hInf := NewInferencer()
+	if err := hInf.InferProgram(hProg); err != nil {
+		t.Fatalf("unexpected type inference error on subtyping hierarchy: %v", err)
 	}
 }

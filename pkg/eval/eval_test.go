@@ -5812,20 +5812,33 @@ print b1, " | ", b2, " | ", b3
 		t.Fatalf("expected %q, got %q", expectedBig, outBig)
 	}
 
-	// 6. Generic function constrained by Numeric
+	// 6. Generic function constrained by Numeric (arithmetic, conversions, and relational operators)
 	codeGen := `
 def add_and_abs[N: Numeric[N]](a: N, b: N) -> N:
     (a + b).Abs()
 
+def min_val[N: Numeric[N]](a: N, b: N) -> N:
+    if a < b:
+        a
+    else:
+        b
+
+def are_equal[N: Numeric[N]](a: N, b: N) -> Bool:
+    a == b
+
 res1 = add_and_abs(-10, -32)
 res2 = add_and_abs(-1.25, -2.75)
-print res1, " | ", res2
+m1 = min_val(10, 20)
+m2 = min_val(5.5, 2.5)
+e1 = are_equal(10, 10)
+e2 = are_equal(10, 20)
+print res1, " | ", res2, " | ", m1, " ", m2, " | ", e1, " ", e2
 `
 	outGen, errGen := runLesCode(codeGen)
 	if errGen != nil {
 		t.Fatalf("unexpected eval error on generic Numeric: %v", errGen)
 	}
-	expectedGen := "42 | 4"
+	expectedGen := "42 | 4 | 10 2.5 | true false"
 	if outGen != expectedGen {
 		t.Fatalf("expected %q, got %q", expectedGen, outGen)
 	}
