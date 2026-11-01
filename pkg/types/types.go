@@ -781,6 +781,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 
 	// For other types (e.g. primitives, tuples, dicts), check if built-in methods satisfy target
 	if len(target.Methods) == 0 {
+		for _, emb := range target.Embedded {
+			if !ImplementsInterface(src, emb) {
+				return false
+			}
+		}
 		return true
 	}
 
@@ -972,18 +977,41 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 	}
 	if u, ok := t.(*UnionType); ok && len(u.Members) > 0 {
 		var commonSig *FuncType
+		var retTypes []Type
+		argsMatch := true
 		for _, m := range u.Members {
 			sig, ok := LookupBuiltinTypeMethod(m, mName)
 			if !ok {
 				return nil, false
 			}
+			retTypes = append(retTypes, sig.Ret)
 			if commonSig == nil {
 				commonSig = sig
-			} else if !commonSig.Equals(sig) {
-				return nil, false
+			} else if !commonSig.Arg.Equals(sig.Arg) || commonSig.MinArity != sig.MinArity || commonSig.MaxArity != sig.MaxArity {
+				argsMatch = false
 			}
 		}
-		return commonSig, true
+		if !argsMatch {
+			return nil, false
+		}
+		allEqual := true
+		for _, rt := range retTypes[1:] {
+			if !rt.Equals(retTypes[0]) {
+				allEqual = false
+				break
+			}
+		}
+		if allEqual {
+			return commonSig, true
+		}
+		return &FuncType{
+			Arg:           commonSig.Arg,
+			MinArity:      commonSig.MinArity,
+			MaxArity:      commonSig.MaxArity,
+			Ret:           NewUnionType(retTypes...),
+			Overloads:     commonSig.Overloads,
+			OverloadUnion: commonSig.OverloadUnion,
+		}, true
 	}
 	if mName == "Ord" && t == TypeString {
 		return &FuncType{

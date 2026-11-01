@@ -2182,4 +2182,36 @@ def are_equal[N: Numeric[N]](a: N, b: N) -> Bool:
 	if err := hInf.InferProgram(hProg); err != nil {
 		t.Fatalf("unexpected type inference error on subtyping hierarchy: %v", err)
 	}
+
+	// Pure embedded interface constraint enforcement
+	markerErrCode := `
+interface Marker:
+    Comparable
+m: Marker = nil
+`
+	mProg := parser.NewParser(lexer.NewLexer(markerErrCode)).ParseProgram()
+	mInf := NewInferencer()
+	if err := mInf.InferProgram(mProg); err == nil {
+		t.Fatalf("expected type inference error assigning nil to Marker (embedding Comparable), got nil")
+	}
+
+	// Union type method return type unification
+	unionCode := `
+def get_num(flag: Bool) -> Int | Float:
+    if flag:
+        -42
+    else:
+        -3.14
+
+abs_val = get_num(true).Abs()
+`
+	uProg := parser.NewParser(lexer.NewLexer(unionCode)).ParseProgram()
+	uInf := NewInferencer()
+	if err := uInf.InferProgram(uProg); err != nil {
+		t.Fatalf("unexpected type inference error on union Abs(): %v", err)
+	}
+	expectedUnion := NewUnionType(TypeInt, TypeFloat)
+	if absT, ok := uInf.scope.Lookup("abs_val"); !ok || !absT.Equals(expectedUnion) {
+		t.Errorf("expected abs_val to be Int | Float, got %v", absT)
+	}
 }
