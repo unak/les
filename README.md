@@ -1041,7 +1041,7 @@ interface Show:
     def Inspect(): String
     def Type(): String
 ```
-- **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`), functions, and struct instances implicitly satisfy `interface Show`.
+- **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`, `Regex`, `Match`), functions, and struct instances implicitly satisfy `interface Show`.
 
 - **Usage**: Built-in functions like `print` accept any value satisfying `Show` (`*args: Show`). Any user-defined `struct` implementing `Inspect(): String` automatically satisfies `Show`.
 

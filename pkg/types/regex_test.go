@@ -586,3 +586,78 @@ func TestUnpackDeclStaticChecks(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchImplementsIndexable(t *testing.T) {
+	idxIntStringNil := &InterfaceType{
+		Name:     "Indexable",
+		TypeArgs: []Type{TypeInt, NewUnionType(TypeString, TypeNil)},
+		Methods: map[string]*FuncType{
+			"Len": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+			"[]":  {Arg: &TupleType{Elems: []Type{TypeInt}}, Ret: NewUnionType(TypeString, TypeNil)},
+		},
+	}
+	if !ImplementsInterface(TypeMatch, idxIntStringNil) {
+		t.Errorf("expected TypeMatch to implement Indexable[Int, String | Nil]")
+	}
+
+	idxStrStringNil := &InterfaceType{
+		Name:     "Indexable",
+		TypeArgs: []Type{TypeString, NewUnionType(TypeString, TypeNil)},
+		Methods: map[string]*FuncType{
+			"Len": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+			"[]":  {Arg: &TupleType{Elems: []Type{TypeString}}, Ret: NewUnionType(TypeString, TypeNil)},
+		},
+	}
+	if !ImplementsInterface(TypeMatch, idxStrStringNil) {
+		t.Errorf("expected TypeMatch to implement Indexable[String, String | Nil]")
+	}
+}
+
+func TestRegexMatchImplementsShow(t *testing.T) {
+	showIface := &InterfaceType{
+		Name: "Show",
+		Methods: map[string]*FuncType{
+			"Inspect": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeString},
+			"Type":    {Arg: &TupleType{Elems: []Type{}}, Ret: TypeString},
+		},
+	}
+	if !ImplementsInterface(TypeRegex, showIface) {
+		t.Errorf("expected TypeRegex to implement Show")
+	}
+	if !ImplementsInterface(TypeMatch, showIface) {
+		t.Errorf("expected TypeMatch to implement Show")
+	}
+}
+
+func TestCanonicalizeRegexFlags(t *testing.T) {
+	cases := []struct {
+		flags    string
+		expected string
+		errSub   string
+	}{
+		{"", "", ""},
+		{"i", "i", ""},
+		{"mi", "im", ""},
+		{"smi", "ims", ""},
+		{"Uims", "imsU", ""},
+		{"ii", "i", ""},
+		{"mim", "im", ""},
+		{"x", "", "unknown regex flag: x"},
+		{"g", "", "unknown regex flag: g"},
+	}
+	for _, tc := range cases {
+		res, err := CanonicalizeRegexFlags(tc.flags)
+		if tc.errSub != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.errSub) {
+				t.Errorf("flags %q: expected error %q, got %v", tc.flags, tc.errSub, err)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("flags %q: unexpected error %v", tc.flags, err)
+			}
+			if res != tc.expected {
+				t.Errorf("flags %q: expected %q, got %q", tc.flags, tc.expected, res)
+			}
+		}
+	}
+}

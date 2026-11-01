@@ -895,6 +895,8 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 
 	if t == TypeMatch {
 		switch mName {
+		case "Len":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt}, true
 		case "Group":
 			return &FuncType{Arg: &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}}, Ret: NewUnionType(TypeString, TypeNil)}, true
 		case "Groups":
@@ -1526,30 +1528,40 @@ func UnescapeRegexPattern(rawPat string) string {
 	return ast.UnescapeRegexPattern(rawPat)
 }
 
-// ValidateRegex verifies pattern and flags compile under Go regexp syntax.
-func ValidateRegex(pattern, flags string) error {
-	var prefix strings.Builder
+// CanonicalizeRegexFlags validates and returns deduplicated, canonically sorted ('i', 'm', 's', 'U') flags.
+func CanonicalizeRegexFlags(flags string) (string, error) {
 	flagSet := make(map[rune]bool)
 	for _, fl := range flags {
 		switch fl {
 		case 'i', 'm', 's', 'U':
 			flagSet[fl] = true
 		default:
-			return fmt.Errorf("unknown regex flag: %c", fl)
+			return "", fmt.Errorf("unknown regex flag: %c", fl)
 		}
 	}
 
-	if len(flagSet) > 0 {
-		prefix.WriteString("(?")
-		for _, fl := range []rune{'i', 'm', 's', 'U'} {
-			if flagSet[fl] {
-				prefix.WriteRune(fl)
-			}
+	var sb strings.Builder
+	for _, fl := range []rune{'i', 'm', 's', 'U'} {
+		if flagSet[fl] {
+			sb.WriteRune(fl)
 		}
-		prefix.WriteString(")")
+	}
+	return sb.String(), nil
+}
+
+// ValidateRegex verifies pattern and flags compile under Go regexp syntax.
+func ValidateRegex(pattern, flags string) error {
+	canonFlags, err := CanonicalizeRegexFlags(flags)
+	if err != nil {
+		return err
 	}
 
-	_, err := regexp.Compile(prefix.String() + pattern)
+	var prefix strings.Builder
+	if len(canonFlags) > 0 {
+		prefix.WriteString("(?" + canonFlags + ")")
+	}
+
+	_, err = regexp.Compile(prefix.String() + pattern)
 	if err != nil {
 		return fmt.Errorf("invalid regex pattern: %w", err)
 	}

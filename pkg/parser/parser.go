@@ -1480,6 +1480,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 		lit := p.curToken.Literal
 		// literal is /pattern/flags
 		lastSlash := strings.LastIndex(lit, "/")
+		if lastSlash <= 0 {
+			p.addError(pos.Line, pos.Col, "unterminated regex literal")
+			return nil
+		}
 		rawPat := lit[1:lastSlash]
 		flags := lit[lastSlash+1:]
 		pattern := ast.UnescapeRegexPattern(rawPat)

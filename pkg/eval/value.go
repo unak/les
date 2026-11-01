@@ -1575,25 +1575,14 @@ func (rv *RegexValue) String() string {
 
 // CompileRegex compiles a regex pattern with optional flags into a RegexValue.
 func CompileRegex(pattern, flags string) (*RegexValue, error) {
-	var prefix strings.Builder
-	flagSet := make(map[rune]bool)
-	for _, fl := range flags {
-		switch fl {
-		case 'i', 'm', 's', 'U':
-			flagSet[fl] = true
-		default:
-			return nil, fmt.Errorf("unknown regex flag: %c", fl)
-		}
+	canonFlags, err := types.CanonicalizeRegexFlags(flags)
+	if err != nil {
+		return nil, err
 	}
 
-	if len(flagSet) > 0 {
-		prefix.WriteString("(?")
-		for _, fl := range []rune{'i', 'm', 's', 'U'} {
-			if flagSet[fl] {
-				prefix.WriteRune(fl)
-			}
-		}
-		prefix.WriteString(")")
+	var prefix strings.Builder
+	if len(canonFlags) > 0 {
+		prefix.WriteString("(?" + canonFlags + ")")
 	}
 
 	compiled, err := regexp.Compile(prefix.String() + pattern)
@@ -1603,7 +1592,7 @@ func CompileRegex(pattern, flags string) (*RegexValue, error) {
 
 	return &RegexValue{
 		Pattern: pattern,
-		Flags:   flags,
+		Flags:   canonFlags,
 		Re:      compiled,
 	}, nil
 }

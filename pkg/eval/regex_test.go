@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"strings"
 	"testing"
 
 	"les/pkg/lexer"
@@ -573,4 +574,84 @@ else:
 	checkBool(`b3`, false)
 	checkBool(`b4`, true)
 	checkInt(`res`, 2)
+}
+
+
+func TestRegexFlagCanonicalizationAndMatchIndex(t *testing.T) {
+	input := `
+r1 = /abc/im
+r2 = /abc/mi
+eq1 = r1 == r2
+ne1 = r1 != r2
+
+d = {/abc/im: "found"}
+dVal = d[/abc/mi]
+
+m = "hello world" =~ /(?<greeting>[a-z]+) (?<target>[a-z]+)(?: (?<opt>[a-z]+))?/
+mGreet = m["greeting"]
+mOpt = m["opt"]
+mMissingGroup = m.Group("nonexistent")
+`
+	env, _ := runEvalCode(t, input)
+
+	mVal, _ := env.Get("m")
+	forcedM := Force(mVal).(*MatchValue)
+	methodVal, err := lookupBuiltinMember(forcedM, "[]")
+	if err != nil {
+		t.Fatalf("lookupBuiltinMember failed: %v", err)
+	}
+	bf := methodVal.(*BuiltinFunc)
+	_, err = bf.Fn([]Value{StringValue("nonexistent")})
+	if err == nil || !strings.Contains(err.Error(), "unknown capture group name") {
+		t.Fatalf("expected unknown capture group error from method [], got %v", err)
+	}
+	checkBool := func(varName string, expected bool) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		bv, ok := Force(val).(BoolValue)
+		if !ok || bool(bv) != expected {
+			t.Fatalf("%s: expected %v, got %v", varName, expected, val)
+		}
+	}
+	checkString := func(varName, expected string) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		sv, ok := Force(val).(StringValue)
+		if !ok || string(sv) != expected {
+			t.Fatalf("%s: expected %q, got %v", varName, expected, val)
+		}
+	}
+	checkNil := func(varName string) {
+		val, ok := env.Get(varName)
+		if !ok {
+			t.Fatalf("%s not found in env", varName)
+		}
+		forced := Force(val)
+		if _, ok := forced.(NilValue); !ok {
+			t.Fatalf("%s: expected nil, got %v", varName, forced)
+		}
+	}
+
+	checkBool("eq1", true)
+	checkBool("ne1", false)
+	checkString("dVal", "found")
+	checkString("mGreet", "hello")
+	checkNil("mOpt")
+	checkNil("mMissingGroup")
+
+	lErr := lexer.NewLexer(`
+m = "hello" =~ /(?<greeting>[a-z]+)/
+force m["nonexistent"]
+`)
+	pErr := parser.NewParser(lErr)
+	progErr := pErr.ParseProgram()
+	evErr := NewEvaluator()
+	_, err = evErr.EvalProgram(progErr)
+	if err == nil || !strings.Contains(err.Error(), "unknown capture group name") {
+		t.Fatalf("expected unknown capture group error from index [], got %v", err)
+	}
 }
