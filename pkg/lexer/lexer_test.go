@@ -280,7 +280,7 @@ a / b
 func TestLexerRegexParenAndCharClass(t *testing.T) {
 	input := `/[^]/]/
 (
-/first/
+/first/,
 /second/
 )
 `
@@ -293,6 +293,7 @@ func TestLexerRegexParenAndCharClass(t *testing.T) {
 		{TokenNewline, "\n"},
 		{TokenLParen, `(`},
 		{TokenRegex, `/first/`},
+		{TokenComma, `,`},
 		{TokenRegex, `/second/`},
 		{TokenRParen, `)`},
 		{TokenEOF, ""},
@@ -334,5 +335,33 @@ func TestLexerRegexPOSIXAndNonPOSIXCharClass(t *testing.T) {
 		if tok.Type != TokenRegex || tok.Literal != tt.expected {
 			t.Fatalf("expected TokenRegex with %q, got %v with %q", tt.expected, tok.Type, tok.Literal)
 		}
+	}
+}
+
+func TestLexerParenLineContinuationDivision(t *testing.T) {
+	input := "(a\n / b / c)"
+	l := NewLexer(input)
+	toks := []TokenType{TokenLParen, TokenIdent, TokenSlash, TokenIdent, TokenSlash, TokenIdent, TokenRParen, TokenEOF}
+	for i, exp := range toks {
+		tok := l.NextToken()
+		if tok.Type != exp {
+			t.Fatalf("[%d] expected %v, got %v (%s)", i, exp, tok.Type, tok.Literal)
+		}
+	}
+}
+
+func TestLexerRegexPOSIXCharClassColumn(t *testing.T) {
+	input := "/[[:alnum:]]/ x"
+	l := NewLexer(input)
+	tok1 := l.NextToken()
+	if tok1.Type != TokenRegex || tok1.Literal != "/[[:alnum:]]/" {
+		t.Fatalf("expected TokenRegex, got %v (%s)", tok1.Type, tok1.Literal)
+	}
+	tok2 := l.NextToken()
+	if tok2.Type != TokenIdent || tok2.Literal != "x" {
+		t.Fatalf("expected TokenIdent x, got %v (%s)", tok2.Type, tok2.Literal)
+	}
+	if tok2.Col != 15 {
+		t.Fatalf("expected col 15 for x, got %d", tok2.Col)
 	}
 }

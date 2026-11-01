@@ -127,7 +127,6 @@ func (l *Lexer) nextTokenInternal() Token {
 
 			if l.parenDepth > 0 {
 				// Inside brackets/parentheses, ignore newlines and indentation
-				l.lastTokenType = TokenNewline
 				continue
 			}
 
@@ -525,7 +524,9 @@ func (l *Lexer) readRegexLiteral() Token {
 			if r == '[' {
 				if nextIdx := ast.SkipPOSIXCharClassInRunes(l.source, pos); nextIdx > pos {
 					sb.WriteString(string(l.source[l.pos:nextIdx]))
-					l.pos = nextIdx
+					for l.pos < nextIdx {
+						l.advance()
+					}
 					continue
 				}
 			}

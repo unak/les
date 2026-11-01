@@ -76,6 +76,9 @@ func narrowTypeByPattern(origT, patT Type) Type {
 	if patT == nil || patT == TypeUnknown {
 		return origT
 	}
+	if !TypesCanOverlap(origT, patT) {
+		return TypeUnknown
+	}
 	if patU, ok := patT.(*UnionType); ok {
 		var narrowed []Type
 		for _, pm := range patU.Members {
@@ -220,13 +223,21 @@ func extractTupleBindingTypes(t Type, numElements int, hasRest bool) ([]Type, Ty
 		}
 		var restT Type
 		if hasRest {
-			var restElemT Type = TypeUnknown
-			if tup.IsVariadic && len(tup.Elems) > 0 {
-				restElemT = tup.Elems[len(tup.Elems)-1]
-			} else if len(tup.Elems) > numElements {
-				restElemT = tup.Elems[numElements]
+			if tup.IsVariadic {
+				var restElemT Type = TypeUnknown
+				if len(tup.Elems) > 0 {
+					restElemT = tup.Elems[len(tup.Elems)-1]
+				}
+				restT = &TupleType{Elems: []Type{restElemT}, IsVariadic: true}
+			} else {
+				if numElements >= len(tup.Elems) {
+					restT = &TupleType{Elems: []Type{}, IsVariadic: false}
+				} else {
+					restSlice := make([]Type, len(tup.Elems)-numElements)
+					copy(restSlice, tup.Elems[numElements:])
+					restT = &TupleType{Elems: restSlice, IsVariadic: false}
+				}
 			}
-			restT = &TupleType{Elems: []Type{restElemT}, IsVariadic: true}
 		}
 		return elems, restT, true
 	}
@@ -256,15 +267,25 @@ func extractTupleBindingTypes(t Type, numElements int, hasRest bool) ([]Type, Ty
 			if hasRest {
 				var restMembers []Type
 				for _, mt := range memberTupleTypes {
-					var rEl Type = TypeUnknown
-					if mt.IsVariadic && len(mt.Elems) > 0 {
-						rEl = mt.Elems[len(mt.Elems)-1]
-					} else if len(mt.Elems) > numElements {
-						rEl = mt.Elems[numElements]
+					var mRest Type
+					if mt.IsVariadic {
+						var restElemT Type = TypeUnknown
+						if len(mt.Elems) > 0 {
+							restElemT = mt.Elems[len(mt.Elems)-1]
+						}
+						mRest = &TupleType{Elems: []Type{restElemT}, IsVariadic: true}
+					} else {
+						if numElements >= len(mt.Elems) {
+							mRest = &TupleType{Elems: []Type{}, IsVariadic: false}
+						} else {
+							restSlice := make([]Type, len(mt.Elems)-numElements)
+							copy(restSlice, mt.Elems[numElements:])
+							mRest = &TupleType{Elems: restSlice, IsVariadic: false}
+						}
 					}
-					restMembers = append(restMembers, rEl)
+					restMembers = append(restMembers, mRest)
 				}
-				restT = &TupleType{Elems: []Type{NewUnionType(restMembers...)}, IsVariadic: true}
+				restT = NewUnionType(restMembers...)
 			}
 			return elems, restT, true
 		}
@@ -1250,14 +1271,45 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if err != nil {
 			return err
 		}
+		if valT != TypeUnknown && !TypesCanOverlap(valT, &TupleType{IsVariadic: true}) {
+			return inf.nodeErr(s, "cannot unpack non-tuple type %s", valT.String())
+		}
+		if tup, ok := valT.(*TupleType); ok {
+			reqCount := len(s.Pattern.Elements)
+			if s.Pattern.RestName != "" {
+				if !tup.IsVariadic && len(tup.Elems) < reqCount {
+					return inf.nodeErr(s, "not enough elements to unpack into tuple pattern: got %d, need at least %d", len(tup.Elems), reqCount)
+				}
+			} else {
+				if tup.IsVariadic {
+					return inf.nodeErr(s, "cannot unpack infinite tuple into fixed-length pattern")
+				}
+				if len(tup.Elems) != reqCount {
+					return inf.nodeErr(s, "element count mismatch in unpack: expected %d, got %d", reqCount, len(tup.Elems))
+				}
+			}
+		}
 		elemTypes, restType, _ := extractTupleBindingTypes(valT, len(s.Pattern.Elements), s.Pattern.RestName != "")
+		seenNames := make(map[string]bool)
 		for i, name := range s.Pattern.Elements {
 			if name != "_" {
-				_ = inf.scope.Declare(name, elemTypes[i])
+				if seenNames[name] {
+					return inf.nodeErr(s, "duplicate variable %s in unpack pattern", name)
+				}
+				seenNames[name] = true
+				if err := inf.scope.Declare(name, elemTypes[i]); err != nil {
+					return inf.nodeErr(s, "%s", err.Error())
+				}
 			}
 		}
 		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-			_ = inf.scope.Declare(s.Pattern.RestName, restType)
+			if seenNames[s.Pattern.RestName] {
+				return inf.nodeErr(s, "duplicate variable %s in unpack pattern", s.Pattern.RestName)
+			}
+			seenNames[s.Pattern.RestName] = true
+			if err := inf.scope.Declare(s.Pattern.RestName, restType); err != nil {
+				return inf.nodeErr(s, "%s", err.Error())
+			}
 		}
 		return nil
 

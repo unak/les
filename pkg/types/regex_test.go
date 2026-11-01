@@ -503,3 +503,86 @@ func TestVariadicTupleNormalizationAndFuncAssignability(t *testing.T) {
 		t.Fatalf("expected (...) -> Int to be assignable to (Int, ...) -> Int")
 	}
 }
+
+func TestNarrowTypeByPatternDisjoint(t *testing.T) {
+	if got := narrowTypeByPattern(TypeInt, TypeString); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+	if got := narrowTypeByPattern(TypeBool, TypeInt); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+	if got := narrowTypeByPattern(TypeInt, NewUnionType(TypeString, TypeBool)); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+	if got := narrowTypeByPattern(NewUnionType(TypeInt, TypeString), TypeBool); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+}
+
+func TestExtractTupleBindingTypesFiniteRest(t *testing.T) {
+	tup := &TupleType{Elems: []Type{TypeInt, TypeString, TypeBool, TypeFloat}, IsVariadic: false}
+	elems, restT, ok := extractTupleBindingTypes(tup, 1, true)
+	if !ok || len(elems) != 1 || elems[0] != TypeInt {
+		t.Fatalf("unexpected elems: %v", elems)
+	}
+	rt, ok := restT.(*TupleType)
+	if !ok || rt.IsVariadic || len(rt.Elems) != 3 {
+		t.Fatalf("expected finite tuple of 3 elems, got %+v", restT)
+	}
+	if rt.Elems[0] != TypeString || rt.Elems[1] != TypeBool || rt.Elems[2] != TypeFloat {
+		t.Fatalf("unexpected rest elems: %v", rt.Elems)
+	}
+
+	tup2 := &TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: false}
+	_, restT2, ok2 := extractTupleBindingTypes(tup2, 2, true)
+	if !ok2 {
+		t.Fatalf("extract failed")
+	}
+	rt2, ok2 := restT2.(*TupleType)
+	if !ok2 || rt2.IsVariadic || len(rt2.Elems) != 0 {
+		t.Fatalf("expected empty finite tuple, got %+v", restT2)
+	}
+
+	uTup := NewUnionType(
+		&TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: false},
+		&TupleType{Elems: []Type{TypeInt, TypeString, TypeBool}, IsVariadic: false},
+	)
+	_, restTU, okU := extractTupleBindingTypes(uTup, 2, true)
+	if !okU {
+		t.Fatalf("extract failed for union")
+	}
+	uRest, okU := restTU.(*UnionType)
+	if !okU || len(uRest.Members) != 2 {
+		t.Fatalf("expected union of 2 rests, got %v", restTU)
+	}
+}
+
+func TestUnpackDeclStaticChecks(t *testing.T) {
+	cases := []struct {
+		code   string
+		errSub string
+	}{
+		{"(a, b) = 123\n", "cannot unpack non-tuple type"},
+		{"(a, b, c) = (1, 2)\n", "element count mismatch"},
+		{"(a, b) = (1, 2, 3)\n", "element count mismatch"},
+		{"(a, b, c, ...rest) = (1, 2)\n", "not enough elements to unpack"},
+		{"(a, a) = (1, 2)\n", "duplicate variable"},
+		{"(a, ...a) = (1, 2)\n", "duplicate variable"},
+	}
+	for _, tc := range cases {
+		l := lexer.NewLexer(tc.code)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("unexpected parser errors for %q: %v", tc.code, p.Errors())
+		}
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected error containing %q for %q, got nil", tc.errSub, tc.code)
+		}
+		if !strings.Contains(err.Error(), tc.errSub) {
+			t.Fatalf("expected error containing %q, got %q", tc.errSub, err.Error())
+		}
+	}
+}
