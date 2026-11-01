@@ -3404,6 +3404,57 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			return bf, nil
 		}
 	}
+	if member == "IsNaN" {
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "IsNaN",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("IsNaN() takes 0 arguments, got %d", len(args))
+					}
+					return fv.IsNaN(), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "IsNaN"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "IsInfinite" {
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "IsInfinite",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("IsInfinite() takes 0 arguments, got %d", len(args))
+					}
+					return fv.IsInfinite(), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "IsInfinite"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+	if member == "IsFinite" {
+		if fv, ok := val.(FloatValue); ok {
+			bf := &BuiltinFunc{
+				Name: "IsFinite",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("IsFinite() takes 0 arguments, got %d", len(args))
+					}
+					return fv.IsFinite(), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeFloat, "IsFinite"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
 	if member == "IsValidString" {
 		if bv, ok := val.(BytesValue); ok {
 			bf := &BuiltinFunc{

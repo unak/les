@@ -5915,5 +5915,59 @@ print 42 is Numeric, " ", 3.14 is Numeric, " ", 42 is Comparable, " ", 42 is Equ
 	if outShadow != expectedShadow {
 		t.Fatalf("expected %q, got %q", expectedShadow, outShadow)
 	}
+
+	// 11. Float.IsNaN(), Float.IsInfinite(), Float.IsFinite()
+	if !FloatValue(math.NaN()).IsNaN() || FloatValue(math.NaN()).IsInfinite() || FloatValue(math.NaN()).IsFinite() {
+		t.Fatalf("unexpected FloatValue(NaN) predicate results")
+	}
+	if FloatValue(math.Inf(1)).IsNaN() || !FloatValue(math.Inf(1)).IsInfinite() || FloatValue(math.Inf(1)).IsFinite() {
+		t.Fatalf("unexpected FloatValue(+Inf) predicate results")
+	}
+	if FloatValue(math.Inf(-1)).IsNaN() || !FloatValue(math.Inf(-1)).IsInfinite() || FloatValue(math.Inf(-1)).IsFinite() {
+		t.Fatalf("unexpected FloatValue(-Inf) predicate results")
+	}
+	if FloatValue(42.5).IsNaN() || FloatValue(42.5).IsInfinite() || !FloatValue(42.5).IsFinite() {
+		t.Fatalf("unexpected FloatValue(42.5) predicate results")
+	}
+
+	codePredicates := `
+inf = 100000000000000000000.0
+inf = inf * inf
+inf = inf * inf
+inf = inf * inf
+inf = inf * inf
+inf = inf * inf
+pos_inf = inf
+neg_inf = -inf
+nan = inf - inf
+normal = 42.5
+zero = 0.0
+
+print nan.IsNaN(), " ", nan.IsInfinite(), " ", nan.IsFinite(), " | "
+print pos_inf.IsNaN(), " ", pos_inf.IsInfinite(), " ", pos_inf.IsFinite(), " | "
+print neg_inf.IsNaN(), " ", neg_inf.IsInfinite(), " ", neg_inf.IsFinite(), " | "
+print normal.IsNaN(), " ", normal.IsInfinite(), " ", normal.IsFinite(), " | "
+print zero.IsNaN(), " ", zero.IsInfinite(), " ", zero.IsFinite()
+`
+	outPred, errPred := runLesCode(codePredicates)
+	if errPred != nil {
+		t.Fatalf("unexpected eval error on Float predicates: %v", errPred)
+	}
+	expectedPred := "true false false | false true false | false true false | false false true | false false true"
+	if outPred != expectedPred {
+		t.Fatalf("expected %q, got %q", expectedPred, outPred)
+	}
+
+	// Arity validation for IsNaN, IsInfinite, IsFinite
+	arityErrCases := []string{
+		"(1.0).IsNaN(1)",
+		"(1.0).IsInfinite(1)",
+		"(1.0).IsFinite(1)",
+	}
+	for _, ac := range arityErrCases {
+		if _, err := runLesCode(ac); err == nil {
+			t.Fatalf("expected runtime error for arity mismatch in %s, got nil", ac)
+		}
+	}
 }
 
