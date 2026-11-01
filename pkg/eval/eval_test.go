@@ -5899,5 +5899,21 @@ print res1, " | ", res2, " | ", m1, " ", m2, " | ", e1, " ", e2
 			t.Fatalf("expected runtime error for %s, got nil", sc)
 		}
 	}
+
+	// 10. Unspecialized generic interface embedding with colliding in-scope type identifier
+	codeShadow := `
+struct T:
+    x: Int
+
+print 42 is Numeric, " ", 3.14 is Numeric, " ", 42 is Comparable, " ", 42 is Equatable, " ", 42 is Numeric[T]
+`
+	outShadow, errShadow := runLesCode(codeShadow)
+	if errShadow != nil {
+		t.Fatalf("unexpected eval error on type param shadowing: %v", errShadow)
+	}
+	expectedShadow := "true true true true false"
+	if outShadow != expectedShadow {
+		t.Fatalf("expected %q, got %q", expectedShadow, outShadow)
+	}
 }
 

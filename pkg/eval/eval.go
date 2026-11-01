@@ -5482,7 +5482,27 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 		}
 		targetDef := embDef
 		if isGen {
-			targetDef = substituteInterfaceDef(embDef, embArgs)
+			if len(iface.TypeArgs) == 0 && len(iface.TypeParams) > 0 {
+				allUnbound := true
+				for _, arg := range embArgs {
+					isParam := false
+					for _, tp := range iface.TypeParams {
+						if tp.Name == arg {
+							isParam = true
+							break
+						}
+					}
+					if !isParam {
+						allUnbound = false
+						break
+					}
+				}
+				if !allUnbound {
+					targetDef = substituteInterfaceDef(embDef, embArgs)
+				}
+			} else {
+				targetDef = substituteInterfaceDef(embDef, embArgs)
+			}
 		}
 		if !valueImplementsInterfaceValue(val, targetDef, env) {
 			return false
