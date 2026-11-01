@@ -561,6 +561,11 @@ func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
 			Ret: TypeString,
 		}, true
 	}
+	for _, emb := range i.Embedded {
+		if m, ok := emb.LookupMethod(name); ok {
+			return m, true
+		}
+	}
 	return nil, false
 }
 
@@ -593,7 +598,69 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok {
 				return false
 			}
+			if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
+				if srcSig.MinArgs() > 1 || (srcSig.MaxArgs() >= 0 && srcSig.MaxArgs() < 1) {
+					return false
+				}
+				if !IsAssignableTo(srcSig.Ret, TypeBool) {
+					return false
+				}
+				if len(target.TypeArgs) == 1 {
+					tup, ok := srcSig.Arg.(*TupleType)
+					if ok && len(tup.Elems) == 1 {
+						if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
+							return false
+						}
+					}
+				}
+				continue
+			}
+			if target.Name == "Numeric" {
+				if mName == "Int" {
+					if srcSig.MinArgs() > 0 || !IsAssignableTo(srcSig.Ret, TypeInt) {
+						return false
+					}
+					continue
+				}
+				if mName == "Float" {
+					if srcSig.MinArgs() > 0 || !IsAssignableTo(srcSig.Ret, TypeFloat) {
+						return false
+					}
+					continue
+				}
+				if mName == "Abs" {
+					if srcSig.MinArgs() > 0 {
+						return false
+					}
+					if len(target.TypeArgs) == 1 && !IsAssignableTo(srcSig.Ret, target.TypeArgs[0]) {
+						return false
+					}
+					continue
+				}
+				if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+					if srcSig.MinArgs() > 1 || (srcSig.MaxArgs() >= 0 && srcSig.MaxArgs() < 1) {
+						return false
+					}
+					if len(target.TypeArgs) == 1 {
+						expectedT := target.TypeArgs[0]
+						if !IsAssignableTo(srcSig.Ret, expectedT) {
+							return false
+						}
+						if tup, ok := srcSig.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+							if !IsAssignableTo(expectedT, tup.Elems[0]) {
+								return false
+							}
+						}
+					}
+					continue
+				}
+			}
 			if !targetSig.Equals(srcSig) {
+				return false
+			}
+		}
+		for _, emb := range target.Embedded {
+			if !ImplementsInterface(src, emb) {
 				return false
 			}
 		}
@@ -634,6 +701,63 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 					continue
 				}
 			}
+			if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
+				if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
+					return false
+				}
+				if !IsAssignableTo(fnT.Ret, TypeBool) {
+					return false
+				}
+				if len(target.TypeArgs) == 1 {
+					tup, ok := fnT.Arg.(*TupleType)
+					if ok && len(tup.Elems) == 1 {
+						if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
+							return false
+						}
+					}
+				}
+				continue
+			}
+			if target.Name == "Numeric" {
+				if mName == "Int" {
+					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeInt) {
+						return false
+					}
+					continue
+				}
+				if mName == "Float" {
+					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeFloat) {
+						return false
+					}
+					continue
+				}
+				if mName == "Abs" {
+					if fnT.MinArgs() > 0 {
+						return false
+					}
+					if len(target.TypeArgs) == 1 && !IsAssignableTo(fnT.Ret, target.TypeArgs[0]) {
+						return false
+					}
+					continue
+				}
+				if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+					if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
+						return false
+					}
+					if len(target.TypeArgs) == 1 {
+						expectedT := target.TypeArgs[0]
+						if !IsAssignableTo(fnT.Ret, expectedT) {
+							return false
+						}
+						if tup, ok := fnT.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+							if !IsAssignableTo(expectedT, tup.Elems[0]) {
+								return false
+							}
+						}
+					}
+					continue
+				}
+			}
 			matched := targetSig.Equals(fnT)
 			if !matched && len(fnT.Overloads) > 0 {
 				for _, ov := range fnT.Overloads {
@@ -647,11 +771,21 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				return false
 			}
 		}
+		for _, emb := range target.Embedded {
+			if !ImplementsInterface(src, emb) {
+				return false
+			}
+		}
 		return true
 	}
 
 	// For other types (e.g. primitives, tuples, dicts), check if built-in methods satisfy target
 	if len(target.Methods) == 0 {
+		for _, emb := range target.Embedded {
+			if !ImplementsInterface(src, emb) {
+				return false
+			}
+		}
 		return true
 	}
 
@@ -660,8 +794,8 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 		if !ok {
 			return false
 		}
-		if (target.Name == "Equal" || target.Name == "Comparable") && (mName == "==" || mName == "<") {
-			// For Equal/Comparable, builtin method must accept 1 argument and return Bool
+		if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
+			// For Equatable/Comparable/Numeric, builtin method must accept 1 argument and return Bool
 			if srcSig.Ret != TypeBool {
 				return false
 			}
@@ -669,7 +803,49 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if !ok || len(tup.Elems) != 1 {
 				return false
 			}
+			if len(target.TypeArgs) == 1 {
+				if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
+					return false
+				}
+			}
 			continue
+		}
+		if target.Name == "Numeric" {
+			if mName == "Int" {
+				if srcSig.Ret != TypeInt || srcSig.MinArgs() > 0 {
+					return false
+				}
+				continue
+			}
+			if mName == "Float" {
+				if srcSig.Ret != TypeFloat || srcSig.MinArgs() > 0 {
+					return false
+				}
+				continue
+			}
+			if mName == "Abs" {
+				if srcSig.MinArgs() > 0 {
+					return false
+				}
+				if len(target.TypeArgs) == 1 && !IsAssignableTo(srcSig.Ret, target.TypeArgs[0]) {
+					return false
+				}
+				continue
+			}
+			if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
+				if len(target.TypeArgs) == 1 {
+					expectedT := target.TypeArgs[0]
+					if !IsAssignableTo(srcSig.Ret, expectedT) {
+						return false
+					}
+					if tup, ok := srcSig.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
+						if !IsAssignableTo(expectedT, tup.Elems[0]) {
+							return false
+						}
+					}
+				}
+				continue
+			}
 		}
 		if target.Name == "Indexable" {
 			if mName == "Len" {
@@ -728,6 +904,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			}
 		}
 		if !matched {
+			return false
+		}
+	}
+	for _, emb := range target.Embedded {
+		if !ImplementsInterface(src, emb) {
 			return false
 		}
 	}
@@ -796,18 +977,41 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 	}
 	if u, ok := t.(*UnionType); ok && len(u.Members) > 0 {
 		var commonSig *FuncType
+		var retTypes []Type
+		argsMatch := true
 		for _, m := range u.Members {
 			sig, ok := LookupBuiltinTypeMethod(m, mName)
 			if !ok {
 				return nil, false
 			}
+			retTypes = append(retTypes, sig.Ret)
 			if commonSig == nil {
 				commonSig = sig
-			} else if !commonSig.Equals(sig) {
-				return nil, false
+			} else if !commonSig.Arg.Equals(sig.Arg) || commonSig.MinArity != sig.MinArity || commonSig.MaxArity != sig.MaxArity {
+				argsMatch = false
 			}
 		}
-		return commonSig, true
+		if !argsMatch {
+			return nil, false
+		}
+		allEqual := true
+		for _, rt := range retTypes[1:] {
+			if !rt.Equals(retTypes[0]) {
+				allEqual = false
+				break
+			}
+		}
+		if allEqual {
+			return commonSig, true
+		}
+		return &FuncType{
+			Arg:           commonSig.Arg,
+			MinArity:      commonSig.MinArity,
+			MaxArity:      commonSig.MaxArity,
+			Ret:           NewUnionType(retTypes...),
+			Overloads:     commonSig.Overloads,
+			OverloadUnion: commonSig.OverloadUnion,
+		}, true
 	}
 	if mName == "Ord" && t == TypeString {
 		return &FuncType{
@@ -853,6 +1057,38 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			MinArity: 0,
 			MaxArity: 1,
 			Ret:      TypeString,
+		}, true
+	}
+	if mName == "Float" && (t == TypeInt || t == TypeFloat) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeFloat,
+		}, true
+	}
+	if mName == "Int" && (t == TypeInt || t == TypeFloat) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeInt,
+		}, true
+	}
+	if mName == "Abs" {
+		if t == TypeInt {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeInt,
+			}, true
+		}
+		if t == TypeFloat {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{}},
+				Ret: TypeFloat,
+			}, true
+		}
+	}
+	if (mName == "Floor" || mName == "Ceil" || mName == "Round") && (t == TypeInt || t == TypeFloat) {
+		return &FuncType{
+			Arg: &TupleType{Elems: []Type{}},
+			Ret: TypeInt,
 		}, true
 	}
 

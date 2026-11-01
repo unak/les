@@ -1512,7 +1512,7 @@ neq: Bool = v1 != v2
 neg: Vec2 = -v1
 elem: Int = v1[0]
 
-eqObj: Equal = v1
+eqObj: Equatable = v1
 cmpInt: Comparable = 42
 cmpStr: Comparable = "abc"
 `
@@ -2081,5 +2081,137 @@ func TestInfiniteTupleNotAssignableToFiniteTuple(t *testing.T) {
 	}
 	if IsAssignableTo(intInf, intStringInf) {
 		t.Errorf("expected (Int, ...) to NOT be assignable to (Int, String, ...)")
+	}
+}
+
+func TestNumericAndEquatableInterfaceInference(t *testing.T) {
+	code := `
+n1: Numeric = 42
+n2: Numeric = 3.14
+n3: Numeric[Int] = 100
+n4: Numeric[Float] = 2.5
+
+eq1: Equatable = 42
+eq2: Equatable = 3.14
+eq3: Equatable[Int] = 42
+
+cmp1: Comparable = 42
+cmp2: Comparable = 3.14
+cmp3: Comparable[Float] = 3.14
+
+f_val = 42.Float()
+i_val = (3.14).Int()
+a_val = (-42).Abs()
+fl_val = (3.7).Floor()
+ce_val = (3.2).Ceil()
+ro_val = (1.5).Round()
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	if fT, ok := inf.scope.Lookup("f_val"); !ok || fT != TypeFloat {
+		t.Errorf("expected f_val to be Float, got %v", fT)
+	}
+	if iT, ok := inf.scope.Lookup("i_val"); !ok || iT != TypeInt {
+		t.Errorf("expected i_val to be Int, got %v", iT)
+	}
+	if aT, ok := inf.scope.Lookup("a_val"); !ok || aT != TypeInt {
+		t.Errorf("expected a_val to be Int, got %v", aT)
+	}
+	if flT, ok := inf.scope.Lookup("fl_val"); !ok || flT != TypeInt {
+		t.Errorf("expected fl_val to be Int, got %v", flT)
+	}
+	if ceT, ok := inf.scope.Lookup("ce_val"); !ok || ceT != TypeInt {
+		t.Errorf("expected ce_val to be Int, got %v", ceT)
+	}
+	if roT, ok := inf.scope.Lookup("ro_val"); !ok || roT != TypeInt {
+		t.Errorf("expected ro_val to be Int, got %v", roT)
+	}
+
+	// Incompatible generic assignments must fail
+	badCodes := []string{
+		"x: Equatable[String] = 42",
+		"y: Comparable[String] = 42",
+		"z: Numeric[String] = 42",
+		"w: Numeric[Float] = 42",
+		"v: Numeric[Int] = 3.14",
+		`
+struct NoCmp:
+    val: Int
+    def Int() -> Int: self.val
+    def Float() -> Float: self.val.Float()
+    def Abs() -> NoCmp: self
+    def +(other: NoCmp) -> NoCmp: self
+    def -(other: NoCmp) -> NoCmp: self
+    def *(other: NoCmp) -> NoCmp: self
+    def /(other: NoCmp) -> NoCmp: self
+
+nc: Numeric = NoCmp(10)
+`,
+	}
+	for _, bad := range badCodes {
+		bProg := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		bInf := NewInferencer()
+		if err := bInf.InferProgram(bProg); err == nil {
+			t.Errorf("expected type inference error for %q, got nil", bad)
+		}
+	}
+
+	// Subtyping hierarchy and generic relational operators
+	hierarchyCode := `
+num_val: Numeric[Int] = 42
+cmp_spec: Comparable[Int] = num_val
+cmp_raw: Comparable = num_val
+eq_spec: Equatable[Int] = num_val
+eq_raw: Equatable = num_val
+
+def min_val[N: Numeric[N]](a: N, b: N) -> N:
+    if a < b:
+        a
+    else:
+        b
+
+def are_equal[N: Numeric[N]](a: N, b: N) -> Bool:
+    a == b
+`
+	hProg := parser.NewParser(lexer.NewLexer(hierarchyCode)).ParseProgram()
+	hInf := NewInferencer()
+	if err := hInf.InferProgram(hProg); err != nil {
+		t.Fatalf("unexpected type inference error on subtyping hierarchy: %v", err)
+	}
+
+	// Pure embedded interface constraint enforcement
+	markerErrCode := `
+interface Marker:
+    Comparable
+m: Marker = nil
+`
+	mProg := parser.NewParser(lexer.NewLexer(markerErrCode)).ParseProgram()
+	mInf := NewInferencer()
+	if err := mInf.InferProgram(mProg); err == nil {
+		t.Fatalf("expected type inference error assigning nil to Marker (embedding Comparable), got nil")
+	}
+
+	// Union type method return type unification
+	unionCode := `
+def get_num(flag: Bool) -> Int | Float:
+    if flag:
+        -42
+    else:
+        -3.14
+
+abs_val = get_num(true).Abs()
+`
+	uProg := parser.NewParser(lexer.NewLexer(unionCode)).ParseProgram()
+	uInf := NewInferencer()
+	if err := uInf.InferProgram(uProg); err != nil {
+		t.Fatalf("unexpected type inference error on union Abs(): %v", err)
+	}
+	expectedUnion := NewUnionType(TypeInt, TypeFloat)
+	if absT, ok := uInf.scope.Lookup("abs_val"); !ok || !absT.Equals(expectedUnion) {
+		t.Errorf("expected abs_val to be Int | Float, got %v", absT)
 	}
 }
