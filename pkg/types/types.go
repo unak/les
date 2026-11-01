@@ -2,7 +2,10 @@ package types
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+
+	"les/pkg/ast"
 )
 
 // Type represents a Les static type.
@@ -21,6 +24,8 @@ const (
 	TypeBytes  PrimType = "Bytes"
 	TypeBool    PrimType = "Bool"
 	TypeNil     PrimType = "Nil"
+	TypeRegex   PrimType = "Regex"
+	TypeMatch   PrimType = "Match"
 	TypeUnknown PrimType = "Unknown"
 )
 
@@ -390,17 +395,18 @@ func IsAssignableTo(src, target Type) bool {
 		}
 	}
 
+	// If src is UnionType, every member of src must be assignable to target
+	if uSrc, ok := src.(*UnionType); ok {
+		for _, sm := range uSrc.Members {
+			if !IsAssignableTo(sm, target) {
+				return false
+			}
+		}
+		return true
+	}
+
 	// If target is UnionType, src must match at least one member
 	if uTarget, ok := target.(*UnionType); ok {
-		// If src is also UnionType, every member of src must be assignable to target
-		if uSrc, ok := src.(*UnionType); ok {
-			for _, sm := range uSrc.Members {
-				if !IsAssignableTo(sm, target) {
-					return false
-				}
-			}
-			return true
-		}
 		for _, m := range uTarget.Members {
 			if IsAssignableTo(src, m) {
 				return true
@@ -415,14 +421,9 @@ func IsAssignableTo(src, target Type) bool {
 			srcArgs, sIsTuple := fSrc.effectiveArgType().(*TupleType)
 			targetArgs, tIsTuple := fTarget.effectiveArgType().(*TupleType)
 			if sIsTuple && tIsTuple {
-				if len(srcArgs.Elems) != len(targetArgs.Elems) {
+				// Contravariant parameter tuple: targetArgs must be assignable to srcArgs
+				if !IsAssignableTo(targetArgs, srcArgs) {
 					return false
-				}
-				for i := range srcArgs.Elems {
-					// Contravariant parameter types
-					if !IsAssignableTo(targetArgs.Elems[i], srcArgs.Elems[i]) {
-						return false
-					}
 				}
 			} else {
 				if !IsAssignableTo(fTarget.effectiveArgType(), fSrc.effectiveArgType()) {
@@ -779,7 +780,7 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 
 	if mName == "Len" {
 		switch t {
-		case TypeString, TypeBytes:
+		case TypeString, TypeBytes, TypeMatch:
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{}},
 				Ret: TypeInt,
@@ -855,11 +856,88 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 		}, true
 	}
 
+	if t == TypeRegex {
+		switch mName {
+		case "Pattern":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Flags":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Test":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString}}, Ret: TypeBool}, true
+		case "Match":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString}}, Ret: NewUnionType(TypeMatch, TypeNil)}, true
+		case "FindAll":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{TypeString, TypeInt}},
+				MinArity: 1,
+				MaxArity: 2,
+				Ret:      &TupleType{Elems: []Type{TypeMatch}, IsVariadic: true},
+			}, true
+		case "Replace":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString, TypeString}}, Ret: TypeString}, true
+		case "ReplaceAll":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString, TypeString}}, Ret: TypeString}, true
+		case "Split":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{TypeString, TypeInt}},
+				MinArity: 1,
+				MaxArity: 2,
+				Ret:      &TupleType{Elems: []Type{TypeString}, IsVariadic: true},
+			}, true
+		case "=~":
+			return &FuncType{Arg: &TupleType{Elems: []Type{TypeString}}, Ret: NewUnionType(TypeMatch, TypeNil)}, true
+		}
+	}
+
+	if t == TypeString && mName == "=~" {
+		return &FuncType{Arg: &TupleType{Elems: []Type{TypeRegex}}, Ret: NewUnionType(TypeMatch, TypeNil)}, true
+	}
+
+	if t == TypeMatch {
+		switch mName {
+		case "Len":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt}, true
+		case "Group":
+			return &FuncType{Arg: &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}}, Ret: NewUnionType(TypeString, TypeNil)}, true
+		case "Groups":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: &TupleType{Elems: []Type{NewUnionType(TypeString, TypeNil)}, IsVariadic: true}}, true
+		case "NamedGroups":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: &DictType{Key: TypeString, Value: NewUnionType(TypeString, TypeNil)}}, true
+		case "Start":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeInt,
+			}, true
+		case "End":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      TypeInt,
+			}, true
+		case "Span":
+			return &FuncType{
+				Arg:      &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				MinArity: 0,
+				MaxArity: 1,
+				Ret:      &TupleType{Elems: []Type{TypeInt, TypeInt}},
+			}, true
+		case "Text":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Target":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeString}, true
+		case "Regex":
+			return &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeRegex}, true
+		}
+	}
+
 	// Built-in operator methods
 	switch mName {
 	case "==":
 		switch t {
-		case TypeInt, TypeFloat, TypeString, TypeBytes, TypeBool, TypeNil:
+		case TypeInt, TypeFloat, TypeString, TypeBytes, TypeBool, TypeNil, TypeRegex, TypeMatch:
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{t}},
 				Ret: TypeBool,
@@ -1045,6 +1123,12 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 			}, true
 		}
 	case "[]":
+		if t == TypeMatch {
+			return &FuncType{
+				Arg: &TupleType{Elems: []Type{NewUnionType(TypeInt, TypeString)}},
+				Ret: NewUnionType(TypeString, TypeNil),
+			}, true
+		}
 		if t == TypeString {
 			return &FuncType{
 				Arg: &TupleType{Elems: []Type{TypeInt}},
@@ -1437,4 +1521,169 @@ func ValidateTypeConstraints(typeParams []TypeParamDef, typeArgs []Type) error {
 		}
 	}
 	return nil
+}
+
+// UnescapeRegexPattern unescapes \/ to / while preserving \\.
+func UnescapeRegexPattern(rawPat string) string {
+	return ast.UnescapeRegexPattern(rawPat)
+}
+
+// CanonicalizeRegexFlags validates and returns deduplicated, canonically sorted ('i', 'm', 's', 'U') flags.
+func CanonicalizeRegexFlags(flags string) (string, error) {
+	flagSet := make(map[rune]bool)
+	for _, fl := range flags {
+		switch fl {
+		case 'i', 'm', 's', 'U':
+			flagSet[fl] = true
+		default:
+			return "", fmt.Errorf("unknown regex flag: %c", fl)
+		}
+	}
+
+	var sb strings.Builder
+	for _, fl := range []rune{'i', 'm', 's', 'U'} {
+		if flagSet[fl] {
+			sb.WriteRune(fl)
+		}
+	}
+	return sb.String(), nil
+}
+
+// ValidateRegex verifies pattern and flags compile under Go regexp syntax.
+func ValidateRegex(pattern, flags string) error {
+	canonFlags, err := CanonicalizeRegexFlags(flags)
+	if err != nil {
+		return err
+	}
+
+	var prefix strings.Builder
+	if len(canonFlags) > 0 {
+		prefix.WriteString("(?" + canonFlags + ")")
+	}
+
+	_, err = regexp.Compile(prefix.String() + pattern)
+	if err != nil {
+		return fmt.Errorf("invalid regex pattern: %w", err)
+	}
+	return nil
+}
+
+// TypesCanOverlap returns true if a runtime value could simultaneously belong to or match both t1 and t2.
+func TypesCanOverlap(t1, t2 Type) bool {
+	if t1 == nil || t2 == nil || t1 == TypeUnknown || t2 == TypeUnknown {
+		return true
+	}
+	if u1, ok := t1.(*UnionType); ok {
+		for _, m := range u1.Members {
+			if TypesCanOverlap(m, t2) {
+				return true
+			}
+		}
+		return false
+	}
+	if u2, ok := t2.(*UnionType); ok {
+		for _, m := range u2.Members {
+			if TypesCanOverlap(t1, m) {
+				return true
+			}
+		}
+		return false
+	}
+	if IsAssignableTo(t1, t2) || IsAssignableTo(t2, t1) {
+		return true
+	}
+	if tup1, ok := t1.(*TupleType); ok {
+		if tup2, ok := t2.(*TupleType); ok {
+			if tup1.IsVariadic && len(tup1.Elems) == 0 {
+				tup1 = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
+			if tup2.IsVariadic && len(tup2.Elems) == 0 {
+				tup2 = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
+			// Case 1: both fixed-length
+			if !tup1.IsVariadic && !tup2.IsVariadic {
+				if len(tup1.Elems) != len(tup2.Elems) {
+					return false
+				}
+				for i := range tup1.Elems {
+					if !TypesCanOverlap(tup1.Elems[i], tup2.Elems[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			// Case 2: tup1 fixed, tup2 variadic
+			if !tup1.IsVariadic && tup2.IsVariadic {
+				minReq := len(tup2.Elems) - 1
+				if len(tup1.Elems) < minReq {
+					return false
+				}
+				lastIdx2 := len(tup2.Elems) - 1
+				for i := range tup1.Elems {
+					var el2 Type
+					if i < lastIdx2 {
+						el2 = tup2.Elems[i]
+					} else {
+						el2 = tup2.Elems[lastIdx2]
+					}
+					if !TypesCanOverlap(tup1.Elems[i], el2) {
+						return false
+					}
+				}
+				return true
+			}
+			// Case 3: tup1 variadic, tup2 fixed
+			if tup1.IsVariadic && !tup2.IsVariadic {
+				minReq := len(tup1.Elems) - 1
+				if len(tup2.Elems) < minReq {
+					return false
+				}
+				lastIdx1 := len(tup1.Elems) - 1
+				for i := range tup2.Elems {
+					var el1 Type
+					if i < lastIdx1 {
+						el1 = tup1.Elems[i]
+					} else {
+						el1 = tup1.Elems[lastIdx1]
+					}
+					if !TypesCanOverlap(el1, tup2.Elems[i]) {
+						return false
+					}
+				}
+				return true
+			}
+			// Case 4: both variadic
+			maxPrefix := len(tup1.Elems)
+			if len(tup2.Elems) > maxPrefix {
+				maxPrefix = len(tup2.Elems)
+			}
+			lastIdx1 := len(tup1.Elems) - 1
+			lastIdx2 := len(tup2.Elems) - 1
+			for i := 0; i < maxPrefix; i++ {
+				var el1, el2 Type
+				if i < lastIdx1 {
+					el1 = tup1.Elems[i]
+				} else {
+					el1 = tup1.Elems[lastIdx1]
+				}
+				if i < lastIdx2 {
+					el2 = tup2.Elems[i]
+				} else {
+					el2 = tup2.Elems[lastIdx2]
+				}
+				if !TypesCanOverlap(el1, el2) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	}
+	if d1, ok := t1.(*DictType); ok {
+		if d2, ok := t2.(*DictType); ok {
+			return TypesCanOverlap(d1.Key, d2.Key) && TypesCanOverlap(d1.Value, d2.Value)
+		}
+		return false
+	}
+	return false
 }

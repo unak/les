@@ -1,6 +1,10 @@
 package ast
 
-import "math/big"
+import (
+	"math/big"
+	"strings"
+	"unicode"
+)
 
 // Position holds source line and column numbers (1-indexed).
 type Position struct {
@@ -151,6 +155,17 @@ func (n *NilLit) node()         {}
 func (n *NilLit) expr()         {}
 func (n *NilLit) Pos() Position { return n.Position }
 
+// RegexLit represents regex literal, e.g. /pattern/flags.
+type RegexLit struct {
+	Position Position
+	Pattern  string
+	Flags    string
+}
+
+func (r *RegexLit) node()         {}
+func (r *RegexLit) expr()         {}
+func (r *RegexLit) Pos() Position { return r.Position }
+
 // TupleLit represents tuple literal, e.g. (1, 2, 3), (), (1,).
 type TupleLit struct {
 	Position   Position
@@ -282,6 +297,8 @@ func (tp *TuplePattern) Pos() Position { return tp.Position }
 type MatchCase struct {
 	Position     Position
 	Pattern      string        // type name ("Int", "_") or representation
+	RegexPattern *RegexLit     // non-nil if regex pattern in case
+	AsName       string        // variable name bound via 'as <ident>', or empty
 	TuplePattern *TuplePattern // non-nil if tuple unpacking pattern (e.g. (h, ...t))
 	Body         []Stmt
 }
@@ -509,3 +526,185 @@ type InterfaceDef struct {
 func (i *InterfaceDef) node()         {}
 func (i *InterfaceDef) stmt()         {}
 func (i *InterfaceDef) Pos() Position { return i.Position }
+
+// UnescapeRegexPattern unescapes \/ to / while preserving \\.
+func UnescapeRegexPattern(rawPat string) string {
+	var patSb strings.Builder
+	for i := 0; i < len(rawPat); i++ {
+		if rawPat[i] == '\\' && i+1 < len(rawPat) {
+			if rawPat[i+1] == '/' {
+				patSb.WriteByte('/')
+			} else {
+				patSb.WriteByte('\\')
+				patSb.WriteByte(rawPat[i+1])
+			}
+			i++
+		} else {
+			patSb.WriteByte(rawPat[i])
+		}
+	}
+	return patSb.String()
+}
+
+// SkipPOSIXCharClass checks if s[start:] begins with a valid POSIX character class
+// such as [:alpha:] or [:^digit:] (format: [:^?[a-zA-Z]+:]).
+// If so, it returns the index in s immediately following :].
+// Otherwise, it returns start.
+func SkipPOSIXCharClass(s string, start int) int {
+	if start < 0 || start+3 >= len(s) || s[start] != '[' || s[start+1] != ':' {
+		return start
+	}
+	i := start + 2
+	if i < len(s) && s[i] == '^' {
+		i++
+	}
+	nameStart := i
+	for i < len(s) && ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z')) {
+		i++
+	}
+	if i == nameStart {
+		return start
+	}
+	if i+1 < len(s) && s[i] == ':' && s[i+1] == ']' {
+		return i + 2
+	}
+	return start
+}
+
+// SkipPOSIXCharClassInRunes is the []rune variant of SkipPOSIXCharClass.
+func SkipPOSIXCharClassInRunes(runes []rune, start int) int {
+	if start < 0 || start+3 >= len(runes) || runes[start] != '[' || runes[start+1] != ':' {
+		return start
+	}
+	i := start + 2
+	if i < len(runes) && runes[i] == '^' {
+		i++
+	}
+	nameStart := i
+	for i < len(runes) && ((runes[i] >= 'a' && runes[i] <= 'z') || (runes[i] >= 'A' && runes[i] <= 'Z')) {
+		i++
+	}
+	if i == nameStart {
+		return start
+	}
+	if i+1 < len(runes) && runes[i] == ':' && runes[i+1] == ']' {
+		return i + 2
+	}
+	return start
+}
+
+// SkipRegexInTypeAnnot checks if runes[start] starts a regex literal (/pattern/flags).
+// If so, it scans past the closing / and trailing flags, respecting escaped characters
+// and character classes ([]...], [^]...]), and returns the index after the regex literal.
+// If it is not a valid regex literal or has no closing slash, it returns start.
+func SkipRegexInTypeAnnot(runes []rune, start int) int {
+	if start < 0 || start >= len(runes) || runes[start] != '/' {
+		return start
+	}
+	i := start + 1
+	inCharClass := false
+	charClassStart := -1
+	for i < len(runes) {
+		if runes[i] == '\\' {
+			i += 2
+			continue
+		}
+		if inCharClass {
+			if runes[i] == '[' {
+				if nextIdx := SkipPOSIXCharClassInRunes(runes, i); nextIdx > i {
+					i = nextIdx
+					continue
+				}
+			}
+			if runes[i] == ']' && i > charClassStart {
+				inCharClass = false
+			}
+			i++
+			continue
+		}
+		if runes[i] == '[' {
+			inCharClass = true
+			charClassStart = i + 1
+			if i+1 < len(runes) && runes[i+1] == '^' {
+				charClassStart = i + 2
+			}
+			i++
+			continue
+		}
+		if runes[i] == '/' && i > start+1 {
+			i++
+			for i < len(runes) && (unicode.IsLetter(runes[i]) || unicode.IsDigit(runes[i]) || runes[i] == '_') {
+				i++
+			}
+			return i
+		}
+		i++
+	}
+	return start
+}
+
+// HasEnclosingDelims returns true if s starts with open and ends with close,
+// and the opening delimiter matches the final character at index len(runes)-1
+// without closing earlier. Regex literals inside are skipped.
+func HasEnclosingDelims(s string, open, close rune) bool {
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) < 2 || runes[0] != open || runes[len(runes)-1] != close {
+		return false
+	}
+	depth := 0
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == open {
+			depth++
+		} else if r == close {
+			depth--
+			if depth == 0 {
+				return i == len(runes)-1
+			}
+		}
+	}
+	return false
+}
+
+// HasTopLevelComma returns true if s contains a comma at the top level
+// (outside parens, brackets, braces, and regex literals).
+func HasTopLevelComma(s string) bool {
+	pDepth := 0
+	bDepth := 0
+	brDepth := 0
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '[' {
+			bDepth++
+		} else if r == ']' {
+			bDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			return true
+		}
+	}
+	return false
+}

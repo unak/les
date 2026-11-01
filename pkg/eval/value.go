@@ -8,9 +8,11 @@ import (
 	"math"
 	"math/big"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"les/pkg/ast"
 	"les/pkg/types"
@@ -389,6 +391,12 @@ func inspectValueWithContext(v Value, visited map[any]bool, depth int) string {
 		sb.WriteString("}")
 		return sb.String()
 
+	case *RegexValue:
+		return val.String()
+
+	case *MatchValue:
+		return val.String()
+
 	case *StructInstance:
 		if visited[val] || depth > maxInspectDepth {
 			return fmt.Sprintf("%s(...)", val.Def.Name)
@@ -513,6 +521,20 @@ func makeDictKeyWithVisited(v Value, visited map[any]bool, depth int) DictKey {
 		return DictKey{Type: "Bool", Key: "false"}
 	case NilValue:
 		return DictKey{Type: "Nil", Key: "nil"}
+	case *RegexValue:
+		return DictKey{Type: "Regex", Key: fmt.Sprintf("%d:%s:%s", len(val.Pattern), val.Pattern, val.Flags)}
+	case *MatchValue:
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("%d:%s:", len(val.Target), val.Target))
+		if val.Regex != nil {
+			sb.WriteString(fmt.Sprintf("%d:%s:%s:", len(val.Regex.Pattern), val.Regex.Pattern, val.Regex.Flags))
+		} else {
+			sb.WriteString("0:::")
+		}
+		for _, sp := range val.Spans {
+			sb.WriteString(fmt.Sprintf("[%d,%d]", sp[0], sp[1]))
+		}
+		return DictKey{Type: "Match", Key: sb.String()}
 	case *TupleValue:
 		if visited[val] || depth > maxInspectDepth {
 			return DictKey{Type: "Tuple", Key: "(...)"}
@@ -1523,4 +1545,195 @@ func (env *Environment) ResetBufioWritersOnError() {
 // ClearCustomBufioWriters is an alias for ResetBufioWritersOnError.
 func (env *Environment) ClearCustomBufioWriters() {
 	env.ResetBufioWritersOnError()
+}
+
+// RegexValue represents a compiled regular expression in Les.
+type RegexValue struct {
+	Pattern string
+	Flags   string
+	Re      *regexp.Regexp
+}
+
+func (rv *RegexValue) String() string {
+	var sb strings.Builder
+	sb.WriteByte('/')
+	for i := 0; i < len(rv.Pattern); i++ {
+		if rv.Pattern[i] == '\\' && i+1 < len(rv.Pattern) {
+			sb.WriteByte('\\')
+			sb.WriteByte(rv.Pattern[i+1])
+			i++
+		} else if rv.Pattern[i] == '/' {
+			sb.WriteString("\\/")
+		} else {
+			sb.WriteByte(rv.Pattern[i])
+		}
+	}
+	sb.WriteByte('/')
+	sb.WriteString(rv.Flags)
+	return sb.String()
+}
+
+// CompileRegex compiles a regex pattern with optional flags into a RegexValue.
+func CompileRegex(pattern, flags string) (*RegexValue, error) {
+	canonFlags, err := types.CanonicalizeRegexFlags(flags)
+	if err != nil {
+		return nil, err
+	}
+
+	var prefix strings.Builder
+	if len(canonFlags) > 0 {
+		prefix.WriteString("(?" + canonFlags + ")")
+	}
+
+	compiled, err := regexp.Compile(prefix.String() + pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid regex pattern: %w", err)
+	}
+
+	return &RegexValue{
+		Pattern: pattern,
+		Flags:   canonFlags,
+		Re:      compiled,
+	}, nil
+}
+
+// MatchValue represents a successful match result in Les.
+type MatchValue struct {
+	Target string
+	Regex  *RegexValue
+	Groups []Value // 0: full match, 1..n: capture groups (StringValue or NilValue)
+	Names  map[string]Value // named capture mapping
+	Spans  [][2]int // rune-based [start, end] for each group, or [-1, -1] if unmatched
+}
+
+func (mv *MatchValue) String() string {
+	var groupsSlice []Value
+	if len(mv.Groups) > 1 {
+		groupsSlice = mv.Groups[1:]
+	} else {
+		groupsSlice = []Value{}
+	}
+	var textStr string
+	if len(mv.Groups) > 0 {
+		if sv, ok := mv.Groups[0].(StringValue); ok {
+			textStr = inspectString(string(sv))
+		} else {
+			textStr = "nil"
+		}
+	} else {
+		textStr = `""`
+	}
+	return fmt.Sprintf("<Match %s groups=%s>", textStr, InspectValue(&TupleValue{Elements: groupsSlice}))
+}
+
+// byteIndexToRuneIndex converts a byte offset in s to a 0-based rune index.
+func byteIndexToRuneIndex(s string, byteOffset int) int {
+	if byteOffset < 0 {
+		return -1
+	}
+	if byteOffset > len(s) {
+		byteOffset = len(s)
+	}
+	return utf8.RuneCountInString(s[:byteOffset])
+}
+
+// ExecMatch executes regex matching against target string s.
+func (rv *RegexValue) ExecMatch(s string) Value {
+	locs := rv.Re.FindStringSubmatchIndex(s)
+	if locs == nil {
+		return NilValue{}
+	}
+
+	numGroups := len(locs) / 2
+	groups := make([]Value, numGroups)
+	spans := make([][2]int, numGroups)
+
+	for i := 0; i < numGroups; i++ {
+		start := locs[2*i]
+		end := locs[2*i+1]
+		if start == -1 || end == -1 {
+			groups[i] = NilValue{}
+			spans[i] = [2]int{-1, -1}
+		} else {
+			groups[i] = StringValue(s[start:end])
+			spans[i] = [2]int{byteIndexToRuneIndex(s, start), byteIndexToRuneIndex(s, end)}
+		}
+	}
+
+	names := make(map[string]Value)
+	subexpNames := rv.Re.SubexpNames()
+	for i, name := range subexpNames {
+		if name != "" && i < len(groups) {
+			if existing, ok := names[name]; !ok || existing == (NilValue{}) {
+				names[name] = groups[i]
+			}
+		}
+	}
+
+	return &MatchValue{
+		Target: s,
+		Regex:  rv,
+		Groups: groups,
+		Names:  names,
+		Spans:  spans,
+	}
+}
+
+// ExecFindAll executes FindAll regex matching against target string s.
+func (rv *RegexValue) ExecFindAll(s string, n int) *TupleValue {
+	allLocs := rv.Re.FindAllStringSubmatchIndex(s, n)
+	if allLocs == nil {
+		return &TupleValue{Elements: []Value{}}
+	}
+
+	subexpNames := rv.Re.SubexpNames()
+	matches := make([]Value, len(allLocs))
+
+	for mIdx, locs := range allLocs {
+		numGroups := len(locs) / 2
+		groups := make([]Value, numGroups)
+		spans := make([][2]int, numGroups)
+
+		for i := 0; i < numGroups; i++ {
+			start := locs[2*i]
+			end := locs[2*i+1]
+			if start == -1 || end == -1 {
+				groups[i] = NilValue{}
+				spans[i] = [2]int{-1, -1}
+			} else {
+				groups[i] = StringValue(s[start:end])
+				spans[i] = [2]int{byteIndexToRuneIndex(s, start), byteIndexToRuneIndex(s, end)}
+			}
+		}
+
+		names := make(map[string]Value)
+		for i, name := range subexpNames {
+			if name != "" && i < len(groups) {
+				if existing, ok := names[name]; !ok || existing == (NilValue{}) {
+					names[name] = groups[i]
+				}
+			}
+		}
+
+		matches[mIdx] = &MatchValue{
+			Target: s,
+			Regex:  rv,
+			Groups: groups,
+			Names:  names,
+			Spans:  spans,
+		}
+	}
+
+	return &TupleValue{Elements: matches}
+}
+
+// ReplaceFirst replaces only the first occurrence of match in s using replacement repl.
+func (rv *RegexValue) ReplaceFirst(s, repl string) string {
+	loc := rv.Re.FindStringSubmatchIndex(s)
+	if loc == nil {
+		return s
+	}
+	var buf []byte
+	buf = rv.Re.ExpandString(buf, repl, s, loc)
+	return s[:loc[0]] + string(buf) + s[loc[1]:]
 }

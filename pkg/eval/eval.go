@@ -250,6 +250,32 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("ProgramName", StringValue(""))
 	ev.builtinsEnv.Set("scriptName", StringValue(""))
 
+	// Built-in Regex constructor: (pattern: String, [flags: String]) -> Regex
+	ev.builtinsEnv.Set("Regex", &BuiltinFunc{
+		Name:     "Regex",
+		FuncType: types.BuiltinRegexFuncType,
+		Fn: func(args []Value) (Value, error) {
+			if len(args) < 1 || len(args) > 2 {
+				return nil, fmt.Errorf("Regex takes 1 or 2 arguments, got %d", len(args))
+			}
+			pVal := Force(args[0])
+			ps, ok := pVal.(StringValue)
+			if !ok {
+				return nil, fmt.Errorf("Regex pattern must be String, got %s", typeNameOf(pVal))
+			}
+			flags := ""
+			if len(args) == 2 {
+				fVal := Force(args[1])
+				fs, ok := fVal.(StringValue)
+				if !ok {
+					return nil, fmt.Errorf("Regex flags must be String, got %s", typeNameOf(fVal))
+				}
+				flags = string(fs)
+			}
+			return CompileRegex(string(ps), flags)
+		},
+	})
+
 	// Built-in Error constructor & default Error struct definition
 	errorMethodFuncType := &types.FuncType{
 		Arg: &types.TupleType{Elems: []types.Type{}},
@@ -483,6 +509,10 @@ func typeNameWithDepth(val Value, depth int) string {
 		return "Bool"
 	case NilValue:
 		return "Nil"
+	case *RegexValue:
+		return "Regex"
+	case *MatchValue:
+		return "Match"
 	case *TupleValue:
 		if len(v.Elements) == 0 {
 			if v.IsVariadic {
@@ -796,24 +826,46 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 		return annot, nil, false
 	}
 	depth := 0
+	pDepth := 0
+	brDepth := 0
 	bracketIdx := -1
 	runes := []rune(annot)
-	for i := len(runes) - 1; i >= 0; i-- {
-		if runes[i] == ']' {
-			depth++
-		} else if runes[i] == '[' {
-			depth--
-			if depth == 0 {
-				bracketIdx = i
-				break
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			pDepth++
+		} else if r == ')' {
+			pDepth--
+		} else if r == '{' {
+			brDepth++
+		} else if r == '}' {
+			brDepth--
+		} else if pDepth == 0 && brDepth == 0 {
+			if r == '[' {
+				if depth == 0 {
+					bracketIdx = i
+				}
+				depth++
+			} else if r == ']' {
+				depth--
+				if depth == 0 && i < len(runes)-1 {
+					bracketIdx = -1
+				}
 			}
 		}
 	}
-	if bracketIdx <= 0 {
+	if bracketIdx <= 0 || depth != 0 || pDepth != 0 || brDepth != 0 {
 		return annot, nil, false
 	}
 	base := strings.TrimSpace(string(runes[:bracketIdx]))
-	if strings.Contains(base, "->") || strings.HasPrefix(base, "(") || strings.HasPrefix(base, "{") {
+	if strings.ContainsAny(base, "->()[]{}:|, \t\n") {
 		return annot, nil, false
 	}
 	inner := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
@@ -992,6 +1044,12 @@ func evalLiteral(expr ast.Expr) (Value, bool) {
 		return BoolValue(lit.Value), true
 	case *ast.NilLit:
 		return NilValue{}, true
+	case *ast.RegexLit:
+		rv, err := CompileRegex(lit.Pattern, lit.Flags)
+		if err != nil {
+			return nil, false
+		}
+		return rv, true
 	case *ast.UnaryExpr:
 		if lit.Op == "-" {
 			if intLit, ok := lit.Expr.(*ast.IntLit); ok {
@@ -1035,6 +1093,15 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			// Force RHS immediately to avoid circular reference in lazy thunk
 			newVal := Force(env.newThunk(s.Value))
 			env.store[s.Name] = newVal
+			return nil, nil
+		}
+		// If RHS is a regex literal, validate and compile immediately so invalid regex raises error
+		if rlit, ok := s.Value.(*ast.RegexLit); ok {
+			rv, err := CompileRegex(rlit.Pattern, rlit.Flags)
+			if err != nil {
+				return nil, err
+			}
+			env.Set(s.Name, rv)
 			return nil, nil
 		}
 		// If RHS is a constant literal, evaluate immediately without lazy thunk!
@@ -1576,6 +1643,8 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		return BoolValue(e.Value), nil
 	case *ast.NilLit:
 		return NilValue{}, nil
+	case *ast.RegexLit:
+		return CompileRegex(e.Pattern, e.Flags)
 	case *ast.ForceExpr:
 		return Force(NewThunk(e.Expr, env)), nil
 
@@ -1723,6 +1792,28 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				return v, nil
 			}
 			return nil, fmt.Errorf("key not found in dict: %s", idxVal.String())
+		case *MatchValue:
+			if iv, ok := idxVal.(IntValue); ok {
+				idx, ok := iv.ToInt()
+				if !ok {
+					return nil, fmt.Errorf("match group index out of bounds: %s (len %d)", iv.String(), len(t.Groups))
+				}
+				if idx < 0 {
+					idx = len(t.Groups) + idx
+				}
+				if idx < 0 || idx >= len(t.Groups) {
+					return nil, fmt.Errorf("match group index out of bounds: %d (len %d)", idx, len(t.Groups))
+				}
+				return t.Groups[idx], nil
+			}
+			if sv, ok := idxVal.(StringValue); ok {
+				v, ok := t.Names[string(sv)]
+				if !ok {
+					return nil, fmt.Errorf("unknown capture group name: %s", string(sv))
+				}
+				return v, nil
+			}
+			return nil, fmt.Errorf("match index must be Int or String, got %s", typeNameOf(idxVal))
 		default:
 			return nil, fmt.Errorf("cannot index non-tuple/non-string/non-bytes/non-dict value: %v", targetVal)
 		}
@@ -1983,7 +2074,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.IsExpr:
 		val := Force(NewThunk(e.Expr, env))
-		matches := checkValueMatchesType(val, strings.TrimSpace(e.TypeAnnot), env)
+		matches := checkValueMatchesType(val, e.TypeAnnot, env)
 		return BoolValue(matches), nil
 
 	case *ast.MatchExpr:
@@ -2026,11 +2117,38 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 					}
 					caseEnv.Set(c.TuplePattern.RestName, &TupleValue{Elements: restElements, IsVariadic: tVal.IsVariadic})
 				}
+				if c.AsName != "" && c.AsName != "_" {
+					caseEnv.Set(c.AsName, tVal)
+				}
 				return caseEnv.evalBlock(c.Body)
+			}
+
+			if c.RegexPattern != nil {
+				rv, err := CompileRegex(c.RegexPattern.Pattern, c.RegexPattern.Flags)
+				if err != nil {
+					return nil, err
+				}
+				if sv, ok := val.(StringValue); ok {
+					res := rv.ExecMatch(string(sv))
+					if mVal, ok := res.(*MatchValue); ok {
+						if c.AsName != "" && c.AsName != "_" {
+							caseEnv := NewEnvironment(env)
+							caseEnv.Set(c.AsName, mVal)
+							return caseEnv.evalBlock(c.Body)
+						}
+						return env.evalBlock(c.Body)
+					}
+				}
+				continue
 			}
 
 			pattern := strings.TrimSpace(c.Pattern)
 			if pattern == "_" || checkValueMatchesType(val, pattern, env) {
+				if c.AsName != "" && c.AsName != "_" {
+					caseEnv := NewEnvironment(env)
+					caseEnv.Set(c.AsName, val)
+					return caseEnv.evalBlock(c.Body)
+				}
 				return env.evalBlock(c.Body)
 			}
 		}
@@ -2632,6 +2750,53 @@ func evalBinaryWithVisited(op string, left, right Value, visitedPairs map[eqPair
 		}
 	}
 
+	// Regex =~ operator
+	if op == "=~" {
+		if ls, ok := left.(StringValue); ok {
+			if rr, ok := right.(*RegexValue); ok {
+				return rr.ExecMatch(string(ls)), nil
+			}
+		} else if lr, ok := left.(*RegexValue); ok {
+			if rs, ok := right.(StringValue); ok {
+				return lr.ExecMatch(string(rs)), nil
+			}
+		}
+		return nil, fmt.Errorf("operator =~ expects String and Regex, got %s and %s", typeNameOf(left), typeNameOf(right))
+	}
+
+	// Regex equality
+	if lr, ok := left.(*RegexValue); ok {
+		if rr, ok := right.(*RegexValue); ok {
+			switch op {
+			case "==":
+				return BoolValue(lr.Pattern == rr.Pattern && lr.Flags == rr.Flags), nil
+			case "!=":
+				return BoolValue(lr.Pattern != rr.Pattern || lr.Flags != rr.Flags), nil
+			}
+		}
+	}
+
+	// Match equality
+	if lm, ok := left.(*MatchValue); ok {
+		if rm, ok := right.(*MatchValue); ok {
+			eq := lm.Target == rm.Target && lm.Regex.Pattern == rm.Regex.Pattern && lm.Regex.Flags == rm.Regex.Flags && len(lm.Spans) == len(rm.Spans)
+			if eq {
+				for i := range lm.Spans {
+					if lm.Spans[i] != rm.Spans[i] {
+						eq = false
+						break
+					}
+				}
+			}
+			switch op {
+			case "==":
+				return BoolValue(eq), nil
+			case "!=":
+				return BoolValue(!eq), nil
+			}
+		}
+	}
+
 	// String concatenation & comparison
 	if ls, ok := left.(StringValue); ok {
 		if rs, ok := right.(StringValue); ok {
@@ -3024,6 +3189,10 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			return types.TypeBool
 		case NilValue:
 			return types.TypeNil
+		case *RegexValue:
+			return types.TypeRegex
+		case *MatchValue:
+			return types.TypeMatch
 		case *TupleValue:
 			if visitedTypes[val] || depth > 20 {
 				return &types.TupleType{Elems: []types.Type{}}
@@ -3070,7 +3239,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 	switch member {
 	case "==":
 		switch val.(type) {
-		case IntValue, FloatValue, StringValue, BytesValue, BoolValue, NilValue, *TupleValue, *DictValue:
+		case IntValue, FloatValue, StringValue, BytesValue, BoolValue, NilValue, *TupleValue, *DictValue, *RegexValue, *MatchValue:
 			bf := &BuiltinFunc{
 				Name: "==",
 				Fn: func(args []Value) (Value, error) {
@@ -3603,6 +3772,579 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 		}
 	}
 
+	// Regex methods
+	if rv, ok := val.(*RegexValue); ok {
+		switch member {
+		case "Pattern":
+			bf := &BuiltinFunc{
+				Name: "Pattern",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Pattern takes 0 arguments, got %d", len(args))
+					}
+					return StringValue(rv.Pattern), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "Pattern"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Flags":
+			bf := &BuiltinFunc{
+				Name: "Flags",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Flags takes 0 arguments, got %d", len(args))
+					}
+					return StringValue(rv.Flags), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "Flags"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Test":
+			bf := &BuiltinFunc{
+				Name: "Test",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("Test takes 1 argument, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("Test argument must be String, got %s", typeNameOf(sVal))
+					}
+					return BoolValue(rv.Re.MatchString(string(sv))), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "Test"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Match":
+			bf := &BuiltinFunc{
+				Name: "Match",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("Match takes 1 argument, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("Match argument must be String, got %s", typeNameOf(sVal))
+					}
+					return rv.ExecMatch(string(sv)), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "Match"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "FindAll":
+			bf := &BuiltinFunc{
+				Name: "FindAll",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) < 1 || len(args) > 2 {
+						return nil, fmt.Errorf("FindAll takes 1 or 2 arguments, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("FindAll target must be String, got %s", typeNameOf(sVal))
+					}
+					n := -1
+					if len(args) == 2 {
+						nVal := Force(args[1])
+						iv, ok := nVal.(IntValue)
+						if !ok {
+							return nil, fmt.Errorf("FindAll count must be Int, got %s", typeNameOf(nVal))
+						}
+						i64, ok := iv.ToInt()
+						if !ok {
+							i64 = 0
+						}
+						n = i64
+					}
+					return rv.ExecFindAll(string(sv), n), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "FindAll"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Replace":
+			bf := &BuiltinFunc{
+				Name: "Replace",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 2 {
+						return nil, fmt.Errorf("Replace takes 2 arguments, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("Replace target must be String, got %s", typeNameOf(sVal))
+					}
+					rVal := Force(args[1])
+					rvRepl, ok := rVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("Replace replacement must be String, got %s", typeNameOf(rVal))
+					}
+					return StringValue(rv.ReplaceFirst(string(sv), string(rvRepl))), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "Replace"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "ReplaceAll":
+			bf := &BuiltinFunc{
+				Name: "ReplaceAll",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 2 {
+						return nil, fmt.Errorf("ReplaceAll takes 2 arguments, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("ReplaceAll target must be String, got %s", typeNameOf(sVal))
+					}
+					rVal := Force(args[1])
+					rvRepl, ok := rVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("ReplaceAll replacement must be String, got %s", typeNameOf(rVal))
+					}
+					return StringValue(rv.Re.ReplaceAllString(string(sv), string(rvRepl))), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "ReplaceAll"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Split":
+			bf := &BuiltinFunc{
+				Name: "Split",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) < 1 || len(args) > 2 {
+						return nil, fmt.Errorf("Split takes 1 or 2 arguments, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("Split target must be String, got %s", typeNameOf(sVal))
+					}
+					n := -1
+					if len(args) == 2 {
+						nVal := Force(args[1])
+						iv, ok := nVal.(IntValue)
+						if !ok {
+							return nil, fmt.Errorf("Split count must be Int, got %s", typeNameOf(nVal))
+						}
+						i64, ok := iv.ToInt()
+						if !ok {
+							i64 = 0
+						}
+						n = i64
+					}
+					parts := rv.Re.Split(string(sv), n)
+					elems := make([]Value, len(parts))
+					for i, p := range parts {
+						elems[i] = StringValue(p)
+					}
+					return &TupleValue{Elements: elems}, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "Split"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "=~":
+			bf := &BuiltinFunc{
+				Name: "=~",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("=~ takes 1 argument, got %d", len(args))
+					}
+					sVal := Force(args[0])
+					sv, ok := sVal.(StringValue)
+					if !ok {
+						return nil, fmt.Errorf("=~ argument must be String, got %s", typeNameOf(sVal))
+					}
+					return rv.ExecMatch(string(sv)), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeRegex, "=~"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+
+	// String =~ operator method
+	if sv, ok := val.(StringValue); ok && member == "=~" {
+		bf := &BuiltinFunc{
+			Name: "=~",
+			Fn: func(args []Value) (Value, error) {
+				if len(args) != 1 {
+					return nil, fmt.Errorf("=~ takes 1 argument, got %d", len(args))
+				}
+				rVal := Force(args[0])
+				rv, ok := rVal.(*RegexValue)
+				if !ok {
+					return nil, fmt.Errorf("=~ argument must be Regex, got %s", typeNameOf(rVal))
+				}
+				return rv.ExecMatch(string(sv)), nil
+			},
+		}
+		if sig, ok := types.LookupBuiltinTypeMethod(types.TypeString, "=~"); ok {
+			bf.FuncType = sig
+		}
+		return bf, nil
+	}
+
+	// Match methods
+	if mv, ok := val.(*MatchValue); ok {
+		switch member {
+		case "Len":
+			bf := &BuiltinFunc{
+				Name: "Len",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Len takes 0 arguments, got %d", len(args))
+					}
+					return NewIntValue(int64(len(mv.Groups))), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Len"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Group":
+			bf := &BuiltinFunc{
+				Name: "Group",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("Group takes 1 argument, got %d", len(args))
+					}
+					kVal := Force(args[0])
+					if iv, ok := kVal.(IntValue); ok {
+						idx, ok := iv.ToInt()
+						if !ok {
+							return NilValue{}, nil
+						}
+						if idx < 0 {
+							idx = len(mv.Groups) + idx
+						}
+						if idx < 0 || idx >= len(mv.Groups) {
+							return NilValue{}, nil
+						}
+						return mv.Groups[idx], nil
+					}
+					if sv, ok := kVal.(StringValue); ok {
+						v, ok := mv.Names[string(sv)]
+						if !ok {
+							return NilValue{}, nil
+						}
+						return v, nil
+					}
+					return nil, fmt.Errorf("Group key must be Int or String, got %s", typeNameOf(kVal))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Group"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Groups":
+			bf := &BuiltinFunc{
+				Name: "Groups",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Groups takes 0 arguments, got %d", len(args))
+					}
+					var groupsSlice []Value
+					if len(mv.Groups) > 1 {
+						groupsSlice = append([]Value(nil), mv.Groups[1:]...)
+					} else {
+						groupsSlice = []Value{}
+					}
+					return &TupleValue{Elements: groupsSlice}, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Groups"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "NamedGroups":
+			bf := &BuiltinFunc{
+				Name: "NamedGroups",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("NamedGroups takes 0 arguments, got %d", len(args))
+					}
+					entries := make(map[DictKey]Value, len(mv.Names))
+					kv := make(map[DictKey]Value, len(mv.Names))
+					for name, v := range mv.Names {
+						dk := DictKey{Type: "String", Key: name}
+						entries[dk] = v
+						kv[dk] = StringValue(name)
+					}
+					return &DictValue{Entries: entries, KeyValues: kv}, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "NamedGroups"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Start":
+			bf := &BuiltinFunc{
+				Name: "Start",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) > 1 {
+						return nil, fmt.Errorf("Start takes at most 1 argument, got %d", len(args))
+					}
+					idx := 0
+					if len(args) == 1 {
+						kVal := Force(args[0])
+						if iv, ok := kVal.(IntValue); ok {
+							i64, ok := iv.ToInt()
+							if !ok {
+								return NewIntValue(-1), nil
+							}
+							idx = i64
+						} else if sv, ok := kVal.(StringValue); ok {
+							found := false
+							firstMatchIdx := -1
+							for i, name := range mv.Regex.Re.SubexpNames() {
+								if name != "" && name == string(sv) {
+									if firstMatchIdx == -1 {
+										firstMatchIdx = i
+									}
+									if i < len(mv.Spans) && mv.Spans[i][0] != -1 {
+										idx = i
+										found = true
+										break
+									}
+								}
+							}
+							if !found {
+								if firstMatchIdx != -1 {
+									idx = firstMatchIdx
+								} else {
+									return NewIntValue(-1), nil
+								}
+							}
+						} else {
+							return nil, fmt.Errorf("Start argument must be Int or String, got %s", typeNameOf(kVal))
+						}
+					}
+					if idx < 0 {
+						idx = len(mv.Spans) + idx
+					}
+					if idx < 0 || idx >= len(mv.Spans) {
+						return NewIntValue(-1), nil
+					}
+					return NewIntValue(int64(mv.Spans[idx][0])), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Start"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "End":
+			bf := &BuiltinFunc{
+				Name: "End",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) > 1 {
+						return nil, fmt.Errorf("End takes at most 1 argument, got %d", len(args))
+					}
+					idx := 0
+					if len(args) == 1 {
+						kVal := Force(args[0])
+						if iv, ok := kVal.(IntValue); ok {
+							i64, ok := iv.ToInt()
+							if !ok {
+								return NewIntValue(-1), nil
+							}
+							idx = i64
+						} else if sv, ok := kVal.(StringValue); ok {
+							found := false
+							firstMatchIdx := -1
+							for i, name := range mv.Regex.Re.SubexpNames() {
+								if name != "" && name == string(sv) {
+									if firstMatchIdx == -1 {
+										firstMatchIdx = i
+									}
+									if i < len(mv.Spans) && mv.Spans[i][0] != -1 {
+										idx = i
+										found = true
+										break
+									}
+								}
+							}
+							if !found {
+								if firstMatchIdx != -1 {
+									idx = firstMatchIdx
+								} else {
+									return NewIntValue(-1), nil
+								}
+							}
+						} else {
+							return nil, fmt.Errorf("End argument must be Int or String, got %s", typeNameOf(kVal))
+						}
+					}
+					if idx < 0 {
+						idx = len(mv.Spans) + idx
+					}
+					if idx < 0 || idx >= len(mv.Spans) {
+						return NewIntValue(-1), nil
+					}
+					return NewIntValue(int64(mv.Spans[idx][1])), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "End"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Span":
+			bf := &BuiltinFunc{
+				Name: "Span",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) > 1 {
+						return nil, fmt.Errorf("Span takes at most 1 argument, got %d", len(args))
+					}
+					idx := 0
+					if len(args) == 1 {
+						kVal := Force(args[0])
+						if iv, ok := kVal.(IntValue); ok {
+							i64, ok := iv.ToInt()
+							if !ok {
+								return &TupleValue{Elements: []Value{NewIntValue(-1), NewIntValue(-1)}}, nil
+							}
+							idx = i64
+						} else if sv, ok := kVal.(StringValue); ok {
+							found := false
+							firstMatchIdx := -1
+							for i, name := range mv.Regex.Re.SubexpNames() {
+								if name != "" && name == string(sv) {
+									if firstMatchIdx == -1 {
+										firstMatchIdx = i
+									}
+									if i < len(mv.Spans) && mv.Spans[i][0] != -1 {
+										idx = i
+										found = true
+										break
+									}
+								}
+							}
+							if !found {
+								if firstMatchIdx != -1 {
+									idx = firstMatchIdx
+								} else {
+									return &TupleValue{Elements: []Value{NewIntValue(-1), NewIntValue(-1)}}, nil
+								}
+							}
+						} else {
+							return nil, fmt.Errorf("Span argument must be Int or String, got %s", typeNameOf(kVal))
+						}
+					}
+					if idx < 0 {
+						idx = len(mv.Spans) + idx
+					}
+					if idx < 0 || idx >= len(mv.Spans) {
+						return &TupleValue{Elements: []Value{NewIntValue(-1), NewIntValue(-1)}}, nil
+					}
+					return &TupleValue{Elements: []Value{NewIntValue(int64(mv.Spans[idx][0])), NewIntValue(int64(mv.Spans[idx][1]))}}, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Span"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Text":
+			bf := &BuiltinFunc{
+				Name: "Text",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Text takes 0 arguments, got %d", len(args))
+					}
+					if len(mv.Groups) > 0 {
+						if sv, ok := mv.Groups[0].(StringValue); ok {
+							return sv, nil
+						}
+					}
+					return StringValue(""), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Text"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Target":
+			bf := &BuiltinFunc{
+				Name: "Target",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Target takes 0 arguments, got %d", len(args))
+					}
+					return StringValue(mv.Target), nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Target"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "Regex":
+			bf := &BuiltinFunc{
+				Name: "Regex",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 0 {
+						return nil, fmt.Errorf("Regex takes 0 arguments, got %d", len(args))
+					}
+					return mv.Regex, nil
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "Regex"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		case "[]":
+			bf := &BuiltinFunc{
+				Name: "[]",
+				Fn: func(args []Value) (Value, error) {
+					if len(args) != 1 {
+						return nil, fmt.Errorf("[] takes 1 argument, got %d", len(args))
+					}
+					idxVal := Force(args[0])
+					if iv, ok := idxVal.(IntValue); ok {
+						idx, ok := iv.ToInt()
+						if !ok {
+							return nil, fmt.Errorf("match group index out of bounds: %s (len %d)", iv.String(), len(mv.Groups))
+						}
+						if idx < 0 {
+							idx = len(mv.Groups) + idx
+						}
+						if idx < 0 || idx >= len(mv.Groups) {
+							return nil, fmt.Errorf("match group index out of bounds: %d (len %d)", idx, len(mv.Groups))
+						}
+						return mv.Groups[idx], nil
+					}
+					if sv, ok := idxVal.(StringValue); ok {
+						v, ok := mv.Names[string(sv)]
+						if !ok {
+							return nil, fmt.Errorf("unknown capture group name: %s", string(sv))
+						}
+						return v, nil
+					}
+					return nil, fmt.Errorf("match index must be Int or String, got %s", typeNameOf(idxVal))
+				},
+			}
+			if sig, ok := types.LookupBuiltinTypeMethod(types.TypeMatch, "[]"); ok {
+				bf.FuncType = sig
+			}
+			return bf, nil
+		}
+	}
+
 	return nil, fmt.Errorf("cannot access member '%s' on %s value: %v", member, typeNameOf(val), val)
 }
 
@@ -3655,19 +4397,27 @@ func parseStringToInt(s string, radix int) IntValue {
 	return NewIntValue(v)
 }
 
+func hasTopLevelComma(s string) bool {
+	return ast.HasTopLevelComma(s)
+}
+
 func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) bool {
 	typeAnnot = strings.TrimSpace(typeAnnot)
 	if typeAnnot == "" {
 		return true
 	}
-	if thunk, ok := val.(*Thunk); ok {
-		if evaluated, isEval := PeekEvaluated(thunk); isEval {
-			val = evaluated
+
+	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
+	for ast.HasEnclosingDelims(typeAnnot, '(', ')') {
+		inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
+		if inner != "" && inner != "..." && !ast.HasTopLevelComma(inner) {
+			typeAnnot = inner
 		} else {
-			return checkThunkInferredType(thunk, typeAnnot, optEnv...)
+			break
 		}
 	}
-	// Check top-level union: A | B (respecting parens, brackets, braces)
+
+	// Check top-level union: A | B (respecting parens, brackets, braces, and regex literals)
 	var unionParts []string
 	pDepth := 0
 	bDepth := 0
@@ -3676,6 +4426,13 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 	runes := []rune(typeAnnot)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			pDepth++
 		} else if r == ')' {
@@ -3703,7 +4460,43 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		return false
 	}
 
+	if thunk, ok := val.(*Thunk); ok {
+		if evaluated, isEval := PeekEvaluated(thunk); isEval {
+			val = evaluated
+		} else {
+			if !checkThunkInferredType(thunk, typeAnnot, optEnv...) {
+				return false
+			}
+			if requiresRuntimeValueCheck(typeAnnot) {
+				val = Force(thunk)
+			} else {
+				return true
+			}
+		}
+	}
+
+	if strings.HasPrefix(typeAnnot, "/") {
+		annotRunes := []rune(typeAnnot)
+		if ast.SkipRegexInTypeAnnot(annotRunes, 0) == len(annotRunes) {
+			lastSlash := strings.LastIndex(typeAnnot, "/")
+			if lastSlash > 0 {
+				rawPat := typeAnnot[1:lastSlash]
+				flags := typeAnnot[lastSlash+1:]
+				pat := ast.UnescapeRegexPattern(rawPat)
+				rv, err := CompileRegex(pat, flags)
+				if err == nil {
+					if sv, ok := val.(StringValue); ok {
+						return rv.Re.MatchString(string(sv))
+					}
+				}
+			}
+		}
+		return false
+	}
+
 	switch typeAnnot {
+	case "_", "Unknown":
+		return true
 	case "Nil", "nil":
 		_, ok := val.(NilValue)
 		return ok
@@ -3733,6 +4526,12 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		return ok
 	case "Dict":
 		_, ok := val.(*DictValue)
+		return ok
+	case "Regex":
+		_, ok := val.(*RegexValue)
+		return ok
+	case "Match":
+		_, ok := val.(*MatchValue)
 		return ok
 	case "Function":
 		switch val.(type) {
@@ -3791,7 +4590,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				}
 			}
 		}
-		if strings.HasPrefix(typeAnnot, "{") && strings.HasSuffix(typeAnnot, "}") {
+		if ast.HasEnclosingDelims(typeAnnot, '{', '}') {
 			dVal, ok := val.(*DictValue)
 			if !ok {
 				return false
@@ -3808,7 +4607,15 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			bD := 0
 			brD := 0
 			innerRunes := []rune(inner)
-			for i, r := range innerRunes {
+			for i := 0; i < len(innerRunes); i++ {
+				r := innerRunes[i]
+				if r == '/' {
+					nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+					if nextIdx > i {
+						i = nextIdx - 1
+						continue
+					}
+				}
 				if r == '(' {
 					pD++
 				} else if r == ')' {
@@ -3851,20 +4658,14 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					return false
 				}
 				// Check value:
-				if evaluatedVal, ok := PeekEvaluated(v); ok {
-					if !checkValueMatchesType(evaluatedVal, valAnnot, optEnv...) {
-						return false
-					}
-				} else if thunk, ok := v.(*Thunk); ok {
-					if !checkThunkInferredType(thunk, valAnnot, optEnv...) {
-						return false
-					}
+				if !checkValueMatchesType(v, valAnnot, optEnv...) {
+					return false
 				}
 			}
 			return true
 		}
 		// Check tuple type annotation: (T1, T2, ...) or (T, ...)
-		if strings.HasPrefix(typeAnnot, "(") && strings.HasSuffix(typeAnnot, ")") {
+		if ast.HasEnclosingDelims(typeAnnot, '(', ')') {
 			tVal, ok := val.(*TupleValue)
 			if !ok {
 				return false
@@ -3925,14 +4726,8 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						return false
 					}
 				}
-				if evaluatedVal, ok := PeekEvaluated(el); ok {
-					if !checkValueMatchesType(evaluatedVal, expectedAnnot, optEnv...) {
-						return false
-					}
-				} else if thunk, ok := el.(*Thunk); ok {
-					if !checkThunkInferredType(thunk, expectedAnnot, optEnv...) {
-						return false
-					}
+				if !checkValueMatchesType(el, expectedAnnot, optEnv...) {
+					return false
 				}
 			}
 			return true
@@ -4096,22 +4891,39 @@ func checkThunkInferredType(thunk *Thunk, targetAnnot string, optEnv ...*Environ
 	var err error
 	if len(optEnv) > 0 && optEnv[0] != nil && optEnv[0].Inferencer != nil {
 		if inf, ok := optEnv[0].Inferencer.(*types.Inferencer); ok {
-			targetType, err = inf.ParseTypeAnnot(targetAnnot)
+			targetType, _, err = inf.ParsePatternTypeAnnot(targetAnnot)
 		}
 	}
 	if targetType == nil {
-		targetType, err = types.ParseTypeAnnot(targetAnnot)
+		targetType, _, err = types.ParsePatternTypeAnnot(targetAnnot)
 	}
 	if err != nil {
 		return true // target annot could not be parsed statically, preserve laziness
 	}
 
-	// If the statically inferred type is not assignable to targetType,
+	// If the statically inferred type cannot overlap with targetType,
 	// it can never match at runtime: return false without forcing the thunk!
-	if !types.IsAssignableTo(infT, targetType) {
+	if !typesCanOverlap(infT, targetType) {
 		return false
 	}
 	return true
+}
+
+func requiresRuntimeValueCheck(typeAnnot string) bool {
+	if strings.Contains(typeAnnot, "/") {
+		return true
+	}
+	if typeAnnot == "true" || typeAnnot == "false" {
+		return true
+	}
+	if strings.HasPrefix(typeAnnot, "(") || strings.HasPrefix(typeAnnot, "{") {
+		return true
+	}
+	return false
+}
+
+func typesCanOverlap(t1, t2 types.Type) bool {
+	return types.TypesCanOverlap(t1, t2)
 }
 
 func splitTopLevelCommas(s string) []string {
@@ -4123,6 +4935,13 @@ func splitTopLevelCommas(s string) []string {
 	runes := []rune(s)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			pDepth++
 		} else if r == ')' {

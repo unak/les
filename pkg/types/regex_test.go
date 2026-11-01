@@ -1,0 +1,663 @@
+package types
+
+import (
+	"les/pkg/lexer"
+	"les/pkg/parser"
+	"strings"
+	"testing"
+)
+
+func TestRegexAndMatchTypes(t *testing.T) {
+	input := `r = /foo/i
+s = "foobar"
+m = s =~ r
+if m != nil:
+    print m.Text()
+    print m[0]
+    print m[1]
+    print m["group"]
+
+match s:
+    case /bar/ as m2:
+        print m2.Len()
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+
+	rType, ok := inf.scope.Lookup("r")
+	if !ok || rType != TypeRegex {
+		t.Fatalf("expected r to be TypeRegex, got %v", rType)
+	}
+
+	mType, ok := inf.scope.Lookup("m")
+	if !ok {
+		t.Fatalf("m not found in scope")
+	}
+	expectedMUnion := NewUnionType(TypeMatch, TypeNil)
+	if !mType.Equals(expectedMUnion) {
+		t.Fatalf("expected m to be %v, got %v", expectedMUnion, mType)
+	}
+}
+
+func TestRegexIsExprNarrowing(t *testing.T) {
+	input := `
+def check(x: String | Int):
+    if x is /^[0-9]+$/:
+        print x.Len()
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+}
+
+func TestRegexMatchCaseNarrowing(t *testing.T) {
+	input := `
+def check(x: String | Int):
+    match x:
+        case /^[0-9]+$/:
+            print x.Len()
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+}
+
+func TestInvalidRegexTypeErrors(t *testing.T) {
+	cases := []string{
+		`r = /a(b/`,
+		`b = "test" is /a(b/`,
+	}
+	for _, input := range cases {
+		l := lexer.NewLexer(input)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			continue
+		}
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected type error for invalid regex %q", input)
+		}
+	}
+}
+
+func TestRegexInUnionTypeAnnotation(t *testing.T) {
+	input := `
+def check(x: String | Int):
+    if x is /^[0-9]+$/ | Int:
+        print "matched"
+    if x is (/^a|b$/ | Int):
+        print "union with regex containing pipe"
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err != nil {
+		t.Fatalf("type inference error: %v", err)
+	}
+}
+
+func TestTypeParamRegexMatchMismatch(t *testing.T) {
+	input := `
+def check[T: String](x: T):
+    m = x =~ 123
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err == nil {
+		t.Fatalf("expected type error for x =~ 123 with T: String")
+	}
+}
+
+func TestProhibitRegexInOrdinaryTypeAnnotation(t *testing.T) {
+	cases := []string{
+		`x: /foo/ = "bar"`,
+		`def f(x: /^\d+$/): pass`,
+		`struct S:
+    x: /foo/`,
+	}
+	for _, input := range cases {
+		l := lexer.NewLexer(input)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			continue
+		}
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected type error for regex in ordinary type annotation %q", input)
+		}
+	}
+}
+
+func TestRegexMatchExhaustivenessNotCovered(t *testing.T) {
+	input := `
+def test(s: String): String:
+    match s:
+        case /^\d+$/:
+            return "digit"
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	err := inf.InferProgram(prog)
+	if err == nil {
+		t.Fatalf("expected exhaustiveness/return mismatch error for regex case in String-returning function")
+	}
+}
+
+
+func TestRegexTupleAndDictPatternInference(t *testing.T) {
+	inf := NewInferencer()
+	nTup, cTup, err := inf.ParsePatternTypeAnnot(`(/^\d+$/, Int)`)
+	if err != nil {
+		t.Fatalf(`failed to parse tuple pattern: %v`, err)
+	}
+	if nTup == nil || cTup != nil {
+		t.Fatalf(`expected non-nil narrowType and nil coveredType for (/^\d+$/, Int)`)
+	}
+
+	nDict, cDict, err := inf.ParsePatternTypeAnnot(`{String: /(?i:abc)/}`)
+	if err != nil {
+		t.Fatalf(`failed to parse dict pattern: %v`, err)
+	}
+	if nDict == nil || cDict != nil {
+		t.Fatalf(`expected non-nil narrowType and nil coveredType for {String: /(?i:abc)/}`)
+	}
+
+	input := `
+def test(p: (String, Int)): String:
+    match p:
+        case (/^\d+$/, Int):
+            return "digit-pair"
+`
+	l := lexer.NewLexer(input)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, p.Errors())
+	}
+	inf2 := NewInferencer()
+	err2 := inf2.InferProgram(prog)
+	if err2 == nil {
+		t.Fatalf(`expected exhaustiveness error for tuple regex pattern`)
+	}
+
+	// Verify nested func type with enclosing parens is not treated as tuple
+	nFunc, _, errFunc := inf.ParsePatternTypeAnnot(`((String) -> ()) -> ()`)
+	if errFunc != nil {
+		t.Fatalf(`failed to parse nested func type: %v`, errFunc)
+	}
+	if _, ok := nFunc.(*FuncType); !ok {
+		t.Fatalf(`expected FuncType, got %T`, nFunc)
+	}
+
+	// Verify single regex literal trailing junk rejected
+	_, _, errJunk := inf.ParsePatternTypeAnnot(`/abc/ extra`)
+	if errJunk == nil {
+		t.Fatalf(`expected error for regex with trailing junk`)
+	}
+
+	// Verify POSIX char class in pattern type annotation
+	nPosix, _, errPosix := inf.ParsePatternTypeAnnot(`/[[:alpha:]/]/`)
+	if errPosix != nil {
+		t.Fatalf(`failed to parse POSIX char class regex: %v`, errPosix)
+	}
+	if nPosix != TypeString {
+		t.Fatalf(`expected TypeString, got %v`, nPosix)
+	}
+
+	// Verify composite pattern with wildcard _
+	nTupWild, cTupWild, errTupWild := inf.ParsePatternTypeAnnot(`(/^\d+$/, _)`)
+	if errTupWild != nil {
+		t.Fatalf(`failed to parse composite tuple with _: %v`, errTupWild)
+	}
+	if nTupWild == nil || cTupWild != nil {
+		t.Fatalf(`expected non-nil narrowType and nil coveredType for (/^\d+$/, _)`)
+	}
+
+	nDictWild, cDictWild, errDictWild := inf.ParsePatternTypeAnnot(`{String: _}`)
+	if errDictWild != nil {
+		t.Fatalf(`failed to parse composite dict with _: %v`, errDictWild)
+	}
+	if nDictWild == nil || cDictWild == nil {
+		t.Fatalf(`expected non-nil narrowType and non-nil coveredType for {String: _}`)
+	}
+
+	// Verify (...r) exhaustiveness
+	codeRest := `
+def testRest(t: (Int, String)): Int:
+    match t:
+        case (...r):
+            return 42
+`
+	lRest := lexer.NewLexer(codeRest)
+	pRest := parser.NewParser(lRest)
+	progRest := pRest.ParseProgram()
+	if len(pRest.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, pRest.Errors())
+	}
+	infRest := NewInferencer()
+	if err := infRest.InferProgram(progRest); err != nil {
+		t.Fatalf(`expected (...r) to be exhaustive, got %v`, err)
+	}
+
+	// Verify true | false union exhaustiveness in pattern
+	_, cBoolUnion, errBoolUnion := inf.ParsePatternTypeAnnot(`true | false`)
+	if errBoolUnion != nil {
+		t.Fatalf(`failed to parse true | false union: %v`, errBoolUnion)
+	}
+	if cBoolUnion != TypeBool {
+		t.Fatalf(`expected coveredType TypeBool, got %v`, cBoolUnion)
+	}
+
+	// Verify (true | false, Int) exhaustiveness
+	codeBoolTup := `
+def testBoolTup(p: (Bool, Int)): String:
+    match p:
+        case (true | false, Int):
+            return ok
+`
+	lBoolTup := lexer.NewLexer(codeBoolTup)
+	pBoolTup := parser.NewParser(lBoolTup)
+	progBoolTup := pBoolTup.ParseProgram()
+	if len(pBoolTup.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, pBoolTup.Errors())
+	}
+	infBoolTup := NewInferencer()
+	if err := infBoolTup.InferProgram(progBoolTup); err != nil {
+		t.Fatalf(`expected (true | false, Int) to be exhaustive, got %v`, err)
+	}
+
+	// Verify case _ as x and case true as x variable binding
+	codeBindings := `
+def testBindings(x: Int, b: Bool): Int:
+    match x:
+        case _ as anyVal:
+            print anyVal
+    match b:
+        case true as t:
+            print t
+        case false as f:
+            print f
+    return 0
+`
+	lBind := lexer.NewLexer(codeBindings)
+	pBind := parser.NewParser(lBind)
+	progBind := pBind.ParseProgram()
+	if len(pBind.Errors()) > 0 {
+		t.Fatalf(`parser errors: %v`, pBind.Errors())
+	}
+	linesP9 := []string{
+		"def testPass9(p: (String, Int), u: (Int, String) | Int, b: Bool | Int): Int:",
+		"    match p:",
+		"        case (/^[0-9]+$/, _) as t:",
+		"            var a: String = t[0]",
+		"            var bVal: Int = t[1]",
+		"            var p0: String = p[0]",
+		"            var p1: Int = p[1]",
+		"        case _:",
+		"            pass",
+		"    match u:",
+		"        case (x, y) as tup:",
+		"            var num: Int = x",
+		"            var str: String = y",
+		"            var t0: Int = tup[0]",
+		"            var t1: String = tup[1]",
+		"        case Int:",
+		"            pass",
+		"    match b:",
+		"        case true:",
+		"            return 1",
+		"        case false:",
+		"            return 2",
+		"        case Int:",
+		"            return 3",
+		"    return 0",
+	}
+	codePass9 := strings.Join(linesP9, string(rune(10)))
+	lP9 := lexer.NewLexer(codePass9)
+	pP9 := parser.NewParser(lP9)
+	progP9 := pP9.ParseProgram()
+	if len(pP9.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", pP9.Errors())
+	}
+	infP9 := NewInferencer()
+	if err := infP9.InferProgram(progP9); err != nil {
+		t.Fatalf("expected Pass 9 code to typecheck, got %v", err)
+	}
+
+	infBind := NewInferencer()
+	if err := infBind.InferProgram(progBind); err != nil {
+		t.Fatalf(`expected bindings to typecheck, got %v`, err)
+	}
+}
+
+func TestTypesCanOverlapVariadicTuple(t *testing.T) {
+	tupVarInt := &TupleType{Elems: []Type{TypeInt}, IsVariadic: true}
+	tupFixed2Int := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: false}
+	tupVarIntStr := &TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: true}
+	tupVarStr := &TupleType{Elems: []Type{TypeString}, IsVariadic: true}
+
+	if !TypesCanOverlap(tupVarInt, tupFixed2Int) {
+		t.Fatalf("expected (Int, ...) and (Int, Int) to overlap")
+	}
+	tupEmpty := &TupleType{Elems: []Type{}}
+	if TypesCanOverlap(tupVarIntStr, tupEmpty) {
+		t.Fatalf("expected (Int, String, ...) and () NOT to overlap")
+	}
+	if TypesCanOverlap(tupVarInt, tupVarStr) {
+		t.Fatalf("expected (Int, ...) and (String, ...) NOT to overlap")
+	}
+}
+
+func TestParseTupleTypeNonFinalRest(t *testing.T) {
+	inf := NewInferencer()
+	_, _, errPat := inf.ParsePatternTypeAnnot("(..., Int)")
+	if errPat == nil {
+		t.Fatalf("expected error for non-final '...' in tuple pattern")
+	}
+	_, _, errTyp := inf.parseTupleElements("..., Int")
+	if errTyp == nil {
+		t.Fatalf("expected error for non-final '...' in tuple type")
+	}
+}
+
+func TestNarrowTypeByPatternVariadicAndUnion(t *testing.T) {
+	tupVarInt := &TupleType{Elems: []Type{TypeInt}, IsVariadic: true}
+	tupFixed2Int := &TupleType{Elems: []Type{TypeInt, TypeInt}, IsVariadic: false}
+	narrowed := narrowTypeByPattern(tupVarInt, tupFixed2Int)
+	if tup, ok := narrowed.(*TupleType); !ok || tup.IsVariadic || len(tup.Elems) != 2 {
+		t.Fatalf("expected fixed 2-elem tuple, got %v", narrowed)
+	}
+
+	unionT := NewUnionType(tupVarInt, TypeString)
+	narrowedUnion := narrowTypeByPattern(unionT, tupFixed2Int)
+	if tup, ok := narrowedUnion.(*TupleType); !ok || tup.IsVariadic || len(tup.Elems) != 2 {
+		t.Fatalf("expected fixed 2-elem tuple from union, got %v", narrowedUnion)
+	}
+}
+
+func TestMatchUnionTrueFalseExhaustiveness(t *testing.T) {
+	lines := []string{
+		"def test(b: Bool | Int) -> Int:",
+		"    match b:",
+		"        case true | Int:",
+		"            return 1",
+		"        case false:",
+		"            return 2",
+	}
+	code := strings.Join(lines, string(rune(10)))
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("expected exhaustive match for true | Int and false, got: %v", err)
+	}
+}
+
+func TestNarrowTypeByPatternUnionNotWidening(t *testing.T) {
+	unionIntStr := NewUnionType(TypeInt, TypeString)
+	narrowed := narrowTypeByPattern(TypeInt, unionIntStr)
+	if !narrowed.Equals(TypeInt) {
+		t.Fatalf("expected narrowTypeByPattern(Int, Int | String) to be Int, got %v", narrowed)
+	}
+}
+
+func TestTupleUnionDestructuringInMatch(t *testing.T) {
+	lines := []string{
+		"def test(pair: (Int, String) | (Int, Bool)) -> Int:",
+		"    match pair:",
+		"        case (a, b):",
+		"            var x: Int = a",
+		"            var y: String | Bool = b",
+		"            return x",
+	}
+	code := strings.Join(lines, string(rune(10)))
+	l := lexer.NewLexer(code)
+	p := parser.NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("expected tuple union destructuring to typecheck, got: %v", err)
+	}
+}
+
+func TestTupleEmptyNonTrailingElementRejected(t *testing.T) {
+	inf := NewInferencer()
+	for _, in := range []string{"(,)", "(Int, , String)"} {
+		if _, _, err := inf.ParsePatternTypeAnnot(in); err == nil {
+			t.Fatalf("expected error for pattern %q", in)
+		}
+	}
+	for _, in := range []string{",", "Int, , String"} {
+		if _, _, err := inf.parseTupleElements(in); err == nil {
+			t.Fatalf("expected error for tuple elements %q", in)
+		}
+	}
+}
+
+func TestVariadicTupleNormalizationAndFuncAssignability(t *testing.T) {
+	inf := NewInferencer()
+	ft1, err1 := inf.parseTypeAnnot("(...) -> Int")
+	if err1 != nil {
+		t.Fatalf("failed to parse (...) -> Int: %v", err1)
+	}
+	ft2, err2 := inf.parseTypeAnnot("(Int, ...) -> Int")
+	if err2 != nil {
+		t.Fatalf("failed to parse (Int, ...) -> Int: %v", err2)
+	}
+	if !IsAssignableTo(ft1, ft2) {
+		t.Fatalf("expected (...) -> Int to be assignable to (Int, ...) -> Int")
+	}
+}
+
+func TestNarrowTypeByPatternDisjoint(t *testing.T) {
+	if got := narrowTypeByPattern(TypeInt, TypeString); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+	if got := narrowTypeByPattern(TypeBool, TypeInt); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+	if got := narrowTypeByPattern(TypeInt, NewUnionType(TypeString, TypeBool)); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+	if got := narrowTypeByPattern(NewUnionType(TypeInt, TypeString), TypeBool); got != TypeUnknown {
+		t.Fatalf("expected TypeUnknown, got %v", got)
+	}
+}
+
+func TestExtractTupleBindingTypesFiniteRest(t *testing.T) {
+	tup := &TupleType{Elems: []Type{TypeInt, TypeString, TypeBool, TypeFloat}, IsVariadic: false}
+	elems, restT, ok := extractTupleBindingTypes(tup, 1, true)
+	if !ok || len(elems) != 1 || elems[0] != TypeInt {
+		t.Fatalf("unexpected elems: %v", elems)
+	}
+	rt, ok := restT.(*TupleType)
+	if !ok || rt.IsVariadic || len(rt.Elems) != 3 {
+		t.Fatalf("expected finite tuple of 3 elems, got %+v", restT)
+	}
+	if rt.Elems[0] != TypeString || rt.Elems[1] != TypeBool || rt.Elems[2] != TypeFloat {
+		t.Fatalf("unexpected rest elems: %v", rt.Elems)
+	}
+
+	tup2 := &TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: false}
+	_, restT2, ok2 := extractTupleBindingTypes(tup2, 2, true)
+	if !ok2 {
+		t.Fatalf("extract failed")
+	}
+	rt2, ok2 := restT2.(*TupleType)
+	if !ok2 || rt2.IsVariadic || len(rt2.Elems) != 0 {
+		t.Fatalf("expected empty finite tuple, got %+v", restT2)
+	}
+
+	uTup := NewUnionType(
+		&TupleType{Elems: []Type{TypeInt, TypeString}, IsVariadic: false},
+		&TupleType{Elems: []Type{TypeInt, TypeString, TypeBool}, IsVariadic: false},
+	)
+	_, restTU, okU := extractTupleBindingTypes(uTup, 2, true)
+	if !okU {
+		t.Fatalf("extract failed for union")
+	}
+	uRest, okU := restTU.(*UnionType)
+	if !okU || len(uRest.Members) != 2 {
+		t.Fatalf("expected union of 2 rests, got %v", restTU)
+	}
+}
+
+func TestUnpackDeclStaticChecks(t *testing.T) {
+	cases := []struct {
+		code   string
+		errSub string
+	}{
+		{"(a, b) = 123\n", "cannot unpack non-tuple type"},
+		{"(a, b, c) = (1, 2)\n", "element count mismatch"},
+		{"(a, b) = (1, 2, 3)\n", "element count mismatch"},
+		{"(a, b, c, ...rest) = (1, 2)\n", "not enough elements to unpack"},
+		{"(a, a) = (1, 2)\n", "duplicate variable"},
+		{"(a, ...a) = (1, 2)\n", "duplicate variable"},
+	}
+	for _, tc := range cases {
+		l := lexer.NewLexer(tc.code)
+		p := parser.NewParser(l)
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("unexpected parser errors for %q: %v", tc.code, p.Errors())
+		}
+		inf := NewInferencer()
+		err := inf.InferProgram(prog)
+		if err == nil {
+			t.Fatalf("expected error containing %q for %q, got nil", tc.errSub, tc.code)
+		}
+		if !strings.Contains(err.Error(), tc.errSub) {
+			t.Fatalf("expected error containing %q, got %q", tc.errSub, err.Error())
+		}
+	}
+}
+
+func TestMatchImplementsIndexable(t *testing.T) {
+	idxIntStringNil := &InterfaceType{
+		Name:     "Indexable",
+		TypeArgs: []Type{TypeInt, NewUnionType(TypeString, TypeNil)},
+		Methods: map[string]*FuncType{
+			"Len": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+			"[]":  {Arg: &TupleType{Elems: []Type{TypeInt}}, Ret: NewUnionType(TypeString, TypeNil)},
+		},
+	}
+	if !ImplementsInterface(TypeMatch, idxIntStringNil) {
+		t.Errorf("expected TypeMatch to implement Indexable[Int, String | Nil]")
+	}
+
+	idxStrStringNil := &InterfaceType{
+		Name:     "Indexable",
+		TypeArgs: []Type{TypeString, NewUnionType(TypeString, TypeNil)},
+		Methods: map[string]*FuncType{
+			"Len": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+			"[]":  {Arg: &TupleType{Elems: []Type{TypeString}}, Ret: NewUnionType(TypeString, TypeNil)},
+		},
+	}
+	if !ImplementsInterface(TypeMatch, idxStrStringNil) {
+		t.Errorf("expected TypeMatch to implement Indexable[String, String | Nil]")
+	}
+}
+
+func TestRegexMatchImplementsShow(t *testing.T) {
+	showIface := &InterfaceType{
+		Name: "Show",
+		Methods: map[string]*FuncType{
+			"Inspect": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeString},
+			"Type":    {Arg: &TupleType{Elems: []Type{}}, Ret: TypeString},
+		},
+	}
+	if !ImplementsInterface(TypeRegex, showIface) {
+		t.Errorf("expected TypeRegex to implement Show")
+	}
+	if !ImplementsInterface(TypeMatch, showIface) {
+		t.Errorf("expected TypeMatch to implement Show")
+	}
+}
+
+func TestCanonicalizeRegexFlags(t *testing.T) {
+	cases := []struct {
+		flags    string
+		expected string
+		errSub   string
+	}{
+		{"", "", ""},
+		{"i", "i", ""},
+		{"mi", "im", ""},
+		{"smi", "ims", ""},
+		{"Uims", "imsU", ""},
+		{"ii", "i", ""},
+		{"mim", "im", ""},
+		{"x", "", "unknown regex flag: x"},
+		{"g", "", "unknown regex flag: g"},
+	}
+	for _, tc := range cases {
+		res, err := CanonicalizeRegexFlags(tc.flags)
+		if tc.errSub != "" {
+			if err == nil || !strings.Contains(err.Error(), tc.errSub) {
+				t.Errorf("flags %q: expected error %q, got %v", tc.flags, tc.errSub, err)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("flags %q: unexpected error %v", tc.flags, err)
+			}
+			if res != tc.expected {
+				t.Errorf("flags %q: expected %q, got %q", tc.flags, tc.expected, res)
+			}
+		}
+	}
+}

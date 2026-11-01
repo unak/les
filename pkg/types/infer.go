@@ -7,6 +7,301 @@ import (
 	"les/pkg/ast"
 )
 
+func removeNilFromType(t Type) Type {
+	if t == TypeNil {
+		return TypeNil
+	}
+	if u, ok := t.(*UnionType); ok {
+		var nonNil []Type
+		for _, m := range u.Members {
+			if m != TypeNil {
+				nonNil = append(nonNil, m)
+			}
+		}
+		if len(nonNil) == 0 {
+			return TypeNil
+		}
+		return NewUnionType(nonNil...)
+	}
+	return t
+}
+
+func splitTopLevelUnionParts(s string) []string {
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	braceDepth := 0
+	start := 0
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+			parts = append(parts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	if len(parts) > 0 {
+		parts = append(parts, string(runes[start:]))
+		return parts
+	}
+	return []string{s}
+}
+
+func narrowTypeByPattern(origT, patT Type) Type {
+	if origT == nil || origT == TypeUnknown {
+		if patT != nil {
+			return patT
+		}
+		return TypeUnknown
+	}
+	if patT == nil || patT == TypeUnknown {
+		return origT
+	}
+	if !TypesCanOverlap(origT, patT) {
+		return TypeUnknown
+	}
+	if patU, ok := patT.(*UnionType); ok {
+		var narrowed []Type
+		for _, pm := range patU.Members {
+			if TypesCanOverlap(origT, pm) {
+				nT := narrowTypeByPattern(origT, pm)
+				if nT != nil && nT != TypeUnknown {
+					narrowed = append(narrowed, nT)
+				}
+			}
+		}
+		if len(narrowed) > 0 {
+			return NewUnionType(narrowed...)
+		}
+		return TypeUnknown
+	}
+	if u, ok := origT.(*UnionType); ok {
+		var narrowed []Type
+		for _, m := range u.Members {
+			if TypesCanOverlap(m, patT) {
+				narrowed = append(narrowed, narrowTypeByPattern(m, patT))
+			}
+		}
+		if len(narrowed) > 0 {
+			return NewUnionType(narrowed...)
+		}
+		return TypeUnknown
+	}
+	if origTup, ok := origT.(*TupleType); ok {
+		if patTup, ok := patT.(*TupleType); ok {
+			if origTup.IsVariadic && len(origTup.Elems) == 0 {
+				origTup = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
+			if patTup.IsVariadic && len(patTup.Elems) == 0 {
+				patTup = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			}
+			if !origTup.IsVariadic && !patTup.IsVariadic {
+				if len(origTup.Elems) != len(patTup.Elems) {
+					return TypeUnknown
+				}
+				newElems := make([]Type, len(origTup.Elems))
+				for i := range origTup.Elems {
+					newElems[i] = narrowTypeByPattern(origTup.Elems[i], patTup.Elems[i])
+				}
+				return &TupleType{Elems: newElems, IsVariadic: false}
+			}
+			if !origTup.IsVariadic && patTup.IsVariadic {
+				minReq := len(patTup.Elems) - 1
+				if len(origTup.Elems) < minReq {
+					return TypeUnknown
+				}
+				lastIdxPat := len(patTup.Elems) - 1
+				newElems := make([]Type, len(origTup.Elems))
+				for i := range origTup.Elems {
+					var pElem Type
+					if i < lastIdxPat {
+						pElem = patTup.Elems[i]
+					} else {
+						pElem = patTup.Elems[lastIdxPat]
+					}
+					newElems[i] = narrowTypeByPattern(origTup.Elems[i], pElem)
+				}
+				return &TupleType{Elems: newElems, IsVariadic: false}
+			}
+			if origTup.IsVariadic && !patTup.IsVariadic {
+				minReq := len(origTup.Elems) - 1
+				if len(patTup.Elems) < minReq {
+					return TypeUnknown
+				}
+				lastIdxOrig := len(origTup.Elems) - 1
+				newElems := make([]Type, len(patTup.Elems))
+				for i := range patTup.Elems {
+					var oElem Type
+					if i < lastIdxOrig {
+						oElem = origTup.Elems[i]
+					} else {
+						oElem = origTup.Elems[lastIdxOrig]
+					}
+					newElems[i] = narrowTypeByPattern(oElem, patTup.Elems[i])
+				}
+				return &TupleType{Elems: newElems, IsVariadic: false}
+			}
+			maxLen := len(origTup.Elems)
+			if len(patTup.Elems) > maxLen {
+				maxLen = len(patTup.Elems)
+			}
+			lastIdxOrig := len(origTup.Elems) - 1
+			lastIdxPat := len(patTup.Elems) - 1
+			newElems := make([]Type, maxLen)
+			for i := 0; i < maxLen; i++ {
+				var oElem, pElem Type
+				if i < lastIdxOrig {
+					oElem = origTup.Elems[i]
+				} else {
+					oElem = origTup.Elems[lastIdxOrig]
+				}
+				if i < lastIdxPat {
+					pElem = patTup.Elems[i]
+				} else {
+					pElem = patTup.Elems[lastIdxPat]
+				}
+				newElems[i] = narrowTypeByPattern(oElem, pElem)
+			}
+			return &TupleType{Elems: newElems, IsVariadic: true}
+		}
+	}
+	if origDict, ok := origT.(*DictType); ok {
+		if patDict, ok := patT.(*DictType); ok {
+			return &DictType{
+				Key:   narrowTypeByPattern(origDict.Key, patDict.Key),
+				Value: narrowTypeByPattern(origDict.Value, patDict.Value),
+			}
+		}
+	}
+	if IsAssignableTo(origT, patT) {
+		return origT
+	}
+	return patT
+}
+
+func extractTupleBindingTypes(t Type, numElements int, hasRest bool) ([]Type, Type, bool) {
+	if t == nil || t == TypeUnknown {
+		elemUnknowns := make([]Type, numElements)
+		for i := range elemUnknowns {
+			elemUnknowns[i] = TypeUnknown
+		}
+		var restT Type
+		if hasRest {
+			restT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+		}
+		return elemUnknowns, restT, false
+	}
+	if tup, ok := t.(*TupleType); ok {
+		elems := make([]Type, numElements)
+		for i := 0; i < numElements; i++ {
+			var elemT Type = TypeUnknown
+			if i < len(tup.Elems) {
+				elemT = tup.Elems[i]
+			} else if tup.IsVariadic && len(tup.Elems) > 0 {
+				elemT = tup.Elems[len(tup.Elems)-1]
+			}
+			elems[i] = elemT
+		}
+		var restT Type
+		if hasRest {
+			if tup.IsVariadic {
+				var restElemT Type = TypeUnknown
+				if len(tup.Elems) > 0 {
+					restElemT = tup.Elems[len(tup.Elems)-1]
+				}
+				restT = &TupleType{Elems: []Type{restElemT}, IsVariadic: true}
+			} else {
+				if numElements >= len(tup.Elems) {
+					restT = &TupleType{Elems: []Type{}, IsVariadic: false}
+				} else {
+					restSlice := make([]Type, len(tup.Elems)-numElements)
+					copy(restSlice, tup.Elems[numElements:])
+					restT = &TupleType{Elems: restSlice, IsVariadic: false}
+				}
+			}
+		}
+		return elems, restT, true
+	}
+	if u, ok := t.(*UnionType); ok {
+		var memberTupleTypes []*TupleType
+		for _, m := range u.Members {
+			if tup, ok := m.(*TupleType); ok {
+				memberTupleTypes = append(memberTupleTypes, tup)
+			}
+		}
+		if len(memberTupleTypes) > 0 {
+			elems := make([]Type, numElements)
+			for i := 0; i < numElements; i++ {
+				var iMembers []Type
+				for _, mt := range memberTupleTypes {
+					var el Type = TypeUnknown
+					if i < len(mt.Elems) {
+						el = mt.Elems[i]
+					} else if mt.IsVariadic && len(mt.Elems) > 0 {
+						el = mt.Elems[len(mt.Elems)-1]
+					}
+					iMembers = append(iMembers, el)
+				}
+				elems[i] = NewUnionType(iMembers...)
+			}
+			var restT Type
+			if hasRest {
+				var restMembers []Type
+				for _, mt := range memberTupleTypes {
+					var mRest Type
+					if mt.IsVariadic {
+						var restElemT Type = TypeUnknown
+						if len(mt.Elems) > 0 {
+							restElemT = mt.Elems[len(mt.Elems)-1]
+						}
+						mRest = &TupleType{Elems: []Type{restElemT}, IsVariadic: true}
+					} else {
+						if numElements >= len(mt.Elems) {
+							mRest = &TupleType{Elems: []Type{}, IsVariadic: false}
+						} else {
+							restSlice := make([]Type, len(mt.Elems)-numElements)
+							copy(restSlice, mt.Elems[numElements:])
+							mRest = &TupleType{Elems: restSlice, IsVariadic: false}
+						}
+					}
+					restMembers = append(restMembers, mRest)
+				}
+				restT = NewUnionType(restMembers...)
+			}
+			return elems, restT, true
+		}
+	}
+	elemUnknowns := make([]Type, numElements)
+	for i := range elemUnknowns {
+		elemUnknowns[i] = TypeUnknown
+	}
+	var restT Type
+	if hasRest {
+		restT = &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+	}
+	return elemUnknowns, restT, false
+}
+
+
 // Scope tracks lexical bindings and detects duplicate declarations in the same scope.
 type Scope struct {
 	parent   *Scope
@@ -133,6 +428,13 @@ var BuiltinGetsFuncType = &FuncType{
 	Ret: NewUnionType(TypeString, TypeNil),
 }
 
+var BuiltinRegexFuncType = &FuncType{
+	Arg:      &TupleType{Elems: []Type{TypeString, TypeString}},
+	MinArity: 1,
+	MaxArity: 2,
+	Ret:      TypeRegex,
+}
+
 var BuiltinEqualIface = &InterfaceType{
 	Name: "Equal",
 	Methods: map[string]*FuncType{
@@ -242,6 +544,8 @@ func NewInferencer() *Inferencer {
 	_ = rootScope.Declare("Bytes", BuiltinBytesFuncType)
 	// Built-in gets: () -> String | Nil
 	_ = rootScope.Declare("gets", BuiltinGetsFuncType)
+	// Built-in Regex: (pattern: String, [flags: String]) -> Regex
+	_ = rootScope.Declare("Regex", BuiltinRegexFuncType)
 	// Built-in Args: (String, ...)
 	_ = rootScope.Declare("Args", &TupleType{
 		Elems:      []Type{TypeString},
@@ -682,6 +986,47 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 				}
 			}
 			thenScope := NewScope(inf.scope)
+			elseScope := NewScope(inf.scope)
+			if s.Cond != nil {
+				if bin, ok := s.Cond.(*ast.BinaryExpr); ok {
+					if bin.Op == "!=" {
+						if id, ok := bin.Left.(*ast.Identifier); ok {
+							if _, isNil := bin.Right.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						} else if id, ok := bin.Right.(*ast.Identifier); ok {
+							if _, isNil := bin.Left.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						}
+					} else if bin.Op == "==" {
+						if id, ok := bin.Left.(*ast.Identifier); ok {
+							if _, isNil := bin.Right.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						} else if id, ok := bin.Right.(*ast.Identifier); ok {
+							if _, isNil := bin.Left.(*ast.NilLit); isNil {
+								if origT, ok := inf.scope.Lookup(id.Name); ok {
+									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+								}
+							}
+						}
+					}
+				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
+					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
+						if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
+							origT, _ := inf.scope.Lookup(id.Name)
+							_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
+						}
+					}
+				}
+			}
 			prevScope := inf.scope
 			inf.scope = thenScope
 			thenFT, thenCanFT, err := inf.inferBlock(s.ThenBody)
@@ -691,7 +1036,6 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 			}
 
 			if len(s.ElseBody) > 0 {
-				elseScope := NewScope(inf.scope)
 				inf.scope = elseScope
 				elseFT, elseCanFT, err := inf.inferBlock(s.ElseBody)
 				inf.scope = prevScope
@@ -927,35 +1271,44 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		if err != nil {
 			return err
 		}
-		if tt, ok := valT.(*TupleType); ok {
-			for i, name := range s.Pattern.Elements {
-				if name != "_" {
-					var elemT Type = TypeUnknown
-					if i < len(tt.Elems) {
-						elemT = tt.Elems[i]
-					} else if tt.IsVariadic && len(tt.Elems) > 0 {
-						elemT = tt.Elems[len(tt.Elems)-1]
-					}
-					_ = inf.scope.Declare(name, elemT)
+		if valT != TypeUnknown && !TypesCanOverlap(valT, &TupleType{IsVariadic: true}) {
+			return inf.nodeErr(s, "cannot unpack non-tuple type %s", valT.String())
+		}
+		if tup, ok := valT.(*TupleType); ok {
+			reqCount := len(s.Pattern.Elements)
+			if s.Pattern.RestName != "" {
+				if !tup.IsVariadic && len(tup.Elems) < reqCount {
+					return inf.nodeErr(s, "not enough elements to unpack into tuple pattern: got %d, need at least %d", len(tup.Elems), reqCount)
+				}
+			} else {
+				if tup.IsVariadic {
+					return inf.nodeErr(s, "cannot unpack infinite tuple into fixed-length pattern")
+				}
+				if len(tup.Elems) != reqCount {
+					return inf.nodeErr(s, "element count mismatch in unpack: expected %d, got %d", reqCount, len(tup.Elems))
 				}
 			}
-			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-				var restElemT Type = TypeUnknown
-				if tt.IsVariadic && len(tt.Elems) > 0 {
-					restElemT = tt.Elems[len(tt.Elems)-1]
-				} else if len(tt.Elems) > len(s.Pattern.Elements) {
-					restElemT = tt.Elems[len(s.Pattern.Elements)]
+		}
+		elemTypes, restType, _ := extractTupleBindingTypes(valT, len(s.Pattern.Elements), s.Pattern.RestName != "")
+		seenNames := make(map[string]bool)
+		for i, name := range s.Pattern.Elements {
+			if name != "_" {
+				if seenNames[name] {
+					return inf.nodeErr(s, "duplicate variable %s in unpack pattern", name)
 				}
-				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{restElemT}, IsVariadic: true})
-			}
-		} else {
-			for _, name := range s.Pattern.Elements {
-				if name != "_" {
-					_ = inf.scope.Declare(name, TypeUnknown)
+				seenNames[name] = true
+				if err := inf.scope.Declare(name, elemTypes[i]); err != nil {
+					return inf.nodeErr(s, "%s", err.Error())
 				}
 			}
-			if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
-				_ = inf.scope.Declare(s.Pattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
+		}
+		if s.Pattern.RestName != "" && s.Pattern.RestName != "_" {
+			if seenNames[s.Pattern.RestName] {
+				return inf.nodeErr(s, "duplicate variable %s in unpack pattern", s.Pattern.RestName)
+			}
+			seenNames[s.Pattern.RestName] = true
+			if err := inf.scope.Declare(s.Pattern.RestName, restType); err != nil {
+				return inf.nodeErr(s, "%s", err.Error())
 			}
 		}
 		return nil
@@ -1923,6 +2276,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		return TypeBool, nil
 	case *ast.NilLit:
 		return TypeNil, nil
+	case *ast.RegexLit:
+		if err := ValidateRegex(e.Pattern, e.Flags); err != nil {
+			return nil, inf.nodeErr(e, "%s", err.Error())
+		}
+		return TypeRegex, nil
 	case *ast.ForceExpr:
 		return inf.inferExpr(e.Expr)
 	case *ast.Identifier:
@@ -2177,6 +2535,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			// so that operand types and concatenation are correctly validated and computed.
 			if _, isTupleConstraint := tp.Constraint.(*TupleType); !isTupleConstraint {
 				if bSig, ok := LookupBuiltinTypeMethod(tp.Constraint, e.Op); ok {
+					if pT, ok := getFirstParamType(bSig); ok && !IsAssignableTo(rightT, pT) {
+						return nil, inf.nodeErr(e.Right, "type mismatch in operator '%s': expected %s, got %s", e.Op, pT, rightT)
+					}
 					if bSig.Ret == TypeBool {
 						return TypeBool, nil
 					}
@@ -2237,6 +2598,17 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return TypeFloat, nil
 			}
 			return TypeInt, nil
+		case "=~":
+			if (effLeftT == TypeString && effRightT == TypeRegex) || (effLeftT == TypeRegex && effRightT == TypeString) {
+				return NewUnionType(TypeMatch, TypeNil), nil
+			}
+			if effLeftT == TypeUnknown || effRightT == TypeUnknown {
+				if effLeftT == TypeString || effLeftT == TypeRegex || effRightT == TypeString || effRightT == TypeRegex {
+					return NewUnionType(TypeMatch, TypeNil), nil
+				}
+				return TypeUnknown, nil
+			}
+			return nil, inf.nodeErr(e, "operator =~ expects String and Regex, got %s and %s", leftT, rightT)
 		case "==", "!=", "<", "<=", ">", ">=":
 			return TypeBool, nil
 		case "&&", "||":
@@ -2806,6 +3178,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if bSig, ok := LookupBuiltinTypeMethod(targetT, e.Member); ok {
 			return bSig, nil
 		}
+		if u, ok := targetT.(*UnionType); ok {
+			nonNilT := removeNilFromType(u)
+			if nonNilT != TypeNil {
+				if bSig, ok := LookupBuiltinTypeMethod(nonNilT, e.Member); ok {
+					return bSig, nil
+				}
+			}
+		}
 		return nil, inf.nodeErr(e, "cannot access member '%s' on non-struct/interface type %s", e.Member, targetT)
 	case *ast.NamedArgExpr:
 		return inf.inferExpr(e.Value)
@@ -2932,6 +3312,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return TypeString, nil
 		} else if effTargetT == TypeBytes {
 			return TypeInt, nil
+		} else if effTargetT == TypeMatch || removeNilFromType(effTargetT) == TypeMatch {
+			idxT, err := inf.inferExpr(e.Index)
+			if err != nil {
+				return nil, err
+			}
+			if idxT != TypeUnknown && !IsAssignableTo(idxT, NewUnionType(TypeInt, TypeString)) {
+				return nil, inf.nodeErr(e.Index, "match index must be Int or String, got %s", idxT)
+			}
+			if intLit, ok := e.Index.(*ast.IntLit); ok && intLit.BigValue == nil && intLit.Value == 0 {
+				return TypeString, nil
+			}
+			return NewUnionType(TypeString, TypeNil), nil
 		}
 		return TypeUnknown, nil
 	case *ast.ModuleAccessExpr:
@@ -2947,10 +3339,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		if e.TypeAnnot != "" {
-			if _, err := inf.parseTypeAnnot(e.TypeAnnot); err != nil {
-				return nil, err
-			}
+		if _, _, err := inf.parsePatternTypeAnnot(e.TypeAnnot); err != nil {
+			return nil, inf.nodeErr(e, "%s", err.Error())
 		}
 		return TypeBool, nil
 	case *ast.MatchExpr:
@@ -3085,6 +3475,13 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	runes := []rune(annot)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			parenDepth++
 		} else if r == ')' {
@@ -3127,6 +3524,13 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	braceDepth = 0
 	for i := 0; i < len(runes)-1; i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			parenDepth++
 		} else if r == ')' {
@@ -3150,16 +3554,16 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		retStr := strings.TrimSpace(string(runes[arrowIdx+2:]))
 
 		var argType Type
-		if strings.HasPrefix(argStr, "(") && strings.HasSuffix(argStr, ")") {
+		if ast.HasEnclosingDelims(argStr, '(', ')') {
 			inner := strings.TrimSpace(argStr[1 : len(argStr)-1])
 			if inner == "" {
 				argType = &TupleType{Elems: []Type{}}
 			} else {
-				elems, err := inf.parseTupleElements(inner)
+				elems, isVar, err := inf.parseTupleElements(inner)
 				if err != nil {
 					return nil, err
 				}
-				argType = &TupleType{Elems: elems}
+				argType = &TupleType{Elems: elems, IsVariadic: isVar}
 			}
 		} else if argStr == "" {
 			argType = &TupleType{Elems: []Type{}}
@@ -3181,9 +3585,14 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}, nil
 	}
 
+
 	switch annot {
 	case "Int":
 		return TypeInt, nil
+	case "Regex":
+		return TypeRegex, nil
+	case "Match":
+		return TypeMatch, nil
 	case "Float":
 		return TypeFloat, nil
 	case "String":
@@ -3201,7 +3610,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	}
 
 	// Tuple annotation or grouping: (...) or (Int, ...) or (Int, String) or ((Int) -> String)
-	if strings.HasPrefix(annot, "(") && strings.HasSuffix(annot, ")") {
+	if ast.HasEnclosingDelims(annot, '(', ')') {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "" {
 			return &TupleType{Elems: []Type{}}, nil
@@ -3209,45 +3618,14 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		if inner == "..." {
 			return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 		}
-		// Check if there is a top-level comma
-		hasTopLevelComma := false
-		pDepth := 0
-		bDepth := 0
-		brDepth := 0
-		for _, r := range inner {
-			if r == '(' {
-				pDepth++
-			} else if r == ')' {
-				pDepth--
-			} else if r == '[' {
-				bDepth++
-			} else if r == ']' {
-				bDepth--
-			} else if r == '{' {
-				brDepth++
-			} else if r == '}' {
-				brDepth--
-			} else if r == ',' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
-				hasTopLevelComma = true
-				break
-			}
-		}
-
-		if !hasTopLevelComma {
+		if !ast.HasTopLevelComma(inner) {
 			// Single item in parens: grouping like ((Int) -> String) or (Int)
 			return inf.parseTypeAnnot(inner)
 		}
 
-		elems, err := inf.parseTupleElements(inner)
+		elems, isVariadic, err := inf.parseTupleElements(inner)
 		if err != nil {
 			return nil, err
-		}
-		isVariadic := false
-		for _, r := range strings.Split(inner, ",") {
-			if strings.TrimSpace(r) == "..." {
-				isVariadic = true
-				break
-			}
 		}
 		return &TupleType{
 			Elems:      elems,
@@ -3256,7 +3634,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	}
 
 	// Dict annotation: {...} or {Key: Value}
-	if strings.HasPrefix(annot, "{") && strings.HasSuffix(annot, "}") {
+	if ast.HasEnclosingDelims(annot, '{', '}') {
 		inner := strings.TrimSpace(annot[1 : len(annot)-1])
 		if inner == "..." {
 			return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
@@ -3266,7 +3644,15 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		bDepth := 0
 		brDepth := 0
 		innerRunes := []rune(inner)
-		for i, r := range innerRunes {
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
 			if r == '(' {
 				pDepth++
 			} else if r == ')' {
@@ -3306,42 +3692,66 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	// Parameterized type annotation: Name[T1, T2] or @mod.Name[T1, T2]
 	if strings.HasSuffix(annot, "]") {
 		depth := 0
+		pDepth := 0
+		brDepth := 0
 		bracketIdx := -1
-		for i := len(runes) - 1; i >= 0; i-- {
-			if runes[i] == ']' {
-				depth++
-			} else if runes[i] == '[' {
-				depth--
-				if depth == 0 {
-					bracketIdx = i
-					break
+		for i := 0; i < len(runes); i++ {
+			r := runes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '(' {
+				pDepth++
+			} else if r == ')' {
+				pDepth--
+			} else if r == '{' {
+				brDepth++
+			} else if r == '}' {
+				brDepth--
+			} else if pDepth == 0 && brDepth == 0 {
+				if r == '[' {
+					if depth == 0 {
+						bracketIdx = i
+					}
+					depth++
+				} else if r == ']' {
+					depth--
+					if depth == 0 && i < len(runes)-1 {
+						bracketIdx = -1
+					}
 				}
 			}
 		}
-		if bracketIdx > 0 {
+		if bracketIdx > 0 && depth == 0 && pDepth == 0 && brDepth == 0 {
 			baseStr := strings.TrimSpace(string(runes[:bracketIdx]))
-			argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
-			baseType, err := inf.parseTypeAnnot(baseStr)
-			if err != nil {
-				return nil, err
-			}
-			argTypes, err := inf.parseTupleElements(argsStr)
-			if err != nil {
-				return nil, err
-			}
-			if st, ok := baseType.(*StructType); ok {
-				if err := ValidateTypeConstraints(st.TypeParams, argTypes); err != nil {
+			if !strings.ContainsAny(baseStr, "->()[]{}:|, \t\n") {
+				argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
+				baseType, err := inf.parseTypeAnnot(baseStr)
+				if err != nil {
 					return nil, err
 				}
-				return InstantiateStruct(st, argTypes), nil
-			}
-			if iface, ok := baseType.(*InterfaceType); ok {
-				if err := ValidateTypeConstraints(iface.TypeParams, argTypes); err != nil {
+				argTypes, _, err := inf.parseTupleElements(argsStr)
+				if err != nil {
 					return nil, err
 				}
-				return InstantiateInterface(iface, argTypes), nil
+				if st, ok := baseType.(*StructType); ok {
+					if err := ValidateTypeConstraints(st.TypeParams, argTypes); err != nil {
+						return nil, err
+					}
+					return InstantiateStruct(st, argTypes), nil
+				}
+				if iface, ok := baseType.(*InterfaceType); ok {
+					if err := ValidateTypeConstraints(iface.TypeParams, argTypes); err != nil {
+						return nil, err
+					}
+					return InstantiateInterface(iface, argTypes), nil
+				}
+				return nil, fmt.Errorf("type '%s' does not take type arguments", baseStr)
 			}
-			return nil, fmt.Errorf("type '%s' does not take type arguments", baseStr)
 		}
 	}
 
@@ -3373,7 +3783,292 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	return nil, fmt.Errorf("unknown type '%s'", annot)
 }
 
-func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
+func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
+	annot = strings.TrimSpace(annot)
+	if annot == "" {
+		return nil, nil, fmt.Errorf("empty type annotation or pattern")
+	}
+	if annot == "_" {
+		return TypeUnknown, TypeUnknown, nil
+	}
+	if annot == "true" || annot == "false" {
+		return TypeBool, nil, nil
+	}
+
+	// 1. Check top-level Union FIRST: A | B
+	var parts []string
+	parenDepth := 0
+	bracketDepth := 0
+	braceDepth := 0
+	start := 0
+	runes := []rune(annot)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
+		if r == '(' {
+			parenDepth++
+		} else if r == ')' {
+			parenDepth--
+		} else if r == '[' {
+			bracketDepth++
+		} else if r == ']' {
+			bracketDepth--
+		} else if r == '{' {
+			braceDepth++
+		} else if r == '}' {
+			braceDepth--
+		} else if r == '|' && parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+			parts = append(parts, string(runes[start:i]))
+			start = i + 1
+		}
+	}
+	if len(parts) > 0 {
+		parts = append(parts, string(runes[start:]))
+		var narrowMembers []Type
+		var coveredMembers []Type
+		hasTrueMember := false
+		hasFalseMember := false
+		for _, p := range parts {
+			pt := strings.TrimSpace(p)
+			if pt == "" {
+				return nil, nil, fmt.Errorf("invalid union type: empty member in '%s'", annot)
+			}
+			unwrapped := pt
+			for ast.HasEnclosingDelims(unwrapped, '(', ')') {
+				in := strings.TrimSpace(unwrapped[1 : len(unwrapped)-1])
+				if ast.HasTopLevelComma(in) {
+					break
+				}
+				unwrapped = in
+			}
+			if unwrapped == "true" {
+				hasTrueMember = true
+			} else if unwrapped == "false" {
+				hasFalseMember = true
+			}
+			nMember, cMember, err := inf.parsePatternTypeAnnot(pt)
+			if err != nil {
+				return nil, nil, err
+			}
+			narrowMembers = append(narrowMembers, nMember)
+			if cMember != nil {
+				coveredMembers = append(coveredMembers, cMember)
+			}
+		}
+		if hasTrueMember && hasFalseMember {
+			coveredMembers = append(coveredMembers, TypeBool)
+		}
+		var finalCovered Type
+		if len(coveredMembers) > 0 {
+			finalCovered = NewUnionType(coveredMembers...)
+		}
+		return NewUnionType(narrowMembers...), finalCovered, nil
+	}
+
+	// 2. Tuple pattern or grouping: (...)
+	if ast.HasEnclosingDelims(annot, '(', ')') {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner == "" {
+			emptyTup := &TupleType{Elems: []Type{}}
+			return emptyTup, emptyTup, nil
+		}
+		if inner == "..." {
+			varTup := &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+			return varTup, varTup, nil
+		}
+
+		if !ast.HasTopLevelComma(inner) {
+			// Single grouped pattern e.g. (/^\d+$/) or (Int)
+			return inf.parsePatternTypeAnnot(inner)
+		}
+
+		// Tuple pattern with top-level comma
+		var rawParts []string
+		pD := 0
+		bD := 0
+		brD := 0
+		innerRunes := []rune(inner)
+		elemStart := 0
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '(' {
+				pD++
+			} else if r == ')' {
+				pD--
+			} else if r == '[' {
+				bD++
+			} else if r == ']' {
+				bD--
+			} else if r == '{' {
+				brD++
+			} else if r == '}' {
+				brD--
+			} else if r == ',' && pD == 0 && bD == 0 && brD == 0 {
+				rawParts = append(rawParts, string(innerRunes[elemStart:i]))
+				elemStart = i + 1
+			}
+		}
+		rawParts = append(rawParts, string(innerRunes[elemStart:]))
+
+		var narrowElems []Type
+		var coveredElems []Type
+		allCovered := true
+		isVariadic := false
+
+		for idx, p := range rawParts {
+			trimmed := strings.TrimSpace(p)
+			if trimmed == "..." {
+				isVariadic = true
+				continue
+			}
+			if trimmed == "" {
+				if idx == len(rawParts)-1 && len(rawParts) >= 2 {
+					continue
+				}
+				return nil, nil, fmt.Errorf("empty element in tuple pattern '%s'", annot)
+			}
+			if isVariadic {
+				return nil, nil, fmt.Errorf("elements cannot follow '...' in tuple pattern '%s'", annot)
+			}
+			nEl, cEl, err := inf.parsePatternTypeAnnot(trimmed)
+			if err != nil {
+				return nil, nil, err
+			}
+			narrowElems = append(narrowElems, nEl)
+			if cEl == nil {
+				allCovered = false
+			} else {
+				coveredElems = append(coveredElems, cEl)
+			}
+		}
+
+		if isVariadic && len(narrowElems) == 0 {
+			narrowElems = []Type{TypeUnknown}
+		}
+		if isVariadic && len(coveredElems) == 0 {
+			coveredElems = []Type{TypeUnknown}
+		}
+		narrowT := &TupleType{Elems: narrowElems, IsVariadic: isVariadic}
+		var coveredT Type
+		if allCovered && len(coveredElems) == len(narrowElems) {
+			coveredT = &TupleType{Elems: coveredElems, IsVariadic: isVariadic}
+		}
+		return narrowT, coveredT, nil
+	}
+
+	// 3. Dict pattern: {...}
+	if ast.HasEnclosingDelims(annot, '{', '}') {
+		inner := strings.TrimSpace(annot[1 : len(annot)-1])
+		if inner == "..." {
+			varDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}
+			return varDict, varDict, nil
+		}
+		colonIdx := -1
+		pD := 0
+		bD := 0
+		brD := 0
+		innerRunes := []rune(inner)
+		for i := 0; i < len(innerRunes); i++ {
+			r := innerRunes[i]
+			if r == '/' {
+				nextIdx := ast.SkipRegexInTypeAnnot(innerRunes, i)
+				if nextIdx > i {
+					i = nextIdx - 1
+					continue
+				}
+			}
+			if r == '(' {
+				pD++
+			} else if r == ')' {
+				pD--
+			} else if r == '[' {
+				bD++
+			} else if r == ']' {
+				bD--
+			} else if r == '{' {
+				brD++
+			} else if r == '}' {
+				brD--
+			} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+				colonIdx = i
+				break
+			}
+		}
+
+		if colonIdx != -1 {
+			keyStr := strings.TrimSpace(string(innerRunes[:colonIdx]))
+			valStr := strings.TrimSpace(string(innerRunes[colonIdx+1:]))
+			if keyStr != "" && valStr != "" {
+				nKey, cKey, err := inf.parsePatternTypeAnnot(keyStr)
+				if err != nil {
+					return nil, nil, err
+				}
+				nVal, cVal, err := inf.parsePatternTypeAnnot(valStr)
+				if err != nil {
+					return nil, nil, err
+				}
+				narrowT := &DictType{Key: nKey, Value: nVal}
+				var coveredT Type
+				if cKey != nil && cVal != nil {
+					coveredT = &DictType{Key: cKey, Value: cVal}
+				}
+				return narrowT, coveredT, nil
+			}
+		}
+		return nil, nil, fmt.Errorf("invalid dictionary pattern '%s'", annot)
+	}
+
+	// 4. Single regex literal: /pattern/flags
+	if strings.HasPrefix(annot, "/") {
+		annotRunes := []rune(annot)
+		if ast.SkipRegexInTypeAnnot(annotRunes, 0) == len(annotRunes) {
+			lastSlash := strings.LastIndex(annot, "/")
+			if lastSlash <= 0 {
+				return nil, nil, fmt.Errorf("invalid regex literal in pattern: %s", annot)
+			}
+			rawPat := annot[1:lastSlash]
+			flags := annot[lastSlash+1:]
+			pat := ast.UnescapeRegexPattern(rawPat)
+			if err := ValidateRegex(pat, flags); err != nil {
+				return nil, nil, err
+			}
+			return TypeString, nil, nil
+		}
+	}
+
+	// 5. Ordinary type annotation
+	t, err := inf.parseTypeAnnot(annot)
+	if err != nil {
+		return nil, nil, err
+	}
+	return t, t, nil
+}
+
+// ParsePatternTypeAnnot parses a pattern type annotation on an Inferencer instance.
+func (inf *Inferencer) ParsePatternTypeAnnot(annot string) (Type, Type, error) {
+	return inf.parsePatternTypeAnnot(annot)
+}
+
+// ParsePatternTypeAnnot parses a pattern type annotation using a fresh Inferencer.
+func ParsePatternTypeAnnot(annot string) (Type, Type, error) {
+	inf := NewInferencer()
+	return inf.parsePatternTypeAnnot(annot)
+}
+
+func (inf *Inferencer) parseTupleElements(inner string) ([]Type, bool, error) {
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
@@ -3382,6 +4077,13 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 	runes := []rune(inner)
 	for i := 0; i < len(runes); i++ {
 		r := runes[i]
+		if r == '/' {
+			nextIdx := ast.SkipRegexInTypeAnnot(runes, i)
+			if nextIdx > i {
+				i = nextIdx - 1
+				continue
+			}
+		}
 		if r == '(' {
 			parenDepth++
 		} else if r == ')' {
@@ -3402,17 +4104,32 @@ func (inf *Inferencer) parseTupleElements(inner string) ([]Type, error) {
 	parts = append(parts, string(runes[start:]))
 
 	var elems []Type
-	for _, p := range parts {
+	isVariadic := false
+	for idx, p := range parts {
 		trimmed := strings.TrimSpace(p)
-		if trimmed != "" && trimmed != "..." {
-			elem, err := inf.parseTypeAnnot(trimmed)
-			if err != nil {
-				return nil, err
-			}
-			elems = append(elems, elem)
+		if trimmed == "..." {
+			isVariadic = true
+			continue
 		}
+		if trimmed == "" {
+			if idx == len(parts)-1 && len(parts) >= 2 {
+				continue
+			}
+			return nil, false, fmt.Errorf("empty element in tuple type")
+		}
+		if isVariadic {
+			return nil, false, fmt.Errorf("elements cannot follow '...' in tuple type")
+		}
+		elem, err := inf.parseTypeAnnot(trimmed)
+		if err != nil {
+			return nil, false, err
+		}
+		elems = append(elems, elem)
 	}
-	return elems, nil
+	if isVariadic && len(elems) == 0 {
+		elems = []Type{TypeUnknown}
+	}
+	return elems, isVariadic, nil
 }
 
 func unifyTypeParams(paramType, argType Type, bindings map[string]Type) {
@@ -3531,45 +4248,110 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 
 	for _, c := range e.Cases {
 		caseScope := NewScope(inf.scope)
-		if c.TuplePattern != nil {
-			if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "_" {
-				anyTuple := &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
-				coveredTypes = append(coveredTypes, anyTuple)
-				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, anyTuple)
-				}
-			} else if len(c.TuplePattern.Elements) == 0 && c.TuplePattern.RestName == "" {
-				emptyTup := &TupleType{Elems: []Type{}}
-				coveredTypes = append(coveredTypes, emptyTup)
-				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, emptyTup)
-				}
+		if c.RegexPattern != nil {
+			if err := ValidateRegex(c.RegexPattern.Pattern, c.RegexPattern.Flags); err != nil {
+				return nil, false, inf.nodeErr(c.RegexPattern, "%s", err.Error())
 			}
-			for _, name := range c.TuplePattern.Elements {
+			narrowedTargetT := narrowTypeByPattern(targetT, TypeString)
+			if id, isId := e.Target.(*ast.Identifier); isId {
+				_ = caseScope.Declare(id.Name, narrowedTargetT)
+			}
+			if c.AsName != "" && c.AsName != "_" {
+				_ = caseScope.Declare(c.AsName, TypeMatch)
+			}
+		} else if c.TuplePattern != nil {
+			elemUnknowns := make([]Type, len(c.TuplePattern.Elements))
+			for i := range elemUnknowns {
+				elemUnknowns[i] = TypeUnknown
+			}
+			var tupleCovered Type
+			if c.TuplePattern.RestName != "" {
+				tupleCovered = &TupleType{Elems: append(elemUnknowns, TypeUnknown), IsVariadic: true}
+			} else {
+				tupleCovered = &TupleType{Elems: elemUnknowns, IsVariadic: false}
+			}
+			coveredTypes = append(coveredTypes, tupleCovered)
+
+			narrowedTupleT := narrowTypeByPattern(targetT, tupleCovered)
+			if id, isId := e.Target.(*ast.Identifier); isId {
+				_ = caseScope.Declare(id.Name, narrowedTupleT)
+			}
+
+			elemTypes, restType, _ := extractTupleBindingTypes(narrowedTupleT, len(c.TuplePattern.Elements), c.TuplePattern.RestName != "")
+			for i, name := range c.TuplePattern.Elements {
 				if name != "_" {
-					_ = caseScope.Declare(name, TypeUnknown)
+					_ = caseScope.Declare(name, elemTypes[i])
 				}
 			}
 			if c.TuplePattern.RestName != "" && c.TuplePattern.RestName != "_" {
-				_ = caseScope.Declare(c.TuplePattern.RestName, &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true})
+				_ = caseScope.Declare(c.TuplePattern.RestName, restType)
+			}
+
+			if c.AsName != "" && c.AsName != "_" {
+				_ = caseScope.Declare(c.AsName, narrowedTupleT)
 			}
 		} else {
 			pat := strings.TrimSpace(c.Pattern)
+			for ast.HasEnclosingDelims(pat, '(', ')') {
+				inner := strings.TrimSpace(pat[1 : len(pat)-1])
+				if ast.HasTopLevelComma(inner) {
+					break
+				}
+				pat = inner
+			}
+			parts := splitTopLevelUnionParts(pat)
+			for _, p := range parts {
+				tp := strings.TrimSpace(p)
+				for ast.HasEnclosingDelims(tp, '(', ')') {
+					inner := strings.TrimSpace(tp[1 : len(tp)-1])
+					if ast.HasTopLevelComma(inner) {
+						break
+					}
+					tp = inner
+				}
+				if tp == "true" {
+					hasTrue = true
+				} else if tp == "false" {
+					hasFalse = true
+				} else if tp == "_" {
+					hasWildcard = true
+				}
+			}
+
 			if pat == "_" {
 				hasWildcard = true
-			} else if pat == "true" {
-				hasTrue = true
-			} else if pat == "false" {
-				hasFalse = true
+				if c.AsName != "" && c.AsName != "_" {
+					asT := targetT
+					if asT == nil {
+						asT = TypeUnknown
+					}
+					_ = caseScope.Declare(c.AsName, asT)
+				}
+			} else if pat == "true" || pat == "false" {
+				narrowedTargetT := narrowTypeByPattern(targetT, TypeBool)
+				if id, isId := e.Target.(*ast.Identifier); isId {
+					_ = caseScope.Declare(id.Name, narrowedTargetT)
+				}
+				if c.AsName != "" && c.AsName != "_" {
+					_ = caseScope.Declare(c.AsName, narrowedTargetT)
+				}
 			} else if pat != "" {
-				patT, err := inf.parseTypeAnnot(pat)
+				narrowT, coveredT, err := inf.parsePatternTypeAnnot(pat)
 				if err != nil {
 					return nil, false, err
 				}
-				coveredTypes = append(coveredTypes, patT)
+				if coveredT == TypeUnknown {
+					hasWildcard = true
+				} else if coveredT != nil {
+					coveredTypes = append(coveredTypes, coveredT)
+				}
+				narrowedTargetT := narrowTypeByPattern(targetT, narrowT)
 				// If target is an identifier, narrow its type inside this case scope
 				if id, isId := e.Target.(*ast.Identifier); isId {
-					_ = caseScope.Declare(id.Name, patT)
+					_ = caseScope.Declare(id.Name, narrowedTargetT)
+				}
+				if c.AsName != "" && c.AsName != "_" {
+					_ = caseScope.Declare(c.AsName, narrowedTargetT)
 				}
 			}
 		}
@@ -3589,11 +4371,13 @@ func (inf *Inferencer) inferMatchExpr(e *ast.MatchExpr) (Type, bool, error) {
 		}
 	}
 
+	if hasTrue && hasFalse {
+		coveredTypes = append(coveredTypes, TypeBool)
+	}
+
 	isExhaustive := hasWildcard
 	if !isExhaustive && targetT != nil && targetT != TypeUnknown {
-		if targetT == TypeBool && hasTrue && hasFalse {
-			isExhaustive = true
-		} else if len(coveredTypes) > 0 && IsAssignableTo(targetT, NewUnionType(coveredTypes...)) {
+		if len(coveredTypes) > 0 && IsAssignableTo(targetT, NewUnionType(coveredTypes...)) {
 			isExhaustive = true
 		}
 	}

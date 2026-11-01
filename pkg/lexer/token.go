@@ -19,6 +19,7 @@ const (
 	TokenString
 	TokenBool
 	TokenNil
+	TokenRegex // /pattern/flags
 
 	// Keywords
 	TokenDef
@@ -76,6 +77,7 @@ const (
 	TokenCaret       // ^
 	TokenLShift      // <<
 	TokenRShift      // >>
+	TokenRegexMatch  // =~
 )
 
 // Token holds token information.
@@ -110,6 +112,8 @@ func (t TokenType) String() string {
 		return "bool"
 	case TokenNil:
 		return "nil"
+	case TokenRegex:
+		return "regex"
 	case TokenDef:
 		return "'def'"
 	case TokenIf:
@@ -212,6 +216,8 @@ func (t TokenType) String() string {
 		return "'<<'"
 	case TokenRShift:
 		return "'>>'"
+	case TokenRegexMatch:
+		return "'=~'"
 	default:
 		return "unknown"
 	}
@@ -233,7 +239,7 @@ func FormatToken(tok Token) string {
 			return "identifier '" + tok.Literal + "'"
 		}
 		return "identifier"
-	case TokenInt, TokenFloat, TokenString, TokenBool:
+	case TokenInt, TokenFloat, TokenString, TokenBool, TokenRegex:
 		if tok.Literal != "" {
 			return tok.Type.String() + " " + tok.Literal
 		}
