@@ -2001,10 +2001,6 @@ func TestParseIsExprBoolAndEmpty(t *testing.T) {
 	}
 }
 
-
-
-
-
 func TestParseEmbeddedModuleTypes(t *testing.T) {
 	input := `
 struct MyStruct:

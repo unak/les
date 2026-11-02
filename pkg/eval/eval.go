@@ -839,6 +839,11 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 	switch v := val.(type) {
 	case *StructDefValue:
 		newDef := *v
+		if v.Origin != nil {
+			newDef.Origin = v.Origin
+		} else {
+			newDef.Origin = v
+		}
 		newDef.TypeArgs = append([]string(nil), typeArgs...)
 		if v.StructType != nil {
 			if st, ok := v.StructType.(*types.StructType); ok && len(st.TypeParams) > 0 {
@@ -5059,16 +5064,16 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		baseName, typeArgs, isGeneric := parseGenericTypeAnnot(typeAnnot)
 		if isGeneric {
 			if si, ok := val.(*StructInstance); ok {
+				var sEnv *Environment
+				if len(optEnv) > 0 && optEnv[0] != nil {
+					sEnv = optEnv[0]
+				} else if si.Def.Env != nil {
+					sEnv = si.Def.Env
+				}
 				matchesStruct := si.Def.Name == baseName
 				if !matchesStruct && strings.Contains(baseName, "::") {
 					parts := strings.SplitN(baseName, "::", 2)
 					if len(parts) == 2 && si.Def.Name == parts[1] {
-						var sEnv *Environment
-						if len(optEnv) > 0 && optEnv[0] != nil {
-							sEnv = optEnv[0]
-						} else if si.Def.Env != nil {
-							sEnv = si.Def.Env
-						}
 						if sEnv != nil {
 							if modVal, found := sEnv.GetModule(parts[0]); found {
 								if expVal, ok := modVal.Exports[parts[1]]; ok {
@@ -5076,8 +5081,14 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 									if bf, isBF := forcedExp.(*BuiltinFunc); isBF && bf.TypeDef != nil {
 										forcedExp = Force(bf.TypeDef)
 									}
-									if structDef, isStruct := forcedExp.(*StructDefValue); isStruct && (si.Def == structDef || si.Def.Name == structDef.Name) {
-										matchesStruct = true
+									if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
+										siRoot := si.Def
+										if siRoot != nil && siRoot.Origin != nil {
+											siRoot = siRoot.Origin
+										}
+										if siRoot == structDef {
+											matchesStruct = true
+										}
 									}
 								}
 							}
@@ -5090,12 +5101,25 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					}
 					if len(si.TypeArgs) == len(typeArgs) {
 						allMatch := true
+						var sInf *types.Inferencer
+						if sEnv != nil && sEnv.Inferencer != nil {
+							if inf, ok := sEnv.Inferencer.(*types.Inferencer); ok {
+								sInf = inf
+							}
+						}
 						for i, ta := range typeArgs {
 							if si.TypeArgs[i] == ta {
 								continue
 							}
-							actualT, err1 := types.ParseTypeAnnot(si.TypeArgs[i])
-							targetT, err2 := types.ParseTypeAnnot(ta)
+							var actualT, targetT types.Type
+							var err1, err2 error
+							if sInf != nil {
+								actualT, err1 = sInf.ParseTypeAnnot(si.TypeArgs[i])
+								targetT, err2 = sInf.ParseTypeAnnot(ta)
+							} else {
+								actualT, err1 = types.ParseTypeAnnot(si.TypeArgs[i])
+								targetT, err2 = types.ParseTypeAnnot(ta)
+							}
 							if err1 == nil && err2 == nil && types.IsAssignableTo(actualT, targetT) {
 								continue
 							}
@@ -5195,11 +5219,19 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						}
 						if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
 							if si, ok := val.(*StructInstance); ok && si.Def != nil {
-								if si.Def == structDef {
+								siRoot := si.Def
+								if siRoot.Origin != nil {
+									siRoot = siRoot.Origin
+								}
+								if siRoot == structDef {
 									return true
 								}
 								for _, emb := range si.Embedded {
-									if emb.Def == structDef {
+									embRoot := emb.Def
+									if embRoot != nil && embRoot.Origin != nil {
+										embRoot = embRoot.Origin
+									}
+									if embRoot == structDef {
 										return true
 									}
 								}

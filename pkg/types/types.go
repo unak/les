@@ -18,10 +18,10 @@ type Type interface {
 type PrimType string
 
 const (
-	TypeInt    PrimType = "Int"
-	TypeFloat  PrimType = "Float"
-	TypeString PrimType = "String"
-	TypeBytes  PrimType = "Bytes"
+	TypeInt     PrimType = "Int"
+	TypeFloat   PrimType = "Float"
+	TypeString  PrimType = "String"
+	TypeBytes   PrimType = "Bytes"
 	TypeBool    PrimType = "Bool"
 	TypeNil     PrimType = "Nil"
 	TypeRegex   PrimType = "Regex"
@@ -227,9 +227,6 @@ func (f *FuncType) Equals(other Type) bool {
 	retEq := f.Ret == TypeUnknown || of.Ret == TypeUnknown || f.Ret.Equals(of.Ret)
 	return argEq && retEq
 }
-
-
-
 
 // TypeVar represents uninstantiated type variable for inference.
 type TypeVar struct {

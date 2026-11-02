@@ -138,7 +138,9 @@ func (v IntValue) Equal(other IntValue) bool {
 
 // Cmp compares v and other and returns:
 // -1 if v <  other
-//  0 if v == other
+//
+//	0 if v == other
+//
 // +1 if v >  other
 func (v IntValue) Cmp(other IntValue) int {
 	if v.big == nil && other.big == nil {
@@ -793,6 +795,7 @@ type StructDefValue struct {
 	AllMethods    map[string][]*ast.FuncDef
 	Env           *Environment
 	StructType    any // Inferred *types.StructType
+	Origin        *StructDefValue
 }
 
 func (s *StructDefValue) String() string {
@@ -1691,9 +1694,9 @@ func CompileRegex(pattern, flags string) (*RegexValue, error) {
 type MatchValue struct {
 	Target string
 	Regex  *RegexValue
-	Groups []Value // 0: full match, 1..n: capture groups (StringValue or NilValue)
+	Groups []Value          // 0: full match, 1..n: capture groups (StringValue or NilValue)
 	Names  map[string]Value // named capture mapping
-	Spans  [][2]int // rune-based [start, end] for each group, or [-1, -1] if unmatched
+	Spans  [][2]int         // rune-based [start, end] for each group, or [-1, -1] if unmatched
 }
 
 func (mv *MatchValue) String() string {

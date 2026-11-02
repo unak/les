@@ -301,7 +301,6 @@ func extractTupleBindingTypes(t Type, numElements int, hasRest bool) ([]Type, Ty
 	return elemUnknowns, restT, false
 }
 
-
 // Scope tracks lexical bindings and detects duplicate declarations in the same scope.
 type Scope struct {
 	parent   *Scope
@@ -869,6 +868,11 @@ func makeBufioModuleType(alias string) *ModuleType {
 			"Writer": writerStruct,
 		},
 	}
+}
+
+var defaultBuiltinModules = map[string]*ModuleType{
+	"io":    makeIOModuleType("io"),
+	"bufio": makeBufioModuleType("bufio"),
 }
 
 func (inf *Inferencer) SetModuleLoader(loader func(path string) (*ModuleType, error)) {
@@ -1736,10 +1740,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		// Process methods in two passes:
 		// Pass A: Build and register method signatures on st.Methods so self-calls and forward calls work
 		type methodWorkItem struct {
-			methodDef        *ast.FuncDef
-			methodType       *FuncType
-			methodScope      *Scope
-			declaredRetType  Type
+			methodDef       *ast.FuncDef
+			methodType      *FuncType
+			methodScope     *Scope
+			declaredRetType Type
 		}
 		var methodItems []*methodWorkItem
 
@@ -3658,7 +3662,6 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}, nil
 	}
 
-
 	switch annot {
 	case "Int":
 		return TypeInt, nil
@@ -3833,28 +3836,33 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}
 	}
 
-	if inf != nil {
-		if strings.Contains(annot, "::") {
-			parts := strings.SplitN(annot, "::", 2)
-			if len(parts) == 2 {
-				modName := parts[0]
-				typeName := parts[1]
-				if mod, ok := inf.modules[modName]; ok {
-					if mod.Types != nil {
-						if t, ok := mod.Types[typeName]; ok {
-							return t, nil
-						}
-					}
-					if t, ok := mod.Exports[typeName]; ok {
+	if strings.Contains(annot, "::") {
+		parts := strings.SplitN(annot, "::", 2)
+		if len(parts) == 2 {
+			modName := parts[0]
+			typeName := parts[1]
+			var mod *ModuleType
+			if inf != nil && inf.modules != nil {
+				mod = inf.modules[modName]
+			}
+			if mod == nil {
+				mod = defaultBuiltinModules[modName]
+			}
+			if mod != nil {
+				if mod.Types != nil {
+					if t, ok := mod.Types[typeName]; ok {
 						return t, nil
 					}
 				}
+				if t, ok := mod.Exports[typeName]; ok {
+					return t, nil
+				}
 			}
 		}
-		if inf.scope != nil {
-			if t, ok := inf.scope.Lookup(annot); ok {
-				return t, nil
-			}
+	}
+	if inf != nil && inf.scope != nil {
+		if t, ok := inf.scope.Lookup(annot); ok {
+			return t, nil
 		}
 	}
 
@@ -4487,4 +4495,3 @@ func getFirstParamType(fnT *FuncType) (Type, bool) {
 	}
 	return nil, false
 }
-

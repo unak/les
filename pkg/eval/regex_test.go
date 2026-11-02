@@ -531,7 +531,6 @@ b3 = p1 is (false, Int)
 	checkBool("b3", true)
 }
 
-
 func TestIsExprBoolEvaluation(t *testing.T) {
 	input := `
 t = true
@@ -575,7 +574,6 @@ else:
 	checkBool(`b4`, true)
 	checkInt(`res`, 2)
 }
-
 
 func TestRegexFlagCanonicalizationAndMatchIndex(t *testing.T) {
 	input := `

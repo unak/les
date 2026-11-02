@@ -2,9 +2,9 @@ package eval
 
 import (
 	"errors"
-	"math"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -4696,10 +4696,6 @@ print (ds is Pipeline[String]), "\n"
 	}
 }
 
-
-
-
-
 func TestGenericBoxDictAndIndexing(t *testing.T) {
 	code := `struct Box[T]:
     val: T
@@ -4724,9 +4720,6 @@ res2 = l[idx]`
 		t.Fatalf("unexpected output:\ngot:\n%s\nexpected:\n%s", out, expected)
 	}
 }
-
-
-
 
 func TestGenericBugsFixed(t *testing.T) {
 	code1 := `
@@ -5330,23 +5323,23 @@ func TestEvalParenOmissionUnaryCall(t *testing.T) {
 			expected: "-1",
 		},
 		{
-			name: "print binary minus",
-			code: "a = 10\nb = 3\nprint a - b\n",
+			name:     "print binary minus",
+			code:     "a = 10\nb = 3\nprint a - b\n",
 			expected: "7",
 		},
 		{
-			name: "multiple args with unary",
-			code: "a = 5\nprint a, -1, +2\n",
+			name:     "multiple args with unary",
+			code:     "a = 5\nprint a, -1, +2\n",
 			expected: "5-12",
 		},
 		{
-			name: "call user function with unary minus",
-			code: "def negate(x):\n    return -x\nnegate -5\nprint negate(-5)\n",
+			name:     "call user function with unary minus",
+			code:     "def negate(x):\n    return -x\nnegate -5\nprint negate(-5)\n",
 			expected: "5",
 		},
 		{
-			name: "call user function with unary plus",
-			code: "def add_one(x):\n    return x + 1\nadd_one +9\nprint add_one(+9)\n",
+			name:     "call user function with unary plus",
+			code:     "def add_one(x):\n    return x + 1\nadd_one +9\nprint add_one(+9)\n",
 			expected: "10",
 		},
 	}
@@ -5972,7 +5965,6 @@ print zero.IsNaN(), " ", zero.IsInfinite(), " ", zero.IsFinite()
 	}
 }
 
-
 func TestModuleDoubleColonScopeAccess(t *testing.T) {
 	ev := NewEvaluator()
 	var out strings.Builder
@@ -6150,5 +6142,74 @@ res
 	}
 	if bVal, ok := Force(valIface).(BoolValue); !ok || !bool(bVal) {
 		t.Fatalf("expected r is MyReader to be true, got %v", valIface)
+	}
+}
+
+func TestGenericModuleTypeArgumentMatchingAndNonGenericStructName(t *testing.T) {
+	tempDir := t.TempDir()
+
+	containersCode := `
+struct Box[T]:
+    val: T
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "containers.les"),
+		[]byte(containersCode), 0644); err != nil {
+		t.Fatalf("failed to write containers.les: %v", err)
+	}
+
+	baseCode := `
+struct Item:
+    name: String
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	testCode := `
+import containers
+import base
+
+struct Item:
+    name: String
+
+struct SimpleReader:
+    def Read(self, n: Int) -> Bytes | Nil:
+        Bytes("data")
+
+r = SimpleReader()
+boxReader = containers::Box(val: r)
+isReaderBox = boxReader is containers::Box[io::Reader]
+
+item = base::Item(name: "gear")
+boxItem = containers::Box(val: item)
+isItemBox = boxItem is containers::Box[base::Item]
+
+isItemDirect = item is base::Item
+isItemUnqualified = item is Item
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	v1, ok := ev.globalEnv.Get("isReaderBox")
+	if !ok || Force(v1) != BoolValue(true) {
+		t.Fatalf("expected isReaderBox to be true, got %v", v1)
+	}
+	v2, ok := ev.globalEnv.Get("isItemBox")
+	if !ok || Force(v2) != BoolValue(true) {
+		t.Fatalf("expected isItemBox to be true, got %v", v2)
+	}
+	v3, ok := ev.globalEnv.Get("isItemDirect")
+	if !ok || Force(v3) != BoolValue(true) {
+		t.Fatalf("expected isItemDirect to be true, got %v", v3)
+	}
+	v4, ok := ev.globalEnv.Get("isItemUnqualified")
+	if !ok || Force(v4) != BoolValue(true) {
+		t.Fatalf("expected isItemUnqualified to be true, got %v", v4)
 	}
 }

@@ -1126,7 +1126,7 @@ func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
 		Position: pos,
 		Target:   target,
 		Member:   member,
-		Value:  val,
+		Value:    val,
 	}
 }
 
@@ -1176,7 +1176,7 @@ func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {
 	return &ast.UnpackDecl{
 		Position: pos,
 		Pattern:  tuplePat,
-		Value:   val,
+		Value:    val,
 	}
 }
 
@@ -1332,7 +1332,6 @@ func (p *Parser) parseExprStmt() *ast.ExprStmt {
 	p.consumeStmtEnd()
 	return &ast.ExprStmt{Position: pos, Value: expr}
 }
-
 
 func (p *Parser) parseExpr(precedence int) ast.Expr {
 	isStmtStart := p.atStatementStart

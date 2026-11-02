@@ -1109,7 +1109,6 @@ d: {String: Int} = {"a": get_val(42)}
 		t.Fatalf("unexpected type error assigning Unknown-valued dict to typed dict: %v", err)
 	}
 
-
 	// 14. IsAssignableTo with TypeUnknown:
 	emptyDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}
 	intDict := &DictType{Key: TypeString, Value: TypeInt}
@@ -1252,7 +1251,6 @@ match 1:
 			expectedErr: "unknown type 'Unknown'",
 		},
 	}
-
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2354,5 +2352,24 @@ cId: Int = c.id
 	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
 	if err := inf.InferProgram(prog); err != nil {
 		t.Fatalf("unexpected type inference error on embedded module struct: %v", err)
+	}
+}
+func TestBuiltinModuleTypeResolutionInNilInferencer(t *testing.T) {
+	// 1. io::Reader via package-level ParseTypeAnnot (inf == nil)
+	rType, err := ParseTypeAnnot("io::Reader")
+	if err != nil {
+		t.Fatalf("expected io::Reader to be resolved in nil inferencer, got: %v", err)
+	}
+	if iface, ok := rType.(*InterfaceType); !ok || iface.Name != "io.Reader" {
+		t.Fatalf("expected *InterfaceType with name 'io.Reader', got: %v", rType)
+	}
+
+	// 2. bufio::Writer via package-level ParseTypeAnnot
+	wType, err := ParseTypeAnnot("bufio::Writer")
+	if err != nil {
+		t.Fatalf("expected bufio::Writer to be resolved in nil inferencer, got: %v", err)
+	}
+	if st, ok := wType.(*StructType); !ok || st.Name != "bufio.Writer" {
+		t.Fatalf("expected *StructType with name 'bufio.Writer', got: %v", wType)
 	}
 }
