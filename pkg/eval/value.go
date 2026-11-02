@@ -1029,8 +1029,10 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 		}
 	}
 
-	visited := make(map[string]bool)
-	visited[si.Def.Name] = true
+	visited := make(map[*StructDefValue]bool)
+	if si.Def != nil {
+		visited[si.Def] = true
+	}
 
 	for len(currentLevel) > 0 {
 		type candidate struct {
@@ -1041,10 +1043,12 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 		var nextLevel []*StructInstance
 
 		for _, emb := range currentLevel {
-			if visited[emb.Def.Name] {
-				continue
+			if emb.Def != nil {
+				if visited[emb.Def] {
+					continue
+				}
+				visited[emb.Def] = true
 			}
-			visited[emb.Def.Name] = true
 
 			if emb.Def != nil && emb.Def.AllMethods != nil {
 				for _, m := range emb.Def.AllMethods[name] {
@@ -1119,8 +1123,10 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 		}
 	}
 
-	visited := make(map[string]bool)
-	visited[si.Def.Name] = true
+	visited := make(map[*StructDefValue]bool)
+	if si.Def != nil {
+		visited[si.Def] = true
+	}
 
 	for len(currentLevel) > 0 {
 		type candidate struct {
@@ -1131,10 +1137,12 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 		var nextLevel []*StructInstance
 
 		for _, emb := range currentLevel {
-			if visited[emb.Def.Name] {
-				continue
+			if emb.Def != nil {
+				if visited[emb.Def] {
+					continue
+				}
+				visited[emb.Def] = true
 			}
-			visited[emb.Def.Name] = true
 
 			if v, ok := emb.Fields[name]; ok {
 				candidates = append(candidates, candidate{val: v, origin: emb.Def.Name})

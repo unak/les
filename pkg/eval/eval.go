@@ -1364,6 +1364,28 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			return nil, err
 		}
 		si.Fields[s.Member] = val
+		if si.Def != nil && len(si.Def.EmbeddedNames) > 0 {
+			forced := Force(val)
+			if embInst, ok := forced.(*StructInstance); ok {
+				for _, embName := range si.Def.EmbeddedNames {
+					lookupName := embName
+					if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+						lookupName = base
+					}
+					fName := lookupName
+					if strings.Contains(fName, "::") {
+						parts := strings.Split(fName, "::")
+						fName = parts[len(parts)-1]
+					}
+					if s.Member == fName || s.Member == lookupName {
+						si.Embedded[lookupName] = embInst
+						si.Fields[lookupName] = embInst
+						si.Fields[fName] = embInst
+						break
+					}
+				}
+			}
+		}
 		return nil, nil
 
 	case *ast.ReturnStmt:
@@ -2340,11 +2362,14 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 				forced := Force(fVal)
 				if si, ok := forced.(*StructInstance); ok {
 					embedded[lookupName] = si
+					fields[fName] = si
 				}
 			} else if fVal, ok := fields[embName]; ok {
 				forced := Force(fVal)
 				if si, ok := forced.(*StructInstance); ok {
 					embedded[lookupName] = si
+					fields[lookupName] = si
+					fields[fName] = si
 				}
 			}
 		}
@@ -2412,88 +2437,109 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	// Populate embedded struct instances
 	for _, embName := range sDef.EmbeddedNames {
 		lookupName := embName
-		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+		var embTypeArgs []string
+		if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
 			lookupName = base
+			embTypeArgs = make([]string, len(args))
+			substMap := make(map[string]string)
+			for i, tp := range sDef.TypeParams {
+				if i < len(sDef.TypeArgs) {
+					substMap[tp.Name] = sDef.TypeArgs[i]
+				}
+			}
+			for i, a := range args {
+				embTypeArgs[i] = substituteTypeString(a, substMap)
+			}
 		}
 		fName := lookupName
 		if strings.Contains(fName, "::") {
 			parts := strings.Split(fName, "::")
 			fName = parts[len(parts)-1]
 		}
+
+		searchEnv := env
+		if sDef.Env != nil {
+			searchEnv = sDef.Env
+		}
+		var embDefVal Value
+		var ok bool
+		if strings.Contains(lookupName, "::") {
+			parts := strings.SplitN(lookupName, "::", 2)
+			if mod, modOk := searchEnv.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			} else if mod, modOk := env.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			}
+		} else {
+			embDefVal, ok = searchEnv.Get(lookupName)
+			if !ok && searchEnv != env {
+				embDefVal, ok = env.Get(lookupName)
+			}
+		}
+		var targetDef *StructDefValue
+		if ok {
+			forcedEmb := Force(embDefVal)
+			if bf, isBF := forcedEmb.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+				forcedEmb = Force(bf.TypeDef)
+			}
+			if embDef, ok := forcedEmb.(*StructDefValue); ok {
+				targetDef = embDef
+				if len(embTypeArgs) > 0 {
+					if sp, err := specializeGenericValue(embDef, embTypeArgs, searchEnv); err == nil {
+						if spDef, ok := sp.(*StructDefValue); ok {
+							targetDef = spDef
+						}
+					}
+				}
+			}
+		}
+
+		matchesTargetDef := func(si *StructInstance) bool {
+			if si == nil || si.Def == nil || targetDef == nil {
+				return false
+			}
+			siRoot := si.Def
+			if siRoot.Origin != nil {
+				siRoot = siRoot.Origin
+			}
+			targetRoot := targetDef
+			if targetRoot.Origin != nil {
+				targetRoot = targetRoot.Origin
+			}
+			return siRoot == targetRoot
+		}
+
 		if fVal, ok := fields[lookupName]; ok {
 			forced := Force(fVal)
-			if si, ok := forced.(*StructInstance); ok {
+			if si, ok := forced.(*StructInstance); ok && matchesTargetDef(si) {
 				embedded[lookupName] = si
+				fields[fName] = si
 			}
 		} else if fVal, ok := fields[fName]; ok {
 			forced := Force(fVal)
-			if si, ok := forced.(*StructInstance); ok {
+			if si, ok := forced.(*StructInstance); ok && matchesTargetDef(si) {
 				embedded[lookupName] = si
 				fields[lookupName] = si
 			}
 		} else if fVal, ok := fields[embName]; ok {
 			forced := Force(fVal)
-			if si, ok := forced.(*StructInstance); ok {
+			if si, ok := forced.(*StructInstance); ok && matchesTargetDef(si) {
 				embedded[lookupName] = si
+				fields[lookupName] = si
+				fields[fName] = si
 			}
 		}
-		if embedded[lookupName] == nil {
-			var embTypeArgs []string
-			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
-				lookupName = base
-				embTypeArgs = make([]string, len(args))
-				substMap := make(map[string]string)
-				for i, tp := range sDef.TypeParams {
-					if i < len(sDef.TypeArgs) {
-						substMap[tp.Name] = sDef.TypeArgs[i]
-					}
-				}
-				for i, a := range args {
-					embTypeArgs[i] = substituteTypeString(a, substMap)
-				}
+		if embedded[lookupName] == nil && targetDef != nil {
+			targetEnv := env
+			if targetDef.Env != nil {
+				targetEnv = targetDef.Env
 			}
-			searchEnv := env
-			if sDef.Env != nil {
-				searchEnv = sDef.Env
-			}
-			var embDefVal Value
-			var ok bool
-			if strings.Contains(lookupName, "::") {
-				parts := strings.SplitN(lookupName, "::", 2)
-				if mod, modOk := searchEnv.GetModule(parts[0]); modOk {
-					embDefVal, ok = mod.Exports[parts[1]]
-				} else if mod, modOk := env.GetModule(parts[0]); modOk {
-					embDefVal, ok = mod.Exports[parts[1]]
-				}
-			} else {
-				embDefVal, ok = searchEnv.Get(lookupName)
-				if !ok && searchEnv != env {
-					embDefVal, ok = env.Get(lookupName)
-				}
-			}
-			if ok {
-				forcedEmb := Force(embDefVal)
-				if bf, isBF := forcedEmb.(*BuiltinFunc); isBF && bf.TypeDef != nil {
-					forcedEmb = Force(bf.TypeDef)
-				}
-				if embDef, ok := forcedEmb.(*StructDefValue); ok {
-					targetDef := embDef
-					if len(embTypeArgs) > 0 {
-						if sp, err := specializeGenericValue(embDef, embTypeArgs, searchEnv); err == nil {
-							if spDef, ok := sp.(*StructDefValue); ok {
-								targetDef = spDef
-							}
-						}
-					}
-					targetEnv := env
-					if targetDef.Env != nil {
-						targetEnv = targetDef.Env
-					}
-					subInst, err := targetEnv.instantiateStruct(targetDef, []ast.Expr{})
-					if err == nil {
-						embedded[lookupName] = subInst
-						fields[lookupName] = subInst
-					}
+			subInst, err := targetEnv.instantiateStruct(targetDef, []ast.Expr{})
+			if err == nil {
+				embedded[lookupName] = subInst
+				fields[lookupName] = subInst
+				if _, exists := fields[fName]; !exists {
+					fields[fName] = subInst
 				}
 			}
 		}
@@ -2620,6 +2666,12 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 				if err == nil {
 					embedded[lookupName] = subInst
 					fields[lookupName] = subInst
+					fName := lookupName
+					if strings.Contains(fName, "::") {
+						parts := strings.Split(fName, "::")
+						fName = parts[len(parts)-1]
+					}
+					fields[fName] = subInst
 				}
 			}
 		}
@@ -2735,6 +2787,32 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	_, err := env.invokeClosure(closure, argValues)
 	if err != nil {
 		return nil, err
+	}
+
+	// Synchronize embedded struct instances from fields if updated during init
+	for _, embName := range sDef.EmbeddedNames {
+		lookupName := embName
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			lookupName = base
+		}
+		fName := lookupName
+		if strings.Contains(fName, "::") {
+			parts := strings.Split(fName, "::")
+			fName = parts[len(parts)-1]
+		}
+		if fVal, ok := fields[fName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				inst.Embedded[lookupName] = si
+				inst.Fields[lookupName] = si
+			}
+		} else if fVal, ok := fields[lookupName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				inst.Embedded[lookupName] = si
+				inst.Fields[fName] = si
+			}
+		}
 	}
 
 	// 7. Freeze instance
@@ -5685,14 +5763,22 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 		if isGen {
 			lookupName = embBase
 		}
+		asIface := func(v Value) *InterfaceDefValue {
+			forced := Force(v)
+			if bf, ok := forced.(*BuiltinFunc); ok && bf.TypeDef != nil {
+				forced = Force(bf.TypeDef)
+			}
+			if id, ok := forced.(*InterfaceDefValue); ok {
+				return id
+			}
+			return nil
+		}
 		if env != nil {
 			// If iface belongs to a specific module, resolve embedded interface from that owning module first
 			if iface.ModuleName != "" {
 				if mod, found := env.GetModule(iface.ModuleName); found {
 					if expVal, exists := mod.Exports[lookupName]; exists {
-						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
-							embDef = ed
-						}
+						embDef = asIface(expVal)
 					}
 				}
 			}
@@ -5700,17 +5786,13 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				parts := strings.SplitN(lookupName, "::", 2)
 				if mod, found := env.GetModule(parts[0]); found {
 					if expVal, exists := mod.Exports[parts[1]]; exists {
-						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
-							embDef = ed
-						}
+						embDef = asIface(expVal)
 					}
 				}
 			}
 			if embDef == nil {
 				if embVal, found := env.Get(lookupName); found {
-					if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
-						embDef = ed
-					}
+					embDef = asIface(embVal)
 				}
 			}
 			if embDef == nil {
@@ -5718,7 +5800,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				for cur := env; cur != nil; cur = cur.parent {
 					for _, mod := range cur.modules {
 						if expVal, exists := mod.Exports[lookupName]; exists {
-							if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+							if ed := asIface(expVal); ed != nil {
 								embDef = ed
 								break
 							}

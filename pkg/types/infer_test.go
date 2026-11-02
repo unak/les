@@ -2390,3 +2390,29 @@ w2: bufio::Writer | Nil = nil
 		t.Fatalf("expected both aliased and canonical builtin module access to pass type check, got: %v", err)
 	}
 }
+
+func TestCrossModuleEmbeddedStructLookupAmbiguity(t *testing.T) {
+	s1 := &StructType{
+		Name: "Base",
+		Methods: map[string]*FuncType{
+			"Foo": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+		},
+	}
+	s2 := &StructType{
+		Name: "Base",
+		Methods: map[string]*FuncType{
+			"Foo": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeString},
+		},
+	}
+	parent := &StructType{
+		Name:     "Parent",
+		Embedded: []*StructType{s1, s2},
+	}
+	_, err := parent.LookupMember("Foo")
+	if err == nil {
+		t.Fatalf("expected ambiguity error when embedding two structs named Base with member Foo, got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous selector 'Foo'") {
+		t.Fatalf("expected ambiguous selector error, got: %v", err)
+	}
+}

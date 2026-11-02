@@ -1469,18 +1469,18 @@ func (s *StructType) LookupMember(name string) (Type, error) {
 
 	// 2. BFS on embedded structs depth by depth
 	currentLevel := s.Embedded
-	visited := make(map[string]bool)
-	visited[s.Name] = true
+	visited := make(map[*StructType]bool)
+	visited[s] = true
 
 	for len(currentLevel) > 0 {
 		var candidates []memberCandidate
 		var nextLevel []*StructType
 
 		for _, emb := range currentLevel {
-			if visited[emb.Name] {
+			if visited[emb] {
 				continue
 			}
-			visited[emb.Name] = true
+			visited[emb] = true
 
 			if ft, ok := emb.Fields[name]; ok {
 				candidates = append(candidates, memberCandidate{typ: ft, origin: emb.Name})

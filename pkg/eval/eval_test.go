@@ -6414,3 +6414,121 @@ ctVal = ct.b.val
 		t.Fatalf("expected ctVal == 42, got %v", v)
 	}
 }
+
+func TestEmbeddedModuleStructDirectFieldAndInitSync(t *testing.T) {
+	tempDir := t.TempDir()
+	baseCode := `
+module base
+
+struct Base:
+    id: Int = 100
+
+struct Other:
+    tag: String = "other"
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to create base.les: %v", err)
+	}
+
+	code := `
+import base
+
+struct ChildNoInit:
+    base::Base
+    name: String
+
+c1 = ChildNoInit(name: "no_init")
+c1BaseId = c1.Base.id
+c1Id = c1.id
+
+struct ChildWithInit:
+    base::Base
+    name: String
+    def init(self, Base: base::Base, name: String):
+        self.Base = Base
+        self.name = name
+
+newB = base::Base(id: 777)
+c2 = ChildWithInit(Base: newB, name: "with_init")
+c2BaseId = c2.Base.id
+c2Id = c2.id
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	if v, ok := ev.globalEnv.Get("c1BaseId"); !ok || Force(v) !=
+		NewIntValue(100) {
+		t.Fatalf("expected c1BaseId == 100, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c1Id"); !ok || Force(v) !=
+		NewIntValue(100) {
+		t.Fatalf("expected c1Id == 100, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2BaseId"); !ok || Force(v) !=
+		NewIntValue(777) {
+		t.Fatalf("expected c2BaseId == 777, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2Id"); !ok || Force(v) !=
+		NewIntValue(777) {
+		t.Fatalf("expected c2Id == 777, got %v", v)
+	}
+}
+
+func TestEmbeddedModuleStructCrossModuleSameName(t *testing.T) {
+	tempDir := t.TempDir()
+	mod1Code := `
+module mod1
+
+struct Base:
+    def greet(self):
+        "from mod1"
+`
+	mod2Code := `
+module mod2
+
+struct Base:
+    def greet(self):
+        "from mod2"
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "mod1.les"),
+		[]byte(mod1Code), 0644); err != nil {
+		t.Fatalf("failed to create mod1.les: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "mod2.les"),
+		[]byte(mod2Code), 0644); err != nil {
+		t.Fatalf("failed to create mod2.les: %v", err)
+	}
+
+	code := `
+import mod1
+import mod2
+
+struct Multi:
+    mod1::Base
+    mod2::Base
+
+m = Multi()
+res = m.greet()
+print res
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	p := parser.NewParser(lexer.NewLexer(code))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected ambiguity error when calling greet() on Multi, got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous selector 'greet'") {
+		t.Fatalf("expected ambiguous selector error, got: %v", err)
+	}
+}
