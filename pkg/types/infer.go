@@ -3793,7 +3793,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}
 		if bracketIdx > 0 && depth == 0 && pDepth == 0 && brDepth == 0 {
 			baseStr := strings.TrimSpace(string(runes[:bracketIdx]))
-			if !strings.ContainsAny(baseStr, "->()[]{}:|, \t\n") {
+			baseCheck := strings.ReplaceAll(baseStr, "::", "")
+			if !strings.ContainsAny(baseCheck, "->()[]{}:|, \t\n") {
 				argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
 				baseType, err := inf.parseTypeAnnot(baseStr)
 				if err != nil {
@@ -3821,8 +3822,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 	}
 
 	if inf != nil {
-		if strings.HasPrefix(annot, "@") {
-			parts := strings.SplitN(annot[1:], ".", 2)
+		if strings.Contains(annot, "::") {
+			parts := strings.SplitN(annot, "::", 2)
 			if len(parts) == 2 {
 				modName := parts[0]
 				typeName := parts[1]

@@ -164,7 +164,7 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   def add[T: Int | Float](a: T, b: T) -> T:
       a + b
 
-  def readAll[T: @io.Reader](r: T) -> Bytes:
+  def readAll[T: io::Reader](r: T) -> Bytes:
       ...
 
   interface Comparable[T]:
@@ -204,13 +204,13 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   module math
   ```
 - **Importing & Module References**:
-  - `import` declaration without `@`: `import math`
-  - Referencing module members uses `@` prefix to clearly distinguish from variables:
+  - `import` declaration: `import math`
+  - Referencing module members uses `::` scope resolution (Ruby/Rust/C++ style) to clearly distinguish static module lookups from struct/instance member accesses:
     ```python
     import math
 
-    result = @math.Add(1, 2)
-    val = user.name  # Cleanly distinguished: variable/struct access does NOT use '@'
+    result = math::Add(1, 2)
+    val = user.name  # Cleanly distinguished: struct access uses '.', module uses '::'
     ```
 
 ### 3. Scope & Rebinding Rules
@@ -844,9 +844,9 @@ Les provides predefined variables for command-line arguments and file path inspe
 |---|---|---|---|
 | `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
 | `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
-| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`@bufio.Reader` wrapping `@io.Stdin`). |
-| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`@bufio.Writer` wrapping `@io.Stdout`). |
-| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`@io.Stderr` with no-op `Flush()`). |
+| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`bufio::Reader` wrapping `io::Stdin`). |
+| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`bufio::Writer` wrapping `io::Stdout`). |
+| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`io::Stderr` with no-op `Flush()`). |
 | `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
 | `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
 
@@ -1126,9 +1126,9 @@ interface Numeric[T]:
 
 ### 5. Built-in Modules
 
-#### Standard I/O Module (`@io`)
+#### Standard I/O Module (`io`)
 
-The built-in `@io` module provides stream I/O abstractions, interfaces, and standard stream access.
+The built-in `io` module provides stream I/O abstractions, interfaces, and standard stream access.
 
 ```python
 import io
@@ -1142,33 +1142,33 @@ import io
 - **`WriteCloser`**: embeds `Writer`, `Closer` (`Write`, `Flush`, `Close`)
 
 ##### Standard Streams
-- **`@io.Stdin`**: Standard input instance satisfying `Reader`, `Closer`, and `ReadCloser`.
+- **`io::Stdin`**: Standard input instance satisfying `Reader`, `Closer`, and `ReadCloser`.
   - `Read(n: Int): Bytes | Nil`: reads up to `n` bytes as a `Bytes` sequence (`n == 0` returns empty `Bytes()`, EOF returns `nil`).
   - `Close(): ()`: closes standard input.
-- **`@io.Stdout`**: Standard output instance satisfying `Writer`, `Closer`, and `WriteCloser`.
+- **`io::Stdout`**: Standard output instance satisfying `Writer`, `Closer`, and `WriteCloser`.
   - `Write(b: Bytes): Int`: writes byte sequence `b` directly to standard output (automatically flushes any buffered `Stdout` first).
   - `Flush(): ()`: flushes standard output.
   - `Close(): ()`: closes standard output (automatically flushes buffered `Stdout` first).
-- **`@io.Stderr`**: Standard error instance satisfying `Writer`, `Closer`, and `WriteCloser`.
+- **`io::Stderr`**: Standard error instance satisfying `Writer`, `Closer`, and `WriteCloser`.
   - `Write(b: Bytes): Int`: writes byte sequence `b` directly to standard error without buffering (automatically flushes any buffered `Stdout` first).
   - `Flush(): ()`: provides a no-op `Flush(): ()` for `Writer` / `bufio.Writer` interface compatibility.
   - `Close(): ()`: closes standard error.
 
-#### Buffered I/O Module (`@bufio`)
+#### Buffered I/O Module (`bufio`)
 
-The built-in `@bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
+The built-in `bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
 
 ```python
 import bufio
 ```
 
 ##### Structs & Constructors
-- **`@bufio.Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `@io.Stdin` or a custom struct implementing `Read`). If `r` is already a `@bufio.Reader`, returns it directly.
+- **`bufio::Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `io::Stdin` or a custom struct implementing `Read`). If `r` is already a `bufio::Reader`, returns it directly.
   - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
   - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
   - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text as UTF-8 string including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
   - `Peek(n: Int): Bytes | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
-- **`@bufio.Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `@io.Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `@bufio.Writer`, returns it directly.
+- **`bufio::Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `io::Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `bufio::Writer`, returns it directly.
   - `Write(b: Bytes): Int`: Appends byte sequence `b` to write buffer.
   - `Flush(): ()`: Flushes buffered data to the underlying stream.
 

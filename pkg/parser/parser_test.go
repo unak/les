@@ -223,8 +223,8 @@ def Add(a, b):
 }
 
 func TestParseModuleAccessExpr(t *testing.T) {
-	input := `res = @math.Add(1, 2)
-print @math.Pi`
+	input := `res = math::Add(1, 2)
+print math::Pi`
 
 	l := lexer.NewLexer(input)
 	p := NewParser(l)
@@ -251,6 +251,15 @@ print @math.Pi`
 	}
 	if modAccess.Module != "math" || modAccess.Member != "Add" {
 		t.Fatalf("unexpected modAccess: %+v", modAccess)
+	}
+
+	// Verify old @mod.Member is rejected
+	errInput := `res = @math.Add(1, 2)`
+	lErr := lexer.NewLexer(errInput)
+	pErr := NewParser(lErr)
+	pErr.ParseProgram()
+	if len(pErr.Errors()) == 0 {
+		t.Fatalf("expected parser error for old @mod.Member syntax, got none")
 	}
 }
 
@@ -1086,7 +1095,7 @@ func TestNormalizedTypeAnnotationFormatting(t *testing.T) {
 		{`b: (Int, String) = (1, "a")`, `(Int, String)`},
 		{`b: Int | String = 1`, `Int | String`},
 		{`b: (Int) -> String = f`, `(Int) -> String`},
-		{`b: @mod.Type = v`, `@mod.Type`},
+		{`b: mod::Type = v`, `mod::Type`},
 	}
 
 	for _, tt := range tests {

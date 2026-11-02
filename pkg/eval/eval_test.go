@@ -250,10 +250,10 @@ y = gets()
 		t.Fatalf("expected 'i/o error', got %v", err)
 	}
 
-	// Test shared buffer between gets() and @io.Stdin.Read
+	// Test shared buffer between gets() and io::Stdin.Read
 	codeMixed := `import io
 l = gets()
-rest = @io.Stdin.Read(5)
+rest = io::Stdin.Read(5)
 print l, "|", rest.String()
 `
 	evMixed := NewEvaluator()
@@ -273,10 +273,10 @@ print l, "|", rest.String()
 func TestIOReaderInterface(t *testing.T) {
 	code := `import io
 
-stdin = @io.Stdin
-isReader = stdin is @io.Reader
-isCloser = stdin is @io.Closer
-isReadCloser = stdin is @io.ReadCloser
+stdin = io::Stdin
+isReader = stdin is io::Reader
+isCloser = stdin is io::Closer
+isReadCloser = stdin is io::ReadCloser
 
 print isReader, " ", isCloser, " ", isReadCloser
 `
@@ -439,8 +439,8 @@ func TestModuleAccessEvaluation(t *testing.T) {
 	}
 	ev.globalEnv.RegisterModule(mathMod)
 
-	// 1. Access public member @math.Add
-	code := `print @math.Add(10, 20)`
+	// 1. Access public member math::Add
+	code := `print math::Add(10, 20)`
 	l := lexer.NewLexer(code)
 	p := parser.NewParser(l)
 	prog := p.ParseProgram()
@@ -452,14 +452,14 @@ func TestModuleAccessEvaluation(t *testing.T) {
 		t.Fatalf("expected 30, got %q", out.String())
 	}
 
-	// 2. Access private member @math.sub should fail with error
-	codeErr := `print @math.sub(10, 20)`
+	// 2. Access private member math::sub should fail with error
+	codeErr := `print math::sub(10, 20)`
 	l2 := lexer.NewLexer(codeErr)
 	p2 := parser.NewParser(l2)
 	prog2 := p2.ParseProgram()
 	_, err2 := ev.EvalProgram(prog2)
 	if err2 == nil {
-		t.Fatalf("expected error accessing private member @math.sub, got nil")
+		t.Fatalf("expected error accessing private member math::sub, got nil")
 	}
 }
 
@@ -2110,12 +2110,12 @@ func TestIOAndBufioModules(t *testing.T) {
 import io
 import bufio
 
-# Test @io raw streams
-n1 = @io.Stdout.Write("raw out\n".Bytes())
-n2 = @io.Stderr.Write("raw err\n".Bytes())
+# Test io raw streams
+n1 = io::Stdout.Write("raw out\n".Bytes())
+n2 = io::Stderr.Write("raw err\n".Bytes())
 
-# Test @bufio.Reader constructor on @io.Stdin
-br = @bufio.Reader(@io.Stdin)
+# Test bufio::Reader constructor on io::Stdin
+br = bufio::Reader(io::Stdin)
 line = br.ReadLine()
 
 print line, " (", n1, ", ", n2, ")"
@@ -2158,8 +2158,8 @@ struct MyWriter:
 mr = MyReader()
 mw = MyWriter()
 
-br = @bufio.Reader(mr)
-bw = @bufio.Writer(mw)
+br = bufio::Reader(mr)
+bw = bufio::Writer(mw)
 
 line = br.ReadLine()
 print "Read:", line, "\n"
@@ -2190,7 +2190,7 @@ import bufio
 # Write without explicit Flush
 Stdout.Write("buffered global\n".Bytes())
 
-bw = @bufio.Writer(Stdout)
+bw = bufio::Writer(Stdout)
 bw.Write("user writer\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2214,9 +2214,9 @@ func TestStreamInterleavingOrder(t *testing.T) {
 	code := `
 import io
 
-# Stdout is buffered, @io.Stdout.Write flushes Stdout first (C/Ruby style)
+# Stdout is buffered, io::Stdout.Write flushes Stdout first (C/Ruby style)
 Stdout.Write("first-".Bytes())
-@io.Stdout.Write("second-".Bytes())
+io::Stdout.Write("second-".Bytes())
 Stdout.Write("third\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2272,7 +2272,7 @@ struct EmptyReader:
         Bytes("")
 
 er = EmptyReader()
-br = @bufio.Reader(er)
+br = bufio::Reader(er)
 
 # bufio.ReadLine on reader returning only empty Bytes should eventually see ErrNoProgress as EOF -> Nil
 line = br.ReadLine()
@@ -2300,7 +2300,7 @@ struct FailingWriter:
         b.Len() - 1000 # negative write count causes error
 
 fw = FailingWriter()
-bw = @bufio.Writer(fw)
+bw = bufio::Writer(fw)
 bw.Write("trigger".Bytes())! # force demand point so write buffers
 # Program exits, auto-flush triggers failure in Write
 `
@@ -2330,7 +2330,7 @@ struct LoggingWriter:
         b.Len()
 
 lw = LoggingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 
 # Initial write to Stdout (registered before bw)
 Stdout.Write("first\n".Bytes())
@@ -2354,7 +2354,7 @@ func TestRuntimeQualifiedTypeMatching(t *testing.T) {
 	var stdout strings.Builder
 	ev.SetOutput(&stdout)
 
-	// User struct named Reader must NOT match @bufio.Reader by name alone
+	// User struct named Reader must NOT match bufio::Reader by name alone
 	code := `
 import io
 import bufio
@@ -2364,11 +2364,11 @@ struct Reader:
 
 userR = Reader()
 
-print Stdin is @bufio.Reader, "|"
-print Stdout is @bufio.Writer, "|"
-print @io.Stdin is @io.Reader, "|"
-print @io.Stdout is @io.Writer, "|"
-print userR is @bufio.Reader # must be false (different identity)
+print Stdin is bufio::Reader, "|"
+print Stdout is bufio::Writer, "|"
+print io::Stdin is io::Reader, "|"
+print io::Stdout is io::Writer, "|"
+print userR is bufio::Reader # must be false (different identity)
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	if _, err := ev.EvalProgram(prog); err != nil {
@@ -2392,7 +2392,7 @@ struct LyingWriter:
         999999 # claims to write way more than len(b)
 
 lw = LyingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 bw.Write("hello".Bytes())!
 bw.Flush()!
 `
@@ -2417,7 +2417,7 @@ struct BadWriter:
         "not an integer"
 
 bw_custom = BadWriter()
-bw = @bufio.Writer(bw_custom)
+bw = bufio::Writer(bw_custom)
 bw.Write("hello".Bytes())!
 bw.Flush()!
 `
@@ -2440,7 +2440,7 @@ import bufio
 import io
 
 def Greet(name: String): String:
-    bw = @bufio.Writer(@io.Stdout)
+    bw = bufio::Writer(io::Stdout)
     bw.Write("greeting: ".Bytes())!
     bw.Flush()!
     name
@@ -2459,7 +2459,7 @@ def Greet(name: String): String:
 	mainCode := `
 import helper
 
-msg = @helper.Greet("Les")
+msg = helper::Greet("Les")
 print msg
 `
 	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
@@ -2483,7 +2483,7 @@ struct ExitingWriter:
         exit(42)
 
 ew = ExitingWriter()
-bw = @bufio.Writer(ew)
+bw = bufio::Writer(ew)
 bw.Write("trigger exit".Bytes())!
 bw.Flush()!
 `
@@ -2526,7 +2526,7 @@ def UseStdout(): String:
 import mod
 
 Stdout = 12345
-res = @mod.UseStdout()
+res = mod::UseStdout()
 print res
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2564,7 +2564,7 @@ def Inspect(): String:
 	callerCode := `
 import modinfo
 
-info = @modinfo.Inspect()
+info = modinfo::Inspect()
 print info, "|", scriptName
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2598,14 +2598,14 @@ interface Reader:
 	fml := NewFileModuleLoader(tempDir)
 	ev.SetFileModuleLoader(fml)
 
-	// Even though localmod has a different Reader, @io.Stdin is @io.ReadCloser should resolve
+	// Even though localmod has a different Reader, io::Stdin is io::ReadCloser should resolve
 	// ReadCloser's embedded Reader from the owning 'io' module, NOT localmod!
 	callerCode := `
 import io
 import localmod
 
-stdin = @io.Stdin
-isRC = stdin is @io.ReadCloser
+stdin = io::Stdin
+isRC = stdin is io::ReadCloser
 print isRC
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2634,7 +2634,7 @@ struct Buffer:
         b.Len()
 
 buf = Buffer(content: Bytes(""))
-bw = @bufio.Writer(buf)
+bw = bufio::Writer(buf)
 bw.Write("stale custom output".Bytes())!
 Stdout.Write("stale stdout output".Bytes())!
 (1 / 0)!
@@ -2676,7 +2676,7 @@ struct LoggingWriter:
         b.Len()
 
 lw = LoggingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 bw.Write("hello".Bytes())!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2729,7 +2729,7 @@ struct ExitingBuffer:
         0
 
 eb = ExitingBuffer()
-bw = @bufio.Writer(eb)
+bw = bufio::Writer(eb)
 bw.Write("trigger exit during flush".Bytes())!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2760,7 +2760,7 @@ struct LoggingWriter:
         b.Len()
 
 lw = LoggingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 bw.Write("abandoned".Bytes())!
 (1 / 0)!
 `
@@ -2802,7 +2802,7 @@ struct BrokenBuffer:
         0
 
 bb = BrokenBuffer()
-bw = @bufio.Writer(bb)
+bw = bufio::Writer(bb)
 bw.Write("will fail on flush".Bytes())!
 `
 	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
@@ -2838,7 +2838,7 @@ struct EmptyReader:
         Bytes("")
 
 er = EmptyReader()
-br = @bufio.Reader(er)
+br = bufio::Reader(er)
 res = br.Peek(5)!
 print res
 `
@@ -2895,7 +2895,7 @@ struct Implementer:
     def Bar(): Int: 2
 
 impl = Implementer()
-res = impl is @pkg.Outer
+res = impl is pkg::Outer
 print res
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2955,7 +2955,7 @@ func TestStdoutFlushAndCloseFlushesBuffered(t *testing.T) {
 
 	code := `
 Stdout.Write("buffered content".Bytes())!
-@io.Stdout.Flush()
+io::Stdout.Flush()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	_, err := ev.EvalProgram(prog)
@@ -2963,13 +2963,13 @@ Stdout.Write("buffered content".Bytes())!
 		t.Fatalf("unexpected eval error: %v", err)
 	}
 	if out.String() != "buffered content" {
-		t.Fatalf("expected @io.Stdout.Flush() to flush buffered output, got %q", out.String())
+		t.Fatalf("expected io::Stdout.Flush() to flush buffered output, got %q", out.String())
 	}
 
 	out.Reset()
 	codeClose := `
 Stdout.Write("close content".Bytes())!
-@io.Stdout.Close()
+io::Stdout.Close()
 `
 	progClose := parser.NewParser(lexer.NewLexer(codeClose)).ParseProgram()
 	_, err = ev.EvalProgram(progClose)
@@ -2977,7 +2977,7 @@ Stdout.Write("close content".Bytes())!
 		t.Fatalf("unexpected eval error: %v", err)
 	}
 	if out.String() != "close content" {
-		t.Fatalf("expected @io.Stdout.Close() to flush buffered output, got %q", out.String())
+		t.Fatalf("expected io::Stdout.Close() to flush buffered output, got %q", out.String())
 	}
 }
 
@@ -2987,7 +2987,7 @@ func TestCustomReaderPanicRecovery(t *testing.T) {
 struct PanicReader:
     def Read(self, n: Int):
         1 / 0
-r = @bufio.Reader(PanicReader())
+r = bufio::Reader(PanicReader())
 r.ReadLine()!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -3006,7 +3006,7 @@ func TestCustomWriterShortWrite(t *testing.T) {
 struct ShortWriter:
     def Write(self, b: Bytes):
         0
-w = @bufio.Writer(ShortWriter())
+w = bufio::Writer(ShortWriter())
 w.Write("test".Bytes())!
 w.Flush()!
 `
@@ -3022,10 +3022,10 @@ func TestStdinReadZeroBytesAndEOF(t *testing.T) {
 	ev.SetInput(strings.NewReader("abc"))
 
 	code := `
-z = @io.Stdin.Read(0)!
-a = @io.Stdin.Read(2)!
-b = @io.Stdin.Read(2)!
-c = @io.Stdin.Read(2)!
+z = io::Stdin.Read(0)!
+a = io::Stdin.Read(2)!
+b = io::Stdin.Read(2)!
+c = io::Stdin.Read(2)!
 if z != Bytes(""):
     1 / 0
 if a != Bytes("ab"):
@@ -3955,7 +3955,7 @@ print sub.BaseVal.Type(), "|"
 print Stdin.ReadLine.Type(), "|"
 print Stdout.Write.Type(), "|"
 print Stderr.Write.Type(), "|"
-print (@bufio.Reader).Type(), "|"
+print (bufio::Reader).Type(), "|"
 print Error.Type(), "|"
 print errObj.Message.Type(), "|"
 print shadowed == 123, "|"
@@ -5971,3 +5971,54 @@ print zero.IsNaN(), " ", zero.IsInfinite(), " ", zero.IsFinite()
 	}
 }
 
+
+func TestModuleDoubleColonScopeAccess(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	mathExports := map[string]Value{
+		"Add": &BuiltinFunc{
+			Name: "Add",
+			Fn: func(args []Value) (Value, error) {
+				a := Force(args[0]).(IntValue)
+				b := Force(args[1]).(IntValue)
+				return a.Add(b), nil
+			},
+		},
+	}
+	ev.globalEnv.RegisterModule(&ModuleValue{Name: "math", Exports: mathExports})
+
+	// 1. Function call via module::Func(...)
+	codeCall := `print math::Add(10, 20)`
+	progCall := parser.NewParser(lexer.NewLexer(codeCall)).ParseProgram()
+	if _, err := ev.EvalProgram(progCall); err != nil {
+		t.Fatalf("eval module call failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "30" {
+		t.Fatalf("expected 30, got %q", out.String())
+	}
+
+	// 2. Direct paren-omitted call at statement start: math::Add 10, 20
+	codeDirect := `math::Add 10, 20`
+	progDirect := parser.NewParser(lexer.NewLexer(codeDirect)).ParseProgram()
+	val, err := ev.EvalProgram(progDirect)
+	if err != nil {
+		t.Fatalf("eval direct paren-omitted call failed: %v", err)
+	}
+	if v, ok := Force(val).(IntValue); !ok || v != NewIntValue(30) {
+		t.Fatalf("expected 30 from direct call, got %v", val)
+	}
+
+	codeUnknown := `print unknownmod::Foo`
+	progUnknown := parser.NewParser(lexer.NewLexer(codeUnknown)).ParseProgram()
+	if _, err := ev.EvalProgram(progUnknown); err == nil || !strings.Contains(err.Error(), "module 'unknownmod' not found") {
+		t.Fatalf("expected module not found error, got %v", err)
+	}
+
+	codeOld := `print @math.Add(1, 2)`
+	pOld := parser.NewParser(lexer.NewLexer(codeOld))
+	pOld.ParseProgram()
+	if len(pOld.Errors()) == 0 {
+		t.Fatalf("expected parser error on old @math.Add syntax, got none")
+	}
+}

@@ -8,7 +8,7 @@ import (
 	"les/pkg/types"
 )
 
-// initIOModule registers the built-in @io module.
+// initIOModule registers the built-in io module.
 func (ev *Evaluator) initIOModule() {
 	ioExports := make(map[string]Value)
 

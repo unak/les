@@ -2110,16 +2110,16 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.ModuleAccessExpr:
 		mod, ok := env.GetModule(e.Module)
 		if !ok {
-			return nil, fmt.Errorf("module '@%s' not found or not imported", e.Module)
+			return nil, fmt.Errorf("module '%s' not found or not imported", e.Module)
 		}
 		// Enforce Go-style visibility: member must start with Uppercase letter to be public
 		firstChar := e.Member[0]
 		if firstChar < 'A' || firstChar > 'Z' {
-			return nil, fmt.Errorf("cannot access private member '%s' from module '@%s'", e.Member, e.Module)
+			return nil, fmt.Errorf("cannot access private member '%s' from module '%s'", e.Member, e.Module)
 		}
 		val, ok := mod.Exports[e.Member]
 		if !ok {
-			return nil, fmt.Errorf("member '%s' not exported by module '@%s'", e.Member, e.Module)
+			return nil, fmt.Errorf("member '%s' not exported by module '%s'", e.Member, e.Module)
 		}
 		return val, nil
 
@@ -5083,8 +5083,8 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			if searchEnv != nil {
 				var ifaceDef *InterfaceDefValue
-				if strings.HasPrefix(baseName, "@") && strings.Contains(baseName, ".") {
-					parts := strings.SplitN(baseName[1:], ".", 2)
+				if strings.Contains(baseName, "::") {
+					parts := strings.SplitN(baseName, "::", 2)
 					if modVal, found := searchEnv.GetModule(parts[0]); found {
 						if expVal, ok := modVal.Exports[parts[1]]; ok {
 							forcedExp := Force(expVal)
@@ -5139,9 +5139,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		}
 
 		if searchEnv != nil {
-			// Check if typeAnnot is module qualified: @io.Reader or @bufio.Reader
-			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {
-				parts := strings.SplitN(typeAnnot[1:], ".", 2)
+			// Check if typeAnnot is module qualified: io::Reader or bufio::Reader
+			if strings.Contains(typeAnnot, "::") {
+				parts := strings.SplitN(typeAnnot, "::", 2)
 				modName := parts[0]
 				typeName := parts[1]
 				if modVal, found := searchEnv.GetModule(modName); found {

@@ -365,3 +365,29 @@ func TestLexerRegexPOSIXCharClassColumn(t *testing.T) {
 		t.Fatalf("expected col 15 for x, got %d", tok2.Col)
 	}
 }
+
+func TestLexerColonColon(t *testing.T) {
+	input := "math::Add(1, 2) ::"
+	l := NewLexer(input)
+	expected := []struct {
+		tokType TokenType
+		literal string
+	}{
+		{TokenIdent, "math"},
+		{TokenColonColon, "::"},
+		{TokenIdent, "Add"},
+		{TokenLParen, "("},
+		{TokenInt, "1"},
+		{TokenComma, ","},
+		{TokenInt, "2"},
+		{TokenRParen, ")"},
+		{TokenColonColon, "::"},
+		{TokenEOF, ""},
+	}
+	for i, exp := range expected {
+		tok := l.NextToken()
+		if tok.Type != exp.tokType || (exp.literal != "" && tok.Literal != exp.literal) {
+			t.Fatalf("[%d] expected %v (%q), got %v (%q)", i, exp.tokType, exp.literal, tok.Type, tok.Literal)
+		}
+	}
+}

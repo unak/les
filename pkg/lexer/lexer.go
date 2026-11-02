@@ -234,6 +234,11 @@ func (l *Lexer) nextTokenInternal() Token {
 		if l.pos+1 < len(l.source) {
 			two := string(l.source[l.pos : l.pos+2])
 			switch two {
+			case "::":
+				t := Token{Type: TokenColonColon, Literal: "::", Line: l.line, Col: l.col}
+				l.advance()
+				l.advance()
+				return t
 			case "=~":
 				t := Token{Type: TokenRegexMatch, Literal: "=~", Line: l.line, Col: l.col}
 				l.advance()

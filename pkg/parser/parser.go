@@ -32,6 +32,7 @@ const (
 	PREC_CALL         // f()
 	PREC_INDEX        // []
 	PREC_DOT          // .
+	PREC_SCOPE        // ::
 	PREC_POSTFIX      // ! (postfix force)
 )
 
@@ -1431,6 +1432,21 @@ func (p *Parser) parsePrefix() ast.Expr {
 	pos := p.curPos()
 	switch p.curToken.Type {
 	case lexer.TokenIdent:
+		if p.peekTokenIs(lexer.TokenColonColon) {
+			modName := p.curToken.Literal
+			p.nextToken() // move to '::'
+			p.nextToken() // move to member
+			if !p.curTokenIs(lexer.TokenIdent) {
+				p.addError(p.curToken.Line, p.curToken.Col, "expected member identifier after '::', got %s", lexer.FormatToken(p.curToken))
+				return nil
+			}
+			memberName := p.curToken.Literal
+			return &ast.ModuleAccessExpr{
+				Position: pos,
+				Module:   modName,
+				Member:   memberName,
+			}
+		}
 		if p.curToken.Literal == "scriptLine" {
 			return &ast.IntLit{Position: pos, Value: int64(p.curToken.Line)}
 		}
@@ -1502,28 +1518,6 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case lexer.TokenLBracket:
 		// Could be list or index, but in Les: arrays are tuple or dict. Allow bracketed tuples/lists if needed
 		return p.parseTuple(lexer.TokenRBracket)
-	case lexer.TokenAt:
-		// @module.Member
-		p.nextToken() // consume '@'
-		if !p.curTokenIs(lexer.TokenIdent) {
-			p.addError(p.curToken.Line, p.curToken.Col, "expected module identifier after '@', got %s", lexer.FormatToken(p.curToken))
-			return nil
-		}
-		modName := p.curToken.Literal
-		if !p.expectPeek(lexer.TokenDot) {
-			return nil
-		}
-		p.nextToken() // consume '.'
-		if !p.curTokenIs(lexer.TokenIdent) {
-			p.addError(p.curToken.Line, p.curToken.Col, "expected member identifier after '.', got %s", lexer.FormatToken(p.curToken))
-			return nil
-		}
-		memberName := p.curToken.Literal
-		return &ast.ModuleAccessExpr{
-			Position: pos,
-			Module:   modName,
-			Member:   memberName,
-		}
 	case lexer.TokenLBrace:
 		return p.parseDict()
 	case lexer.TokenMatch:
@@ -1808,6 +1802,8 @@ func (p *Parser) peekPrecedence() int {
 		return PREC_INDEX
 	case lexer.TokenDot:
 		return PREC_DOT
+	case lexer.TokenColonColon:
+		return PREC_SCOPE
 	case lexer.TokenNot:
 		return PREC_POSTFIX
 	default:
@@ -1849,6 +1845,8 @@ func (p *Parser) curPrecedence() int {
 		return PREC_INDEX
 	case lexer.TokenDot:
 		return PREC_DOT
+	case lexer.TokenColonColon:
+		return PREC_SCOPE
 	case lexer.TokenNot:
 		return PREC_POSTFIX
 	default:
@@ -1859,6 +1857,23 @@ func (p *Parser) curPrecedence() int {
 func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 	pos := p.curPos()
 	switch p.curToken.Type {
+	case lexer.TokenColonColon:
+		ident, ok := left.(*ast.Identifier)
+		if !ok {
+			p.addError(pos.Line, pos.Col, "expected module identifier before '::'")
+			return nil
+		}
+		p.nextToken() // consume '::'
+		if !p.curTokenIs(lexer.TokenIdent) {
+			p.addError(p.curToken.Line, p.curToken.Col, "expected member identifier after '::', got %s", lexer.FormatToken(p.curToken))
+			return nil
+		}
+		memberName := p.curToken.Literal
+		return &ast.ModuleAccessExpr{
+			Position: pos,
+			Module:   ident.Name,
+			Member:   memberName,
+		}
 	case lexer.TokenDot:
 		p.nextToken() // consume '.'
 		var member string
@@ -1897,7 +1912,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		braceDepth := 0
 		for {
 			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenBool) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenAt) && !p.curTokenIs(lexer.TokenArrow) && !p.curTokenIs(lexer.TokenRegex) {
+				if !p.curTokenIs(lexer.TokenIdent) && !p.curTokenIs(lexer.TokenNil) && !p.curTokenIs(lexer.TokenBool) && !p.curTokenIs(lexer.TokenPipe) && !p.curTokenIs(lexer.TokenLParen) && !p.curTokenIs(lexer.TokenLBracket) && !p.curTokenIs(lexer.TokenLBrace) && !p.curTokenIs(lexer.TokenDot) && !p.curTokenIs(lexer.TokenColonColon) && !p.curTokenIs(lexer.TokenArrow) && !p.curTokenIs(lexer.TokenRegex) {
 					break
 				}
 			}
@@ -1916,9 +1931,9 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			}
 			typeParts = append(typeParts, p.curToken.Literal)
 			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenArrow) {
+				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenColonColon) || p.curTokenIs(lexer.TokenArrow) {
 					// Must continue to next component
-				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenArrow) || p.peekTokenIs(lexer.TokenLBracket) {
+				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenColonColon) || p.peekTokenIs(lexer.TokenArrow) || p.peekTokenIs(lexer.TokenLBracket) {
 					// Continue if followed by '|', '.', '->', or '[' (to capture invalid brackets for error reporting)
 				} else {
 					break
@@ -2235,7 +2250,7 @@ func normalizeTypeAnnot(parts []string) string {
 
 func noSpaceBefore(part, prev string) bool {
 	switch part {
-	case ")", "]", "}", ",", ":", ".":
+	case ")", "]", "}", ",", ":", "::", ".":
 		return true
 	case "[":
 		return prev != "|" && prev != "->" && prev != "," && prev != ":"
@@ -2246,7 +2261,7 @@ func noSpaceBefore(part, prev string) bool {
 
 func noSpaceAfter(prev string) bool {
 	switch prev {
-	case "(", "[", "{", "@", ".":
+	case "(", "[", "{", "@", "::", ".":
 		return true
 	default:
 		return false
@@ -2518,7 +2533,7 @@ func exprToTypeAnnot(expr ast.Expr) string {
 	case *ast.NilLit:
 		return "Nil"
 	case *ast.ModuleAccessExpr:
-		return "@" + e.Module + "." + e.Member
+		return e.Module + "::" + e.Member
 	case *ast.BinaryExpr:
 		if e.Op == "|" {
 			left := exprToTypeAnnot(e.Left)

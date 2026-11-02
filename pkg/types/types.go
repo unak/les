@@ -1521,8 +1521,8 @@ func (s *StructType) LookupMember(name string) (Type, error) {
 // ModuleType represents a loaded module and its exported member types and type definitions.
 type ModuleType struct {
 	Name    string
-	Exports map[string]Type // values/functions/constructors accessible via @mod.Member
-	Types   map[string]Type // types accessible via @mod.Type in type annotations
+	Exports map[string]Type // values/functions/constructors accessible via mod::Member
+	Types   map[string]Type // types accessible via mod::Type in type annotations
 }
 
 func (m *ModuleType) String() string { return "Module<" + m.Name + ">" }

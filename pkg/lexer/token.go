@@ -42,6 +42,7 @@ const (
 	// Punctuation
 	TokenAssign      // =
 	TokenColon       // :
+	TokenColonColon  // ::
 	TokenSemicolon   // ;
 	TokenComma       // ,
 	TokenDot         // .
@@ -150,6 +151,8 @@ func (t TokenType) String() string {
 		return "'='"
 	case TokenColon:
 		return "':'"
+	case TokenColonColon:
+		return "'::'"
 	case TokenSemicolon:
 		return "';'"
 	case TokenComma:

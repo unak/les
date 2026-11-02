@@ -452,8 +452,8 @@ func TestModuleTypeChecking(t *testing.T) {
 	// 1. Success matching
 	inputValid := `
 import math
-res: Int = @math.Add(1, 2)
-pi: Float = @math.Pi
+res: Int = math::Add(1, 2)
+pi: Float = math::Pi
 `
 	progValid := parser.NewParser(lexer.NewLexer(inputValid)).ParseProgram()
 	if err := inf.InferProgram(progValid); err != nil {
@@ -463,7 +463,7 @@ pi: Float = @math.Pi
 	// 2. Type mismatch with module return type
 	inputMismatch := `
 import math
-res: String = @math.Add(1, 2)
+res: String = math::Add(1, 2)
 `
 	progMismatch := parser.NewParser(lexer.NewLexer(inputMismatch)).ParseProgram()
 	infMismatch := NewInferencer()
@@ -475,7 +475,7 @@ res: String = @math.Add(1, 2)
 	// 3. Undefined member in module
 	inputUndefined := `
 import math
-res = @math.Subtract(10, 5)
+res = math::Subtract(10, 5)
 `
 	progUndefined := parser.NewParser(lexer.NewLexer(inputUndefined)).ParseProgram()
 	infUndefined := NewInferencer()
@@ -516,8 +516,8 @@ Version = "1.0"
 	mainCode := `
 import calc
 
-ans: Int = @calc.Add(10, 20)
-ver: String = @calc.Version
+ans: Int = calc::Add(10, 20)
+ver: String = calc::Version
 `
 	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
 	if err := inf.InferProgram(prog); err != nil {
@@ -529,7 +529,7 @@ ver: String = @calc.Version
 	infPrivate.SetModuleLoader(loader.Load)
 	privateCode := `
 import calc
-x = @calc.helper(5)
+x = calc::helper(5)
 `
 	progPrivate := parser.NewParser(lexer.NewLexer(privateCode)).ParseProgram()
 	if err := infPrivate.InferProgram(progPrivate); err == nil {
@@ -541,7 +541,7 @@ x = @calc.helper(5)
 	infBuiltins.SetModuleLoader(loader.Load)
 	builtinLeakCode := `
 import calc
-s = @calc.Stdout
+s = calc::Stdout
 `
 	progBuiltins := parser.NewParser(lexer.NewLexer(builtinLeakCode)).ParseProgram()
 	if err := infBuiltins.InferProgram(progBuiltins); err == nil {
@@ -778,15 +778,15 @@ l: String | Nil = Stdin.ReadLine()
 s: String | Nil = Stdin.ReadString(":")
 p: Bytes | Nil = Stdin.Peek(5)
 
-# Test @io module
-rawW: Int = @io.Stdout.Write("raw".Bytes())
-rawR: Bytes | Nil = @io.Stdin.Read(10)
-@io.Stdout.Flush()
-@io.Stderr.Flush()
+# Test io module
+rawW: Int = io::Stdout.Write("raw".Bytes())
+rawR: Bytes | Nil = io::Stdin.Read(10)
+io::Stdout.Flush()
+io::Stderr.Flush()
 
-# Test @bufio module constructors
-br = @bufio.Reader(@io.Stdin)
-bw = @bufio.Writer(@io.Stdout)
+# Test bufio module constructors
+br = bufio::Reader(io::Stdin)
+bw = bufio::Writer(io::Stdout)
 l2: String | Nil = br.ReadLine()
 bw.Flush()
 `
@@ -802,7 +802,7 @@ func TestIOAndBufioTypeAnnotations(t *testing.T) {
 import io
 import bufio
 
-def readAll(r: @io.Reader): Bytes | Nil:
+def readAll(r: io::Reader): Bytes | Nil:
     r.Read(100)
 
 struct CustomReader:
@@ -812,13 +812,13 @@ struct CustomReader:
 cr = CustomReader()
 res: Bytes | Nil = readAll(cr)
 
-# Test @bufio.Reader and @bufio.Writer type annotations
-def wrapBuf(br: @bufio.Reader, bw: @bufio.Writer): ():
+# Test bufio::Reader and bufio::Writer type annotations
+def wrapBuf(br: bufio::Reader, bw: bufio::Writer): ():
     bw.Flush()
 
-# Test assignability of global Stdin/Stdout to @bufio.Reader/@bufio.Writer
-rGlobal: @bufio.Reader = Stdin
-wGlobal: @bufio.Writer = Stdout
+# Test assignability of global Stdin/Stdout to bufio::Reader/bufio::Writer
+rGlobal: bufio::Reader = Stdin
+wGlobal: bufio::Writer = Stdout
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()
@@ -843,12 +843,12 @@ def Add(a: Int, b: Int): Int:
 	inf := NewInferencer()
 	inf.SetModuleLoader(loader.Load)
 
-	// An annotation referencing @math.Add should be the function type (Int, Int) -> Int,
+	// An annotation referencing math::Add should be the function type (Int, Int) -> Int,
 	// NOT unwrapped to its return type Int!
 	testCode := `
 import math
 
-fn: @math.Add = @math.Add
+fn: math::Add = math::Add
 res: Int = fn(10, 20)
 `
 	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
@@ -856,35 +856,35 @@ res: Int = fn(10, 20)
 		t.Fatalf("unexpected type error when using exported function type annotation: %v", err)
 	}
 
-	// Verify that annotating an Int with @math.Add fails because @math.Add is a function type, not Int
+	// Verify that annotating an Int with math::Add fails because math::Add is a function type, not Int
 	testMismatchCode := `
 import math
 
-notInt: @math.Add = 42
+notInt: math::Add = 42
 `
 	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
 	infMismatch := NewInferencer()
 	infMismatch.SetModuleLoader(loader.Load)
 	if err := infMismatch.InferProgram(progMismatch); err == nil {
-		t.Fatalf("expected type mismatch annotating Int with @math.Add, but got nil")
+		t.Fatalf("expected type mismatch annotating Int with math::Add, but got nil")
 	}
 }
 
 func TestBuiltinModuleTypeAnnotationsWithoutImport(t *testing.T) {
 	inf := NewInferencer()
 	testCode := `
-def readStream(r: @bufio.Reader): String | Nil:
+def readStream(r: bufio::Reader): String | Nil:
     r.ReadLine()
 
 res: String | Nil = readStream(Stdin)
 `
 	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
 	if err := inf.InferProgram(prog); err != nil {
-		t.Fatalf("unexpected type error when using @bufio.Reader without import: %v", err)
+		t.Fatalf("unexpected type error when using bufio::Reader without import: %v", err)
 	}
 
 	testMismatchCode := `
-def readStream(r: @bufio.Reader): String | Nil:
+def readStream(r: bufio::Reader): String | Nil:
     r.ReadLine()
 
 bad: String | Nil = readStream(Stdout)
@@ -892,7 +892,7 @@ bad: String | Nil = readStream(Stdout)
 	inf2 := NewInferencer()
 	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
 	if err := inf2.InferProgram(progMismatch); err == nil {
-		t.Fatalf("expected type error passing Stdout to @bufio.Reader parameter, got nil")
+		t.Fatalf("expected type error passing Stdout to bufio::Reader parameter, got nil")
 	}
 }
 
@@ -1206,8 +1206,8 @@ func TestUnknownTypeAnnotationError(t *testing.T) {
 		},
 		{
 			name:        "module type unknown",
-			code:        `x: @unknownmod.Type = 1`,
-			expectedErr: "unknown type '@unknownmod.Type'",
+			code:        `x: unknownmod::Type = 1`,
+			expectedErr: "unknown type 'unknownmod::Type'",
 		},
 		{
 			name:        "prohibit Any type annotation",
