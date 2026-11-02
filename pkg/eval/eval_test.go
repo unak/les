@@ -6213,3 +6213,74 @@ isItemUnqualified = item is Item
 		t.Fatalf("expected isItemUnqualified to be true, got %v", v4)
 	}
 }
+
+func TestDictModuleTypeAndEmbeddedInit(t *testing.T) {
+	tempDir := t.TempDir()
+
+	baseCode := `
+module base
+
+struct Key:
+    id: Int = 1
+
+struct Base:
+    id: Int = 100
+
+    def GetId(self) -> Int:
+        self.id
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	testCode := `
+import base
+
+struct SimpleReader:
+    def Read(self, n: Int) -> Bytes | Nil:
+        Bytes("data")
+
+r = SimpleReader()
+d1 = {"reader": r}
+isDictReader = d1 is {String: io::Reader}
+
+k = base::Key(id: 1)
+d2 = {k: "val"}
+isDictKey = d2 is {base::Key: String}
+
+struct ChildWithInit:
+    base::Base
+    name: String
+    def init(self, name: String):
+        self.name = name
+
+c = ChildWithInit(name: "child")
+childId = c.id
+childMethod = c.GetId()
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	v1, ok := ev.globalEnv.Get("isDictReader")
+	if !ok || Force(v1) != BoolValue(true) {
+		t.Fatalf("expected isDictReader to be true, got %v", v1)
+	}
+	v2, ok := ev.globalEnv.Get("isDictKey")
+	if !ok || Force(v2) != BoolValue(true) {
+		t.Fatalf("expected isDictKey to be true, got %v", v2)
+	}
+	v3, ok := ev.globalEnv.Get("childId")
+	if !ok || Force(v3) != NewIntValue(100) {
+		t.Fatalf("expected childId to be 100, got %v", v3)
+	}
+	v4, ok := ev.globalEnv.Get("childMethod")
+	if !ok || Force(v4) != NewIntValue(100) {
+		t.Fatalf("expected childMethod to be 100, got %v", v4)
+	}
+}

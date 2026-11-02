@@ -760,6 +760,10 @@ func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings
 				} else if r == '}' {
 					brDepth--
 				} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+					if i+1 < len(inner) && inner[i+1] == ':' {
+						i++ // skip '::' scope resolution operator
+						continue
+					}
 					colonIdx = i
 					break
 				}
@@ -2489,7 +2493,17 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 				embTypeArgs[i] = substituteTypeString(a, substMap)
 			}
 		}
-		if embDefVal, ok := env.Get(lookupName); ok {
+		var embDefVal Value
+		var ok bool
+		if strings.Contains(lookupName, "::") {
+			parts := strings.SplitN(lookupName, "::", 2)
+			if mod, modOk := env.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			}
+		} else {
+			embDefVal, ok = env.Get(lookupName)
+		}
+		if ok {
 			if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
 				targetDef := embDef
 				if len(embTypeArgs) > 0 {
@@ -4957,6 +4971,10 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				} else if r == '}' {
 					brD--
 				} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+					if i+1 < len(innerRunes) && innerRunes[i+1] == ':' {
+						i++ // skip '::' scope resolution operator
+						continue
+					}
 					if colonIdx != -1 {
 						return false
 					}
