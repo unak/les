@@ -2033,3 +2033,30 @@ interface MyReader:
 		t.Fatalf("expected 1 embedded interface 'io::Reader', got %+v", iface.Embedded)
 	}
 }
+
+func TestParseImportAsAlias(t *testing.T) {
+	input := `
+import io as myio
+import "math/rand" as r
+import bufio
+`
+	prog := NewParser(lexer.NewLexer(input)).ParseProgram()
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	imp1, ok := prog.Body[0].(*ast.ImportStmt)
+	if !ok || imp1.Path != "io" || imp1.Alias != "myio" {
+		t.Fatalf("unexpected imp1: %+v", prog.Body[0])
+	}
+
+	imp2, ok := prog.Body[1].(*ast.ImportStmt)
+	if !ok || imp2.Path != "math/rand" || imp2.Alias != "r" {
+		t.Fatalf("unexpected imp2: %+v", prog.Body[1])
+	}
+
+	imp3, ok := prog.Body[2].(*ast.ImportStmt)
+	if !ok || imp3.Path != "bufio" || imp3.Alias != "bufio" {
+		t.Fatalf("unexpected imp3: %+v", prog.Body[2])
+	}
+}

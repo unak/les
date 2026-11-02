@@ -777,7 +777,12 @@ func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings
 		}
 	case *types.StructType:
 		base, args, isGen := parseGenericTypeAnnot(valTypeStr)
-		if isGen && dt.Name == base {
+		baseName := base
+		if strings.Contains(baseName, "::") {
+			parts := strings.Split(baseName, "::")
+			baseName = parts[len(parts)-1]
+		}
+		if isGen && (dt.Name == base || dt.Name == baseName) {
 			for i := 0; i < len(dt.TypeArgs) && i < len(args); i++ {
 				matchTypeStringToField(dt.TypeArgs[i], args[i], bindings)
 			}
@@ -2259,17 +2264,37 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			} else if ident, isIdent := args[0].(*ast.Identifier); isIdent {
 				if v, ok := env.Get(ident.Name); ok {
 					if evaluated, isEval := PeekEvaluated(v); isEval {
-						if si, ok := evaluated.(*StructInstance); ok && si.Def.Name == sDef.Name {
-							isPotentialBase = true
+						if si, ok := evaluated.(*StructInstance); ok && si.Def != nil {
+							siRoot := si.Def
+							if siRoot.Origin != nil {
+								siRoot = siRoot.Origin
+							}
+							sDefRoot := sDef
+							if sDefRoot.Origin != nil {
+								sDefRoot = sDefRoot.Origin
+							}
+							if siRoot == sDefRoot {
+								isPotentialBase = true
+							}
 						}
 					}
 				}
 			}
 			if isPotentialBase {
 				val := Force(th0)
-				if si, ok := val.(*StructInstance); ok && si.Def.Name == sDef.Name {
-					baseInstance = si
-					argStartIdx = 1
+				if si, ok := val.(*StructInstance); ok && si.Def != nil {
+					siRoot := si.Def
+					if siRoot.Origin != nil {
+						siRoot = siRoot.Origin
+					}
+					sDefRoot := sDef
+					if sDefRoot.Origin != nil {
+						sDefRoot = sDefRoot.Origin
+					}
+					if siRoot == sDefRoot {
+						baseInstance = si
+						argStartIdx = 1
+					}
 				}
 			}
 		}
@@ -2296,10 +2321,30 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			}
 		}
 		for _, embName := range sDef.EmbeddedNames {
-			if fVal, ok := fields[embName]; ok {
+			lookupName := embName
+			if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+			}
+			fName := lookupName
+			if strings.Contains(fName, "::") {
+				parts := strings.Split(fName, "::")
+				fName = parts[len(parts)-1]
+			}
+			if fVal, ok := fields[fName]; ok {
 				forced := Force(fVal)
 				if si, ok := forced.(*StructInstance); ok {
-					embedded[embName] = si
+					embedded[lookupName] = si
+					fields[lookupName] = si
+				}
+			} else if fVal, ok := fields[lookupName]; ok {
+				forced := Force(fVal)
+				if si, ok := forced.(*StructInstance); ok {
+					embedded[lookupName] = si
+				}
+			} else if fVal, ok := fields[embName]; ok {
+				forced := Force(fVal)
+				if si, ok := forced.(*StructInstance); ok {
+					embedded[lookupName] = si
 				}
 			}
 		}

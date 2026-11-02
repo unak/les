@@ -231,13 +231,16 @@ func (p *Parser) parseImportStmt() *ast.ImportStmt {
 		return nil
 	}
 	alias := path
-
-	if p.peekTokenIs(lexer.TokenNewline) {
-		p.nextToken()
-		p.nextToken()
-	} else {
-		p.nextToken()
+	if p.peekTokenIs(lexer.TokenIdent) && p.peekToken.Literal == "as" {
+		p.nextToken() // advance to 'as'
+		if !p.expectPeek(lexer.TokenIdent) {
+			p.addError(p.peekToken.Line, p.peekToken.Col, "expected identifier after 'as'")
+			return nil
+		}
+		alias = p.curToken.Literal
 	}
+
+	p.consumeStmtEnd()
 	return &ast.ImportStmt{
 		Position: pos,
 		Path:     path,

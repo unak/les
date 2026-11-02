@@ -2272,13 +2272,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if alias == "" {
 				alias = "io"
 			}
-			inf.modules[alias] = makeIOModuleType(alias)
+			mod := makeIOModuleType(alias)
+			inf.modules[alias] = mod
+			inf.modules["io"] = mod
 		} else if s.Path == "bufio" {
 			alias := s.Alias
 			if alias == "" {
 				alias = "bufio"
 			}
-			inf.modules[alias] = makeBufioModuleType(alias)
+			mod := makeBufioModuleType(alias)
+			inf.modules[alias] = mod
+			inf.modules["bufio"] = mod
 		} else if inf.moduleLoader != nil {
 			mod, err := inf.moduleLoader(s.Path)
 			if err != nil {

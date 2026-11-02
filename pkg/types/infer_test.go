@@ -2373,3 +2373,20 @@ func TestBuiltinModuleTypeResolutionInNilInferencer(t *testing.T) {
 		t.Fatalf("expected *StructType with name 'bufio.Writer', got: %v", wType)
 	}
 }
+
+func TestAliasedBuiltinModuleRegistersCanonicalPath(t *testing.T) {
+	inf := NewInferencer()
+	code := `
+import io as myio
+import bufio as mybufio
+
+r1: myio::Reader | Nil = nil
+r2: io::Reader | Nil = nil
+w1: mybufio::Writer | Nil = nil
+w2: bufio::Writer | Nil = nil
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("expected both aliased and canonical builtin module access to pass type check, got: %v", err)
+	}
+}

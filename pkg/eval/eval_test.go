@@ -6345,3 +6345,72 @@ pName = p.getName()
 		t.Fatalf("expected pName to be 'parent', got %v", v3)
 	}
 }
+
+func TestCopyUpdateWithEmbeddedModuleStructAndGenericField(t *testing.T) {
+	tempDir := t.TempDir()
+	baseCode := `
+module base
+
+struct Base:
+    id: Int = 100
+
+struct Box[T]:
+    val: T
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to create base.les: %v", err)
+	}
+
+	code := `
+import base
+
+struct Child:
+    base::Base
+    name: String
+
+c1 = Child(name: "first")
+c1Id = c1.id
+c1Name = c1.name
+
+newBase = base::Base(id: 999)
+c2 = Child(c1, Base: newBase, name: "second")
+c2Id = c2.id
+c2Name = c2.name
+
+struct Container[U]:
+    b: base::Box[U]
+
+bx = base::Box(42)
+ct = Container(bx)
+ctVal = ct.b.val
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	if v, ok := ev.globalEnv.Get("c1Id"); !ok || Force(v) !=
+		NewIntValue(100) {
+		t.Fatalf("expected c1Id == 100, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c1Name"); !ok || Force(v) !=
+		StringValue("first") {
+		t.Fatalf("expected c1Name == 'first', got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2Id"); !ok || Force(v) !=
+		NewIntValue(999) {
+		t.Fatalf("expected c2Id == 999, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2Name"); !ok || Force(v) !=
+		StringValue("second") {
+		t.Fatalf("expected c2Name == 'second', got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("ctVal"); !ok || Force(v) !=
+		NewIntValue(42) {
+		t.Fatalf("expected ctVal == 42, got %v", v)
+	}
+}
