@@ -261,6 +261,21 @@ print math::Pi`
 	if len(pErr.Errors()) == 0 {
 		t.Fatalf("expected parser error for old @mod.Member syntax, got none")
 	}
+
+	// Verify dict type annotation with module type
+	dictInputs := []string{
+		`d: {String: io::Reader} = {}`,
+		`d: {io::Reader: String} = {}`,
+		`d: {io::Reader: io::Writer} = {}`,
+	}
+	for _, di := range dictInputs {
+		lDict := lexer.NewLexer(di)
+		pDict := NewParser(lDict)
+		pDict.ParseProgram()
+		if len(pDict.Errors()) > 0 {
+			t.Fatalf("expected no parser error for '%s', got: %v", di, pDict.Errors())
+		}
+	}
 }
 
 func TestParseImportStmt(t *testing.T) {

@@ -3731,6 +3731,10 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			} else if r == '}' {
 				brDepth--
 			} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+				if i+1 < len(innerRunes) && innerRunes[i+1] == ':' {
+					i++ // skip '::' scope resolution operator
+					continue
+				}
 				colonIdx = i
 				break
 			}
@@ -3754,7 +3758,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		return nil, fmt.Errorf("unknown type '%s'", annot)
 	}
 
-	// Parameterized type annotation: Name[T1, T2] or @mod.Name[T1, T2]
+	// Parameterized type annotation: Name[T1, T2] or mod::Name[T1, T2]
 	if strings.HasSuffix(annot, "]") {
 		depth := 0
 		pDepth := 0
@@ -4069,6 +4073,10 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 			} else if r == '}' {
 				brD--
 			} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+				if i+1 < len(innerRunes) && innerRunes[i+1] == ':' {
+					i++ // skip '::' scope resolution operator
+					continue
+				}
 				colonIdx = i
 				break
 			}

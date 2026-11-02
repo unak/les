@@ -825,6 +825,20 @@ wGlobal: bufio::Writer = Stdout
 	if err := inf.InferProgram(prog); err != nil {
 		t.Fatalf("type inference error for qualified type annotations: %v", err)
 	}
+
+	// Verify module type inside dictionary type annotations and patterns
+	tVal, errVal := inf.ParseTypeAnnot("{String: io::Reader}")
+	if errVal != nil || tVal == nil {
+		t.Fatalf("failed to parse {String: io::Reader}: %v", errVal)
+	}
+	tKey, errKey := inf.ParseTypeAnnot("{io::Reader: String}")
+	if errKey != nil || tKey == nil {
+		t.Fatalf("failed to parse {io::Reader: String}: %v", errKey)
+	}
+	_, _, errPat := inf.ParsePatternTypeAnnot("{io::Reader: _}")
+	if errPat != nil {
+		t.Fatalf("failed to parse pattern {io::Reader: _}: %v", errPat)
+	}
 }
 
 func TestOrdinaryExportedFunctionTypeAnnotationNotUnwrapped(t *testing.T) {

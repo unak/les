@@ -6021,4 +6021,44 @@ func TestModuleDoubleColonScopeAccess(t *testing.T) {
 	if len(pOld.Errors()) == 0 {
 		t.Fatalf("expected parser error on old @math.Add syntax, got none")
 	}
+
+	// Verify generic struct matching with module qualification: val is mod::Struct[T]
+	modBoxCode := `
+struct Box[T]:
+    val: T
+
+def MakeBox[T](x: T) -> Box[T]:
+    Box(val: x)
+`
+	tempDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tempDir, "containers.les"), []byte(modBoxCode), 0644); err != nil {
+		t.Fatalf("failed to write containers.les: %v", err)
+	}
+	evBox := NewEvaluator()
+	evBox.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	codeBoxTest := `
+import containers
+b = containers::Box(42)
+res = b is containers::Box[Int]
+resStr = b is containers::Box[String]
+res
+`
+	progBox := parser.NewParser(lexer.NewLexer(codeBoxTest)).ParseProgram()
+	valBox, errBox := evBox.EvalProgram(progBox)
+	if errBox != nil {
+		t.Fatalf("eval error on generic module struct check: %v", errBox)
+	}
+	forcedVal := Force(valBox)
+	if bVal, ok := forcedVal.(BoolValue); !ok || !bool(bVal) {
+		t.Fatalf("expected b is containers::Box[Int] to be true, got %v", forcedVal)
+	}
+
+	vResStr, ok := evBox.globalEnv.Get("resStr")
+	if !ok {
+		t.Fatalf("expected resStr in globalEnv")
+	}
+	forcedResStr := Force(vResStr)
+	if bVal, ok := forcedResStr.(BoolValue); !ok || bool(bVal) {
+		t.Fatalf("expected b is containers::Box[String] to be false, got %v", forcedResStr)
+	}
 }

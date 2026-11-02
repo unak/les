@@ -933,7 +933,8 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 		return annot, nil, false
 	}
 	base := strings.TrimSpace(string(runes[:bracketIdx]))
-	if strings.ContainsAny(base, "->()[]{}:|, \t\n") {
+	baseCheck := strings.ReplaceAll(base, "::", "")
+	if strings.ContainsAny(baseCheck, "->()[]{}:|, \t\n") {
 		return annot, nil, false
 	}
 	inner := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
@@ -5045,7 +5046,32 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		baseName, typeArgs, isGeneric := parseGenericTypeAnnot(typeAnnot)
 		if isGeneric {
 			if si, ok := val.(*StructInstance); ok {
-				if si.Def.Name == baseName {
+				matchesStruct := si.Def.Name == baseName
+				if !matchesStruct && strings.Contains(baseName, "::") {
+					parts := strings.SplitN(baseName, "::", 2)
+					if len(parts) == 2 && si.Def.Name == parts[1] {
+						var sEnv *Environment
+						if len(optEnv) > 0 && optEnv[0] != nil {
+							sEnv = optEnv[0]
+						} else if si.Def.Env != nil {
+							sEnv = si.Def.Env
+						}
+						if sEnv != nil {
+							if modVal, found := sEnv.GetModule(parts[0]); found {
+								if expVal, ok := modVal.Exports[parts[1]]; ok {
+									forcedExp := Force(expVal)
+									if bf, isBF := forcedExp.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+										forcedExp = Force(bf.TypeDef)
+									}
+									if structDef, isStruct := forcedExp.(*StructDefValue); isStruct && (si.Def == structDef || si.Def.Name == structDef.Name) {
+										matchesStruct = true
+									}
+								}
+							}
+						}
+					}
+				}
+				if matchesStruct {
 					if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
 						inferStructInstanceTypeArgs(si)
 					}

@@ -1379,7 +1379,7 @@ func (p *Parser) isUnaryMinusOrPlusArg() bool {
 	}
 	r := rune(rest[0])
 	// Operand following '-' or '+' must be a valid expression starter
-	if unicode.IsDigit(r) || unicode.IsLetter(r) || r == '_' || r == '(' || r == '[' || r == '{' || r == '@' || r == '!' || r == '~' {
+	if unicode.IsDigit(r) || unicode.IsLetter(r) || r == '_' || r == '(' || r == '[' || r == '{' || r == '!' || r == '~' {
 		return true
 	}
 	return false
@@ -1406,7 +1406,7 @@ func (p *Parser) canStartArgument() bool {
 	case lexer.TokenMinus, lexer.TokenPlus:
 		return p.isUnaryMinusOrPlusArg()
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil, lexer.TokenRegex,
-		lexer.TokenLBrace, lexer.TokenAt, lexer.TokenMatch, lexer.TokenForce:
+		lexer.TokenLBrace, lexer.TokenMatch, lexer.TokenForce:
 		return true
 	default:
 		return false
@@ -1931,7 +1931,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 			}
 			typeParts = append(typeParts, p.curToken.Literal)
 			if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
-				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenAt) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenColonColon) || p.curTokenIs(lexer.TokenArrow) {
+				if p.curTokenIs(lexer.TokenPipe) || p.curTokenIs(lexer.TokenDot) || p.curTokenIs(lexer.TokenColonColon) || p.curTokenIs(lexer.TokenArrow) {
 					// Must continue to next component
 				} else if p.peekTokenIs(lexer.TokenPipe) || p.peekTokenIs(lexer.TokenDot) || p.peekTokenIs(lexer.TokenColonColon) || p.peekTokenIs(lexer.TokenArrow) || p.peekTokenIs(lexer.TokenLBracket) {
 					// Continue if followed by '|', '.', '->', or '[' (to capture invalid brackets for error reporting)
@@ -2261,7 +2261,7 @@ func noSpaceBefore(part, prev string) bool {
 
 func noSpaceAfter(prev string) bool {
 	switch prev {
-	case "(", "[", "{", "@", "::", ".":
+	case "(", "[", "{", "::", ".":
 		return true
 	default:
 		return false
@@ -2376,6 +2376,10 @@ func isValidDictAnnotationContent(inner string) bool {
 		} else if r == '}' {
 			brDepth--
 		} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+			if i+1 < len(runes) && runes[i+1] == ':' {
+				i++ // skip '::' scope resolution operator
+				continue
+			}
 			if colonIdx != -1 {
 				// More than one top-level colon
 				return false
