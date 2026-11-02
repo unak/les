@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"les/pkg/ast"
 	"les/pkg/lexer"
 	"les/pkg/parser"
 )
@@ -6060,5 +6061,94 @@ res
 	forcedResStr := Force(vResStr)
 	if bVal, ok := forcedResStr.(BoolValue); !ok || bool(bVal) {
 		t.Fatalf("expected b is containers::Box[String] to be false, got %v", forcedResStr)
+	}
+}
+
+func TestEvalEmbeddedModuleTypesAndEmptyMemberGuard(t *testing.T) {
+	// 1. Empty member name guard
+	ev := NewEvaluator()
+	modAccessExpr := &ast.ModuleAccessExpr{
+		Module: "io",
+		Member: "",
+	}
+	_, err := ev.globalEnv.evalExpr(modAccessExpr)
+	if err == nil {
+		t.Fatalf("expected error for empty member name, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty member name") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 2. Struct embedding a module struct at runtime
+	tempDir, err := os.MkdirTemp("", "les_eval_mod_embed_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	baseCode := `
+module base
+
+struct Base:
+    id: Int = 100
+
+    def GetId(self) -> Int:
+        self.id
+`
+	basePath := filepath.Join(tempDir, "base.les")
+	if err := os.WriteFile(basePath, []byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	fml := NewFileModuleLoader(tempDir)
+	evMod := NewEvaluator()
+	evMod.SetModuleLoader(fml.Load)
+
+	mainCode := `
+import base
+
+struct Child:
+    base::Base
+    name: String
+
+c = Child(name: "test")
+cid = c.id
+cmeth = c.GetId()
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	_, err = evMod.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected error evaluating embedded module struct: %v", err)
+	}
+
+	vId, ok := evMod.globalEnv.Get("cid")
+	if !ok || Force(vId) != NewIntValue(100) {
+		t.Fatalf("expected c.id == 100, got %v", vId)
+	}
+	vMeth, ok := evMod.globalEnv.Get("cmeth")
+	if !ok || Force(vMeth) != NewIntValue(100) {
+		t.Fatalf("expected c.GetId() == 100, got %v", vMeth)
+	}
+
+	// 3. Interface embedding a module interface at runtime
+	ifaceCode := `
+interface MyReader:
+    io::Reader
+
+struct SimpleReader:
+    def Read(self, n: Int) -> Bytes | Nil:
+        Bytes("data")
+
+r = SimpleReader()
+res = r is MyReader
+res
+`
+	progIface := parser.NewParser(lexer.NewLexer(ifaceCode)).ParseProgram()
+	valIface, err := ev.EvalProgram(progIface)
+	if err != nil {
+		t.Fatalf("unexpected error checking interface embedding io::Reader: %v", err)
+	}
+	if bVal, ok := Force(valIface).(BoolValue); !ok || !bool(bVal) {
+		t.Fatalf("expected r is MyReader to be true, got %v", valIface)
 	}
 }

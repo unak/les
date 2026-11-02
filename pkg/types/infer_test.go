@@ -2304,3 +2304,55 @@ res: Int = math::Add(p.x, p.y)
 		t.Fatalf("unexpected type inference error using canonical module name: %v", err)
 	}
 }
+func TestUnimportedModuleAndEmbeddedModuleTypeChecking(t *testing.T) {
+	// 1. Unimported module expression access should produce a static type error
+	unimportedCode := `
+x = nonexistent_mod::Foo()
+`
+	uProg := parser.NewParser(lexer.NewLexer(unimportedCode)).ParseProgram()
+	uInf := NewInferencer()
+	err := uInf.InferProgram(uProg)
+	if err == nil {
+		t.Fatalf("expected type error accessing unimported module, got nil")
+	}
+	if !strings.Contains(err.Error(), "module 'nonexistent_mod' not found or not imported") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// 2. Struct embedding a module struct
+	tempDir, err := os.MkdirTemp("", "les_mod_embed_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	baseCode := `
+module base
+
+struct Base:
+    id: Int
+`
+	basePath := filepath.Join(tempDir, "base.les")
+	if err := os.WriteFile(basePath, []byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	loader := NewFileModuleLoader(tempDir)
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	mainCode := `
+import base
+
+struct Child:
+    base::Base
+    name: String
+
+c = Child("hello")
+cId: Int = c.id
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error on embedded module struct: %v", err)
+	}
+}

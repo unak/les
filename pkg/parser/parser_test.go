@@ -2004,3 +2004,36 @@ func TestParseIsExprBoolAndEmpty(t *testing.T) {
 
 
 
+
+func TestParseEmbeddedModuleTypes(t *testing.T) {
+	input := `
+struct MyStruct:
+    io::Reader
+
+interface MyReader:
+    io::Reader
+`
+	prog := NewParser(lexer.NewLexer(input)).ParseProgram()
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
+
+	st, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[0])
+	}
+	if len(st.Fields) != 1 || !st.Fields[0].IsEmbedded {
+		t.Fatalf("expected 1 embedded field, got %+v", st.Fields)
+	}
+	if st.Fields[0].Name != "Reader" || st.Fields[0].TypeAnnot != "io::Reader" {
+		t.Fatalf("unexpected embedded field: %+v", st.Fields[0])
+	}
+
+	iface, ok := prog.Body[1].(*ast.InterfaceDef)
+	if !ok {
+		t.Fatalf("expected InterfaceDef, got %T", prog.Body[1])
+	}
+	if len(iface.Embedded) != 1 || iface.Embedded[0] != "io::Reader" {
+		t.Fatalf("expected 1 embedded interface 'io::Reader', got %+v", iface.Embedded)
+	}
+}

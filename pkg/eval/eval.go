@@ -2113,6 +2113,9 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("module '%s' not found or not imported", e.Module)
 		}
+		if len(e.Member) == 0 {
+			return nil, fmt.Errorf("empty member name in module access")
+		}
 		// Enforce Go-style visibility: member must start with Uppercase letter to be public
 		firstChar := e.Member[0]
 		if firstChar < 'A' || firstChar > 'Z' {
@@ -2377,7 +2380,17 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 					embTypeArgs[i] = substituteTypeString(a, substMap)
 				}
 			}
-			if embDefVal, ok := env.Get(lookupName); ok {
+			var embDefVal Value
+			var ok bool
+			if strings.Contains(lookupName, "::") {
+				parts := strings.SplitN(lookupName, "::", 2)
+				if mod, modOk := env.GetModule(parts[0]); modOk {
+					embDefVal, ok = mod.Exports[parts[1]]
+				}
+			} else {
+				embDefVal, ok = env.Get(lookupName)
+			}
+			if ok {
 				if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
 					targetDef := embDef
 					if len(embTypeArgs) > 0 {
@@ -5524,6 +5537,16 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 			if iface.ModuleName != "" {
 				if mod, found := env.GetModule(iface.ModuleName); found {
 					if expVal, exists := mod.Exports[lookupName]; exists {
+						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+							embDef = ed
+						}
+					}
+				}
+			}
+			if embDef == nil && strings.Contains(lookupName, "::") {
+				parts := strings.SplitN(lookupName, "::", 2)
+				if mod, found := env.GetModule(parts[0]); found {
+					if expVal, exists := mod.Exports[parts[1]]; exists {
 						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
 							embDef = ed
 						}

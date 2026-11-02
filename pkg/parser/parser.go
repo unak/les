@@ -305,17 +305,27 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 				})
 				p.consumeStmtEnd()
 			} else {
-				// Embedded struct type: e.g. Person or Base[T]
+				// Embedded struct type: e.g. Person, Base[T], or mod::Base[T]
 				var typeAnnot string
-				if p.peekTokenIs(lexer.TokenLBracket) {
-					typeAnnot = p.parseTypeAnnotString()
+				fieldName := ident
+				if p.peekTokenIs(lexer.TokenLBracket) || p.peekTokenIs(lexer.TokenColonColon) {
+					typeAnnot = strings.TrimSpace(p.parseTypeAnnotString())
+					if strings.Contains(typeAnnot, "::") {
+						parts := strings.Split(typeAnnot, "::")
+						lastPart := parts[len(parts)-1]
+						if bracketIdx := strings.Index(lastPart, "["); bracketIdx != -1 {
+							fieldName = lastPart[:bracketIdx]
+						} else {
+							fieldName = lastPart
+						}
+					}
 				} else {
 					typeAnnot = ident
 					p.nextToken() // consume ident
 				}
 				fields = append(fields, ast.StructField{
 					Position:   fPos,
-					Name:       ident,
+					Name:       fieldName,
 					TypeAnnot:  typeAnnot,
 					IsEmbedded: true,
 				})
@@ -439,10 +449,10 @@ func (p *Parser) parseInterfaceDef() *ast.InterfaceDef {
 				})
 				p.consumeStmtEnd()
 			} else {
-				// Embedded interface: e.g. Reader or Reader[T]
+				// Embedded interface: e.g. Reader, Reader[T], or mod::Reader[T]
 				var embName string
-				if p.peekTokenIs(lexer.TokenLBracket) {
-					embName = p.parseTypeAnnotString()
+				if p.peekTokenIs(lexer.TokenLBracket) || p.peekTokenIs(lexer.TokenColonColon) {
+					embName = strings.TrimSpace(p.parseTypeAnnotString())
 				} else {
 					embName = ident
 					p.nextToken() // consume ident
@@ -1562,7 +1572,7 @@ func (p *Parser) parseLambdaExpr() *ast.LambdaExpr {
 				if p.peekTokenIs(lexer.TokenColon) {
 					p.nextToken() // consume ':'
 					p.nextToken() // advance to type annot start
-					typeAnnot = p.parseTypeAnnotString()
+					typeAnnot = strings.TrimSpace(p.parseTypeAnnotString())
 				}
 				params = append(params, ast.FuncParam{
 					Position:   paramPos,
@@ -2199,7 +2209,7 @@ func (p *Parser) parseBlockLiteral() *ast.BlockLiteral {
 			if p.peekTokenIs(lexer.TokenColon) {
 				p.nextToken() // consume ':'
 				p.nextToken() // advance to type annot start
-				typeAnnot = p.parseTypeAnnotString()
+				typeAnnot = strings.TrimSpace(p.parseTypeAnnotString())
 			}
 			params = append(params, ast.FuncParam{
 				Position:   paramPos,

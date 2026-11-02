@@ -3406,7 +3406,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 			return nil, inf.nodeErr(e, "undefined member '%s' in module '%s'", e.Member, e.Module)
 		}
-		return TypeUnknown, nil
+		return nil, inf.nodeErr(e, "module '%s' not found or not imported", e.Module)
 	case *ast.IsExpr:
 		_, err := inf.inferExpr(e.Expr)
 		if err != nil {
