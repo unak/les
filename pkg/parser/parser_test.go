@@ -276,6 +276,20 @@ print math::Pi`
 			t.Fatalf("expected no parser error for '%s', got: %v", di, pDict.Errors())
 		}
 	}
+
+	// Verify error recovery for non-ident left operand
+	invalidInputs := []string{
+		`x = (1 + 2)::Member`,
+		`y = a::b::c`,
+	}
+	for _, inv := range invalidInputs {
+		lInv := lexer.NewLexer(inv)
+		pInv := NewParser(lInv)
+		pInv.ParseProgram()
+		if len(pInv.Errors()) == 0 {
+			t.Fatalf("expected parser error for '%s', got none", inv)
+		}
+	}
 }
 
 func TestParseImportStmt(t *testing.T) {

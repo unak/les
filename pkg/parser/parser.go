@@ -1861,6 +1861,10 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		ident, ok := left.(*ast.Identifier)
 		if !ok {
 			p.addError(pos.Line, pos.Col, "expected module identifier before '::'")
+			p.nextToken() // consume '::'
+			if p.curTokenIs(lexer.TokenIdent) {
+				p.nextToken() // consume member identifier if present
+			}
 			return nil
 		}
 		p.nextToken() // consume '::'

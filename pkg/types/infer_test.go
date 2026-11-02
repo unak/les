@@ -2241,3 +2241,66 @@ abs_val = get_num(true).Abs()
 		t.Errorf("expected abs_val to be Int | Float, got %v", absT)
 	}
 }
+
+func TestFileModuleCanonicalImportAndTypes(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "les_mod_canonical_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	subDir := filepath.Join(tempDir, "utils")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create sub dir: %v", err)
+	}
+
+	mathCode := `
+module math
+
+struct Point:
+    x: Int
+    y: Int
+
+interface Summer:
+    Sum(): Int
+
+def Add(a: Int, b: Int) -> Int:
+    a + b
+`
+	mathPath := filepath.Join(subDir, "math.les")
+	if err := os.WriteFile(mathPath, []byte(mathCode), 0644); err != nil {
+		t.Fatalf("failed to write math.les: %v", err)
+	}
+
+	loader := NewFileModuleLoader(tempDir)
+
+	// Verify modVal.Types populated
+	modVal, err := loader.Load("utils/math")
+	if err != nil {
+		t.Fatalf("failed to load utils/math: %v", err)
+	}
+	if modVal.Types == nil {
+		t.Fatalf("expected modVal.Types to be non-nil")
+	}
+	if _, ok := modVal.Types["Point"].(*StructType); !ok {
+		t.Errorf("expected modVal.Types[Point] to be *StructType, got %v", modVal.Types["Point"])
+	}
+	if _, ok := modVal.Types["Summer"].(*InterfaceType); !ok {
+		t.Errorf("expected modVal.Types[Summer] to be *InterfaceType, got %v", modVal.Types["Summer"])
+	}
+
+	// Verify import by path registers canonical name "math" in Inferencer
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	mainCode := `
+import "utils/math"
+
+p: math::Point = math::Point(10, 20)
+res: Int = math::Add(p.x, p.y)
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error using canonical module name: %v", err)
+	}
+}

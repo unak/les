@@ -2280,7 +2280,15 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if err != nil {
 				return err
 			}
-			inf.modules[s.Alias] = mod
+			if s.Alias != "" {
+				inf.modules[s.Alias] = mod
+			}
+			if s.Path != "" {
+				inf.modules[s.Path] = mod
+			}
+			if mod != nil && mod.Name != "" {
+				inf.modules[mod.Name] = mod
+			}
 		}
 		return nil
 	case *ast.ModuleDecl:
