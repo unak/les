@@ -142,59 +142,82 @@ func (p *Parser) parseStmt() ast.Stmt {
 	if p.curTokenIs(lexer.TokenEOF) {
 		return nil
 	}
+	var res ast.Stmt
 	switch p.curToken.Type {
 	case lexer.TokenModule:
-		return p.parseModuleDecl()
+		if s := p.parseModuleDecl(); s != nil {
+			res = s
+		}
 	case lexer.TokenImport:
-		return p.parseImportStmt()
+		if s := p.parseImportStmt(); s != nil {
+			res = s
+		}
 	case lexer.TokenDef:
-		return p.parseFuncDef()
+		if s := p.parseFuncDef(); s != nil {
+			res = s
+		}
 	case lexer.TokenStruct:
-		return p.parseStructDef()
+		if s := p.parseStructDef(); s != nil {
+			res = s
+		}
 	case lexer.TokenInterface:
-		return p.parseInterfaceDef()
+		if s := p.parseInterfaceDef(); s != nil {
+			res = s
+		}
 	case lexer.TokenIf:
-		return p.parseIfStmt()
+		if s := p.parseIfStmt(); s != nil {
+			res = s
+		}
 	case lexer.TokenFor:
-		return p.parseForStmt()
+		if s := p.parseForStmt(); s != nil {
+			res = s
+		}
 	case lexer.TokenReturn:
-		return p.parseReturnStmt()
+		if s := p.parseReturnStmt(); s != nil {
+			res = s
+		}
 	case lexer.TokenBreak:
 		if p.inClosureDepth <= 0 {
 			p.addError(p.curToken.Line, p.curToken.Col, "break outside of closure or loop")
 		}
-		return p.parseBreakStmt()
+		if s := p.parseBreakStmt(); s != nil {
+			res = s
+		}
 	case lexer.TokenContinue:
 		if p.inClosureDepth <= 0 {
 			p.addError(p.curToken.Line, p.curToken.Col, "continue outside of loop")
 		}
-		return p.parseContinueStmt()
+		if s := p.parseContinueStmt(); s != nil {
+			res = s
+		}
 	case lexer.TokenLParen:
 		if p.isUnpackParenDeclStart() {
-			return p.parseUnpackDeclWithParen()
+			if s := p.parseUnpackDeclWithParen(); s != nil {
+				res = s
+			}
+		} else {
+			res = p.parseExprStmt()
 		}
-		return p.parseExprStmt()
 	case lexer.TokenIdent:
 		// Check for unpacked assignment without paren: h, ...t = expr
 		if p.peekTokenIs(lexer.TokenComma) && p.hasAssignOnCurrentLine() {
-			return p.parseUnpackDeclWithoutParen()
-		}
-		// Check for member assignment: `target.member = val`
-		if p.peekTokenIs(lexer.TokenDot) && p.isMemberAssignOnCurrentLine() {
-			return p.parseMemberAssignStmt()
-		}
-		// Check for assignment: `x = val` or `x: Int = val`
-		if p.peekTokenIs(lexer.TokenAssign) {
-			return p.parseVarDecl("")
-		}
-		if p.peekTokenIs(lexer.TokenColon) {
+			res = p.parseUnpackDeclWithoutParen()
+		} else if p.peekTokenIs(lexer.TokenDot) && p.isMemberAssignOnCurrentLine() {
+			// Check for member assignment: `target.member = val`
+			res = p.parseMemberAssignStmt()
+		} else if p.peekTokenIs(lexer.TokenAssign) {
+			// Check for assignment: `x = val` or `x: Int = val`
+			res = p.parseVarDecl("")
+		} else if p.peekTokenIs(lexer.TokenColon) {
 			// type annotated assignment: x: Type = val
-			return p.parseAnnotatedVarDecl()
+			res = p.parseAnnotatedVarDecl()
+		} else {
+			res = p.parseExprStmt()
 		}
-		return p.parseExprStmt()
 	default:
-		return p.parseExprStmt()
+		res = p.parseExprStmt()
 	}
+	return res
 }
 
 func (p *Parser) parseImportStmt() *ast.ImportStmt {

@@ -1138,8 +1138,7 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 
 			if v, ok := emb.Fields[name]; ok {
 				candidates = append(candidates, candidate{val: v, origin: emb.Def.Name})
-			}
-			if emb.Def != nil && emb.Def.AllMethods != nil {
+			} else if emb.Def != nil && emb.Def.AllMethods != nil {
 				if ms, ok := emb.Def.AllMethods[name]; ok && len(ms) > 0 {
 					candidates = append(candidates, candidate{val: emb.makeDispatcher(name, ms), origin: emb.Def.Name})
 				}

@@ -2339,8 +2339,14 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		lookup := embName
 		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
 			isEmbeddedField[base] = true
+			lookup = base
+		}
+		if strings.Contains(lookup, "::") {
+			parts := strings.Split(lookup, "::")
+			isEmbeddedField[parts[len(parts)-1]] = true
 		}
 	}
 
@@ -2364,17 +2370,29 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
 			lookupName = base
 		}
+		fName := lookupName
+		if strings.Contains(fName, "::") {
+			parts := strings.Split(fName, "::")
+			fName = parts[len(parts)-1]
+		}
 		if fVal, ok := fields[lookupName]; ok {
 			forced := Force(fVal)
 			if si, ok := forced.(*StructInstance); ok {
 				embedded[lookupName] = si
+			}
+		} else if fVal, ok := fields[fName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				embedded[lookupName] = si
+				fields[lookupName] = si
 			}
 		} else if fVal, ok := fields[embName]; ok {
 			forced := Force(fVal)
 			if si, ok := forced.(*StructInstance); ok {
 				embedded[lookupName] = si
 			}
-		} else {
+		}
+		if embedded[lookupName] == nil {
 			var embTypeArgs []string
 			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
 				lookupName = base
@@ -2389,27 +2407,44 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 					embTypeArgs[i] = substituteTypeString(a, substMap)
 				}
 			}
+			searchEnv := env
+			if sDef.Env != nil {
+				searchEnv = sDef.Env
+			}
 			var embDefVal Value
 			var ok bool
 			if strings.Contains(lookupName, "::") {
 				parts := strings.SplitN(lookupName, "::", 2)
-				if mod, modOk := env.GetModule(parts[0]); modOk {
+				if mod, modOk := searchEnv.GetModule(parts[0]); modOk {
+					embDefVal, ok = mod.Exports[parts[1]]
+				} else if mod, modOk := env.GetModule(parts[0]); modOk {
 					embDefVal, ok = mod.Exports[parts[1]]
 				}
 			} else {
-				embDefVal, ok = env.Get(lookupName)
+				embDefVal, ok = searchEnv.Get(lookupName)
+				if !ok && searchEnv != env {
+					embDefVal, ok = env.Get(lookupName)
+				}
 			}
 			if ok {
-				if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
+				forcedEmb := Force(embDefVal)
+				if bf, isBF := forcedEmb.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+					forcedEmb = Force(bf.TypeDef)
+				}
+				if embDef, ok := forcedEmb.(*StructDefValue); ok {
 					targetDef := embDef
 					if len(embTypeArgs) > 0 {
-						if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+						if sp, err := specializeGenericValue(embDef, embTypeArgs, searchEnv); err == nil {
 							if spDef, ok := sp.(*StructDefValue); ok {
 								targetDef = spDef
 							}
 						}
 					}
-					subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
+					targetEnv := env
+					if targetDef.Env != nil {
+						targetEnv = targetDef.Env
+					}
+					subInst, err := targetEnv.instantiateStruct(targetDef, []ast.Expr{})
 					if err == nil {
 						embedded[lookupName] = subInst
 						fields[lookupName] = subInst
@@ -2459,8 +2494,14 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		lookup := embName
 		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
 			isEmbeddedField[base] = true
+			lookup = base
+		}
+		if strings.Contains(lookup, "::") {
+			parts := strings.Split(lookup, "::")
+			isEmbeddedField[parts[len(parts)-1]] = true
 		}
 	}
 
@@ -2493,27 +2534,44 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 				embTypeArgs[i] = substituteTypeString(a, substMap)
 			}
 		}
+		searchEnv := env
+		if sDef.Env != nil {
+			searchEnv = sDef.Env
+		}
 		var embDefVal Value
 		var ok bool
 		if strings.Contains(lookupName, "::") {
 			parts := strings.SplitN(lookupName, "::", 2)
-			if mod, modOk := env.GetModule(parts[0]); modOk {
+			if mod, modOk := searchEnv.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			} else if mod, modOk := env.GetModule(parts[0]); modOk {
 				embDefVal, ok = mod.Exports[parts[1]]
 			}
 		} else {
-			embDefVal, ok = env.Get(lookupName)
+			embDefVal, ok = searchEnv.Get(lookupName)
+			if !ok && searchEnv != env {
+				embDefVal, ok = env.Get(lookupName)
+			}
 		}
 		if ok {
-			if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
+			forcedEmb := Force(embDefVal)
+			if bf, isBF := forcedEmb.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+				forcedEmb = Force(bf.TypeDef)
+			}
+			if embDef, ok := forcedEmb.(*StructDefValue); ok {
 				targetDef := embDef
 				if len(embTypeArgs) > 0 {
-					if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+					if sp, err := specializeGenericValue(embDef, embTypeArgs, searchEnv); err == nil {
 						if spDef, ok := sp.(*StructDefValue); ok {
 							targetDef = spDef
 						}
 					}
 				}
-				subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
+				targetEnv := env
+				if targetDef.Env != nil {
+					targetEnv = targetDef.Env
+				}
+				subInst, err := targetEnv.instantiateStruct(targetDef, []ast.Expr{})
 				if err == nil {
 					embedded[lookupName] = subInst
 					fields[lookupName] = subInst

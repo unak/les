@@ -6284,3 +6284,64 @@ childMethod = c.GetId()
 		t.Fatalf("expected childMethod to be 100, got %v", v4)
 	}
 }
+
+func TestEmbeddedBuiltinModuleStructAndModuleScopeEmbedding(t *testing.T) {
+	tempDir := t.TempDir()
+	baseCode := `
+struct MyReader:
+    def Read(self, n: Int):
+        return "test data\n".Bytes()
+
+struct Inner:
+    val: Int
+    def getVal(self):
+        return self.val
+
+struct Parent:
+    Inner
+    name: String
+    def getName(self):
+        return self.name
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to create base.les: %v", err)
+	}
+
+	code := `
+import bufio
+import base
+
+struct MyBufReader:
+    bufio::Reader
+    tag: String
+
+mr = base::MyReader()
+br = bufio::Reader(mr)
+my = MyBufReader(br, "tag1")
+line = my.ReadLine()
+
+p = base::Parent(base::Inner(42), "parent")
+pVal = p.getVal()
+pName = p.getName()
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	v1, ok := ev.globalEnv.Get("line")
+	if !ok || Force(v1) != StringValue("test data") {
+		t.Fatalf("expected line to be 'test data', got %v", v1)
+	}
+	v2, ok := ev.globalEnv.Get("pVal")
+	if !ok || Force(v2) != NewIntValue(42) {
+		t.Fatalf("expected pVal to be 42, got %v", v2)
+	}
+	v3, ok := ev.globalEnv.Get("pName")
+	if !ok || Force(v3) != StringValue("parent") {
+		t.Fatalf("expected pName to be 'parent', got %v", v3)
+	}
+}
