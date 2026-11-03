@@ -1,9 +1,90 @@
-# Les Language Specification & Plan
+# Les Language
 
 ## Overview
-Les (Lazy Evaluation Script) is a scripting language with Python-like syntax, Ruby-style features, and a Go-like type system, featuring static typing and lazy evaluation.
+
+Les (Lazy Evaluation Script) is a modern scripting language combining Python-like syntax, Ruby-style developer ergonomics, and Go-inspired static typing with purely demand-driven lazy evaluation.
 
 Les is implemented in Go.
+
+---
+
+## Key Features & Philosophy
+
+- **Python-like Syntax**: Clean, indentation-based block syntax without noisy braces or semicolons (while optional `;` and `\` line continuation are fully supported).
+- **Ruby-style Ergonomics**:
+  - Optional parentheses for function application (`print x + 1`).
+  - Functional pipeline operator (`|>`).
+  - Expressive block parameters (`do |x|: ...`).
+  - Convenient `@` sugar for receiver access (`@field`, `@method()`, `@field = val`).
+  - Module scope resolution using `::` (e.g. `math::Pi`).
+- **Go-like Type System & Structural Interfaces**:
+  - Go-style implicit structural typing (duck typing) for interfaces.
+  - Struct embedding with automatic field and method promotion.
+  - Clear visibility rules based on identifier casing (uppercase `[A-Z]` is exported/public; lowercase `[a-z_]` is private/module-local).
+- **Hindley-Milner Static Type Inference & Union Types**:
+  - Full static type inference: explicit type annotations are optional.
+  - First-class union types (`Type1 | Type2`) and exhaustive pattern matching (`match ... case`).
+- **Demand-Driven Lazy Evaluation**:
+  - Function arguments, container elements, and variables are deferred thunks by default.
+  - Strict demand boundaries at side-effect points (`print`, `exit`) or via explicit forcing (`expr!` or `force expr`).
+  - Non-blocking lazy I/O reads (`gets()`).
+- **First-Class Error Handling**:
+  - Errors are first-class values (`interface Error`) rather than exceptions, preventing evaluation-order surprises under lazy semantics.
+  - Idiomatic `Value | Error` union returns inspected via pattern matching.
+
+---
+
+## Quick Example
+
+```python
+# Struct definition with Go-style embedding and '@' receiver sugar
+struct Point:
+    x: Int = 0
+    y: Int = 0
+
+    def DistSq() -> Int:
+        @x * @x + @y * @y
+
+    def Shift(dx: Int, dy: Int) -> Point:
+        Point(x: @x + dx, y: @y + dy)
+
+# Structural interfaces (duck typing)
+interface Measurable:
+    DistSq(): Int
+
+def PrintMeasurement[T: Measurable](item: T):
+    print "Distance squared: ", item.DistSq(), "\n"
+
+# Immutable records, pipelines, and paren-omitted calls
+p = Point(x: 3, y: 4)
+p.Shift(1, -1) |> PrintMeasurement
+
+# Error handling with union types and pattern matching
+def safe_divide(a: Int, b: Int): Int | Error:
+    if b == 0:
+        Error("cannot divide by zero")
+    else:
+        a / b
+
+match safe_divide(10, 0):
+    case Int:
+        print "Result: ", it, "\n"
+    case Error:
+        print "Error: ", it.Message(), "\n"
+```
+
+---
+
+## Documentation
+
+Comprehensive documentation is organized into dedicated guides in the [`doc/`](doc/) directory:
+
+- [**Language Syntax & Semantics Guide**](doc/syntax.md):
+  Covers primitive types, Hindley-Milner type inference, union types, generic type constraints, modules, function call semantics, operator precedence, lambdas, control flow, structs, embedding, interfaces, and error handling.
+- [**Standard Library & Built-in Reference**](doc/reference.md):
+  Complete reference manual for built-in functions (`print`, `exit`, `gets`), predefined variables (`Args`, `Stdin`, `Stdout`, `Stderr`), primitive type methods, core interfaces (`Show`, `Equatable`, `Comparable`, `Indexable`, `Numeric`), and standard library modules (`io`, `bufio`).
+
+---
 
 ## Build & Installation
 
@@ -21,6 +102,8 @@ go install ./cmd/les
 # Run test suite
 go test ./...
 ```
+
+---
 
 ## Command-Line Usage
 
@@ -55,1185 +138,60 @@ les -e "print Args[0]" foo bar
 les - arg1 arg2 < script.les
 ```
 
-### Options:
-- `-v`: Display version and platform information, then exit.
-- `-c`: Check syntax only without type checking or execution.
-- `-t`: Check syntax and static types (including resolving and verifying imported modules) without execution.
-- `-e <code>`: Evaluate the inline script string directly.
-
-## Primitive Types
-
-| Type | Syntax / Examples | Description |
-|---|---|---|
-| `Int` | `42`, `-10`, `0`, `0b1010`, `0o755`, `0d100`, `0xdead_beef`, `1_000_000` | Arbitrary-precision signed integer (transparently expanding from 64-bit int to multi-precision). Supports binary (`0b`/`0B`), octal (`0o`/`0O`), explicit decimal (`0d`/`0D`), hexadecimal (`0x`/`0X`), and visual digit separators (`_`). |
-| `Float` | `3.14`, `-0.5`, `2.0`, `1_000.5`, `3.14159_26535` | 64-bit IEEE 754 floating-point number. Supports visual digit separators (`_`) in both integer and fractional parts. |
-| `String` | `"hello"`, `'world'` | Immutable UTF-8 encoded string. Indexed by 0-based rune (Unicode code point) index `s[0]`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). |
-| `Bytes` | `Bytes("hello")`, `"hello".Bytes()`, `Bytes()` | Immutable raw byte sequence representing binary data. Indexed by 0-based byte offset `b[0]`, returning an `Int` (`0`–`255`). Supports negative index `b[-1]` (last byte). |
-| `Bool` | `true`, `false` | Boolean value. |
-| `Nil` | `nil` | Represents the absence of a value (singleton literal `nil`). Frequently used in union types (e.g., `String | Nil`). |
-| `Tuple` | `()`, `(1,)`, `(1, 2, 3)` | Immutable, lazily evaluated sequence. Replaces array concept. Indexed by integer `t[0]`. Multiline literals and trailing commas are fully supported: `(\n    1,\n    2,\n)`. |
-| `Dict` | `{"a": 1, "b": 2}`, `{}` | Immutable persistent map based on HAMT (Hash Array Mapped Trie). Updates use structural sharing with O(log n) overhead, preserving referential transparency without full deep copies. Multiline literals and trailing commas are fully supported: `{\n    "a": 1,\n    "b": 2,\n}`. Indexed by key `d["a"]`. Keys are strictly typed (e.g. `1` and `"1"` are distinct keys without coercion). |
-| `Regex` | `/pattern/flags`, `Regex("pattern", "flags")` | Immutable compiled regular expression object. Supports flags `i` (case-insensitive), `m` (multi-line), `s` (dot matches all), and `U` (ungreedy). Disambiguated from division `/` based on preceding token context. |
-| `Match` | Result of `s =~ r` or `r.Match(s)` | Successful regex match result. Indexed by 0-based group index `m[0]` (full match, `String`), `m[1..n]` (captures, `String | Nil`), negative index `m[-1]`, or group name `m["name"]`. Implements `Indexable[Int, String | Nil]` and `Indexable[String, String | Nil]`. |
-
-> [!NOTE]
-> **Numeric Literal Syntax Rules & Disambiguation**:
-> - **Radix Prefixes**: Binary (`0b`/`0B`), Octal (`0o`/`0O`), Explicit Decimal (`0d`/`0D`), and Hexadecimal (`0x`/`0X`). The prefix must be followed immediately by at least one valid digit for that radix (e.g. `0b`, `0x`, or `0x_12` are syntax errors).
-> - **Digit Separators (`_`)**:
->   - Underscores can only be placed strictly between two valid digits (e.g. `1_000`, `0xCAFE_BABE`, `1_000.5`, `3.14159_26535`).
->   - **Consecutive underscores (`__`) are forbidden**: e.g. `123__456` is a syntax error.
->   - **Trailing underscores are forbidden**: e.g. `1_` and `3.14_` are syntax errors.
->   - **Underscores directly adjacent to decimal points are forbidden**: e.g. `3._14` is invalid.
-> - **Floating-Point Notation**:
->   - **Leading zero required**: `.1` is forbidden as a float literal; write `0.1`.
->   - **Trailing zero required**: `1.` is not a float literal; it is interpreted as integer `1` followed by member access dot `.` (to unambiguously support method calls like `1.String()`). Write `1.0` for a float.
->   - Multiple decimal points (e.g. `1.2.3`) are syntax errors.
-> - **Invalid Suffixes**: Numbers cannot be immediately followed by letters without whitespace or operators (e.g. `0a0` or `123abc` are syntax errors).
-
-> [!NOTE]
-> **Tuple Disambiguation (Grouping Parentheses vs Tuple Literals and Types)**:
-> - **Literals**:
->   - `(expr)` is treated as **expression grouping** and evaluates to the result of `expr` (e.g. `(1 + 2)` evaluates to `3`, not a tuple).
->   - `(expr,)` with a trailing comma creates a **1-element `Tuple`** (e.g. `(42,)` creates a `Tuple` containing `42`).
->   - `()` creates a **0-element (empty) `Tuple`**.
->   - `(expr1, expr2)` creates a **multi-element `Tuple`** (trailing comma is optional: `(1, 2)` or `(1, 2,)`).
-> - **Type Annotations**:
->   - `(T)` is grouping for a type expression and resolves to `T` itself.
->   - `(T,)` with a trailing comma represents the type of a **1-element `Tuple`** holding `T`.
->   - `()` represents the type of an **empty `Tuple`**.
->   - `() | (T,)` represents a `Tuple` that contains **either 0 or 1 element** of type `T`.
-
-Type annotations are optional (full HM-style type inference):
-```python
-x: Int = 10
-p: (Int, String) = (1, "ok")
-d: {String: Int} = {"count": 42}
-opt: String | Nil = nil
-
-# Single-element tuple literal and type annotation (trailing comma required):
-single: (Int,) = (42,)
-
-# Zero-or-one element tuple (e.g. optional single element):
-zero_or_one: () | (String,) = ("hello",)
-empty_or_one: () | (String,) = ()
-
-# Infinite / stream Tuple: ellipsis '...' repeats the last specified element type indefinitely
-fib_stream: (Int, ...) = fib(0, 1)
-
-# Leading distinct types followed by infinite stream:
-header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
-```
-
-## Advanced Type System & Polymorphism
-
-### 1. Union Types (`A | B`)
-- Types can be composed as unions:
-  ```python
-  x: Int | String = cond ? 42 : "error"
-  ```
-- Exhaustive pattern matching or type narrowing resolves concrete types safely.
-
-### 2. Structural Typing & Interfaces (Go-style Duck Typing)
-- Types implicitly satisfy interfaces if they possess matching method/protocol signatures (no explicit `implements` keyword needed).
-- Ad-hoc polymorphism: Built-in functions like `print` accept any type implementing the `Show` / stringifiable interface:
-  ```python
-  interface Show:
-      Inspect(): String
-  ```
-- All primitive types, Tuples, and Dicts implicitly satisfy `Show`.
-- User-defined structs automatically satisfy any matching interface structurally.
-
-### 3. User-Defined Generics & Type Constraints
-- **Type Parameters (`[T]`)**: Full generic support across functions/methods (`def`), structs (`struct`), and interfaces (`interface`):
-  ```python
-  struct Box[T]:
-      val: T
-
-  def id[T](x: T) -> T:
-      x
-
-  interface Iterator[T]:
-      Next(): T
-  ```
-- **Call-Site Type Inference & Explicit Instantiation**:
-  - Automatically infers type arguments at call sites: `b = Box(10)` (inferred as `Box[Int]`).
-  - Explicit specialization syntax: `Box[String]("hello")`, `id[Int](42)`, `Pair[String, Int]("age", 30)`.
-- **Type Constraints (`[T: Constraint]`)**:
-  - Constrain type parameters to interfaces, concrete types, union types, or self-referential / F-bounded interfaces:
-  ```python
-  def add[T: Int | Float](a: T, b: T) -> T:
-      a + b
-
-  def readAll[T: io::Reader](r: T) -> Bytes:
-      ...
-
-  interface Comparable[T]:
-      <=(other: T): Bool
-
-  def min[T: Comparable[T]](a: T, b: T) -> T:
-      if a <= b:
-          a
-      else:
-          b
-  ```
-- **Reified Runtime Reflection**:
-  - Specialized runtime type names: `Box(10).Type() == "Box[Int]"`.
-  - Type matching (`is` and `match`): matches both concrete generic types (`x is Box[Int]`, `x is Iterator[Int]`) and base types (`x is Box`, `x is Iterator`).
-
-## Module System & Variable Scope
-
-### 1. Identifier Visibility (Go-style)
-- **Public (Exported)**: Starts with uppercase letter (`[A-Z]`). Accessible outside the module.
-  ```python
-  def Add(a, b):  # Exported
-      a + b
-
-  MaxVal = 100    # Exported
-  ```
-- **Private (Module-Internal)**: Starts with lowercase letter or underscore (`[a-z_]`). Accessible only within the module.
-  ```python
-  def helper(x):  # Private
-      x * 2
-  ```
-
-### 2. Module Organization
-- Terminology: Called **Module** in Les.
-- **Default Module**: Directory name becomes module name implicitly.
-- **Explicit Declaration**: Optional `module <name>` statement at file top overrides directory-based default:
-  ```python
-  module math
-  ```
-- **Importing & Module References**:
-  - `import` declaration: `import math`
-  - Referencing module members uses `::` scope resolution (Ruby/Rust/C++ style) to clearly distinguish static module lookups from struct/instance member accesses:
-    ```python
-    import math
-
-    result = math::Add(1, 2)
-    val = user.name  # Cleanly distinguished: struct access uses '.', module uses '::'
-    ```
-
-### 3. Scope & Rebinding Rules
-- **Same Scope Rebinding**: **Allowed if the new value has the same or compatible type**. Rebinding with an incompatible type produces a static type error:
-  ```python
-  x = 10
-  x = x + 1  # OK: re-bound to Int
-  x = "str"  # Type Error: cannot rebind variable 'x' of type Int with incompatible type String
-  ```
-- **Nested / Closure Scope Shadowing**: **Allowed**. Inner scopes (such as inside a function, block, or closure) may define a variable that shadows an outer scope variable:
-  ```python
-  x = 10
-  def f():
-      x = "hello"  # OK: shadows outer 'x' within f's local scope with any type
-  ```
-### 4. Unified Namespace (Lisp-1) & Bare Callable Statements
-- **Lisp-1 Namespace**: Functions and variables share the same unified lexical namespace. Functions are first-class citizens and can be assigned to variables or passed to higher-order functions directly:
-  ```python
-  def double(x): x * 2
-  f = double
-  f(21)            # 42
-
-  def apply(fn, val): fn(val)
-  apply(double, 10) # 20
-  ```
-- **Bare Callable Statements**: When an expression statement consists solely of a bare identifier or module member that resolves to a function, it is automatically invoked with 0 arguments. Inside other expressions (such as assignments or arguments), it evaluates to the function value itself:
-  ```python
-  puts             # Statement level: auto-invoked as puts() (prints newline)
-  f = puts         # Expression level: assigned as a function object
-  f "hello"        # Invoked with argument
-  ```
-
-## Core Language Semantics
-
-### 1. Function Application and Tuple Semantics
-- Semantically, all function calls take a single **Tuple** argument.
-- `f(a, b)` passes a 2-tuple `(a, b)`.
-- Function parameter definitions `def f(a, b): ...` pattern-match / destructure the incoming argument tuple.
-- Single argument `f(a)` or `f a`: passes `(a,)` (or 1-element tuple view).
-
-### 2. Parenthesis Omission & Precedence
-- Omission of parentheses in function application is permitted.
-- **Precedence**: Function call without parentheses has lowest precedence among expression operators, binding greedily:
-  ```python
-  f a + b    # equivalent to f(a + b)
-  print x * 2 + 1  # equivalent to print((x * 2) + 1)
-  print x |> f     # equivalent to print(f(x)) -- pipeline is consumed greedily as argument
-  ```
-- To call `f(a) + b`, explicit parentheses are required: `f(a) + b`.
-- Similarly, to pass a function call result as the input to a pipeline, use explicit parentheses on the call: `f(x) |> g` (evaluates as `g(f(x))`).
-
-### 3. Trailing Default Parameters & Block Parameters
-- **Trailing Default Parameters**:
-  Functions, methods, and struct definitions can define default values for trailing positional parameters. Once a parameter has a default value, all subsequent positional parameters must also provide defaults:
-  ```python
-  def greet(name: String, prefix: String = "Hello"):
-      prefix + " " + name
-
-  greet("Alice")           # "Hello Alice"
-  greet("Bob", "Hi")       # "Hi Bob"
-  ```
-  - Default expressions are lazily evaluated within the call environment when omitted, allowing defaults to reference preceding parameters (e.g., `def clamp(x, min_val = 0, max_val = min_val + 100)`).
-  - Struct fields also inherit default parameter initialization during positional instantiation:
-    ```python
-    struct Server:
-        host: String
-        port: Int = 8080
-
-    s = Server("localhost")  # port automatically defaults to 8080
-    ```
-
-- **Explicit Block Parameters (`&block` / `&block = nil`)**:
-  To cleanly distinguish regular arguments from trailing `do` blocks and avoid arity ambiguity when defaults are present, functions may declare an explicit block parameter at the end of the parameter list:
-  ```python
-  def each_step(items, step = 1, &block):
-      i = 0
-      for i < len(items):
-          block(items[i])
-          i = i + step
-
-  # Invocation with default step and trailing block:
-  each_step(numbers) do |n|:
-      print n
-
-  # Optional block:
-  def run_job(name, &block = nil):
-      if block != nil:
-          block(name)
-      else:
-          print "Running default job: ", name
-  ```
-- **Backward Compatibility**:
-  When a function does not define a `&block` parameter, trailing `do` blocks continue to be desugared and appended as the final positional argument.
-
-### 4. Lambda Expressions
-Anonymous functions (lambdas) support both single-line expressions and multi-line indented blocks:
-
-- **Single-Line Inline Lambda**:
-  ```python
-  inc = |x|: x + 1
-  add = |x, y|: x + y
-  get_const = ||: 42
-  doubled = map(items, |x|: x * 2)
-  ```
-- **Multi-Line Indented Lambda Block**:
-  ```python
-  complex_fn = |x|:
-      y = x * 2
-      y + 10
-  ```
-- **Semantics**: Evaluates to a first-class `Closure` capturing lexical scope. Returns the evaluated expression or the last statement of the block.
-
-### 5. Control Flow & Operators
-- Multi-line block `if / else`:
-  ```python
-  if x > 0:
-      1
-  else:
-      0
-  ```
-- **`for` Loops & Loop Control**:
-  Go-style `for` loops support both condition-controlled loops (`for <cond>:`) and infinite loops (`for:`), with `break` and `continue`:
-  ```python
-  # Infinite loop with break and continue
-  for:
-      line = gets()
-      if line is Nil:
-          break
-      print line, "\n"
-
-  # Condition-based loop
-  i = 0
-  for i < 10:
-      print i, "\n"
-      i = i + 1
-  ```
-- **Same-Type Variable Rebinding**:
-  Re-binding an existing variable in the current scope is allowed as long as the new value has the same (or compatible) type. Type-mismatched assignments (e.g. `x = 10` followed by `x = "hello"`) are caught as static type errors. When rebinding an existing variable, the right-hand side is strictly evaluated (forced) immediately to prevent lazy evaluation cycles.
-- **Pipeline Operator (`|>`)**:
-  Functional pipelining to cleanly express transformation chains without nested parentheses.
-  `expr |> fn` evaluates as `fn(expr)`, and `expr |> fn(arg2)` evaluates as `fn(expr, arg2)`:
-  ```python
-  result = raw_input |> clean |> parse |> format
-  # Equivalent to: format(parse(clean(raw_input)))
-
-  val = 10 |> add(20) # Equivalent to: add(10, 20)
-  ```
-- **Interaction with Parenthesis-Omission Calls**:
-  Parenthesis-omitted call statements (`print expr`) bind greedily, so `print x |> f` is parsed as `print(f(x))`. If you want to pipeline into print, write `x |> f |> print`. If you want to pipe the result of a call, use explicit parentheses: `compute(x) |> format`.
-- Tuples: `()`, `(1,)`, `(1, 2)`.
-- Dicts: `{"a": 1}`.
-
-### 6. Statement Separator (`;`) & Line Continuation (`\`)
-- **Statement Separator (`;`)**:
-  Allows writing multiple statements on the same line:
-  ```python
-  x = 10; y = 20; print x + y
-  ```
-  Trailing semicolons (e.g. `x = 10;`), multiple consecutive semicolons, and semicolons inside blocks or struct declarations are fully supported.
-- **Line Continuation (`\`)**:
-  Allows a statement to span multiple physical lines. The backslash `\` can optionally be followed by trailing whitespace and an inline comment (`# ...`) before the newline:
-  ```python
-  total = 10 + \          # base value
-          20 + \          # bonus value
-          30
-
-  def add(a: Int, \
-          b: Int): Int:
-      a + b
-  ```
-
-#### Operators and Precedence
-Listed from highest to lowest precedence:
-
-| Precedence | Operator | Syntax / Example | Types | Description |
-|---|---|---|---|---|
-| 1 (Highest) | `.` | `p.x`, `p.dist()` | `StructInstance` | Member / method access (with promotion) |
-| 1 | `[]` | `s[0]`, `t[1]`, `d["k"]` | `String`, `Tuple`, `Dict` | Indexing (0-based rune for String, negative indices supported) |
-| 1 | `()` | `f(a, b)` | Function / Struct | Function call or struct constructor |
-| 1 | `!` (postfix) | `expr!` | | Explicit demand point (postfix sugar for `force expr`) |
-| 1 | `force` (prefix) | `force expr` | | Explicit demand point (strict evaluation) |
-| 2 | `+`, `-`, `!`, `~` | `+x`, `-x`, `!flag`, `~mask` | `Int`/`Float` (`+`, `-`), `Bool` (`!`), `Int` (`~`) | Unary plus, negation, logical NOT, and bitwise NOT |
-| 3 | `*`, `/`, `%` | `a * b`, `a / b`, `a % b` | `Int`, `Float` (`*`, `/`) | Multiplication, division, modulo |
-| 4 | `+`, `-` | `a + b`, `a - b` | `Int`, `Float`, `String` (`+`), `Bytes` (`+`) | Addition, subtraction, string/bytes concatenation |
-| 5 | `<<`, `>>` | `x << n`, `x >> n` | `Int` | Arithmetic bitwise shifts with Ruby semantics (`x << -n` acts as `x >> n`) |
-| 6 | `&` | `a & b` | `Int` | Bitwise AND |
-| 7 | `^` | `a ^ b` | `Int` | Bitwise XOR |
-| 8 | `\|` | `a \| b` | `Int` | Bitwise OR |
-| 9 | `<`, `<=`, `>`, `>=` | `a < b`, `a >= b` | `Int`, `Float`, `String`, `Bytes` | Relational comparisons |
-| 10 | `is` | `x is Int`, `p is Reader` | | Dynamic type / interface satisfaction test |
-| 11 | `==`, `!=`, `=~` | `a == b`, `s =~ /pat/` | Any, `String`/`Regex` | Equality / inequality comparison, pattern match |
-| 12 | `&&` | `cond1 && cond2` | `Bool` | Short-circuit logical AND |
-| 13 | `\|\|` | `cond1 \|\| cond2` | `Bool` | Short-circuit logical OR |
-| 14 | `? :` | `cond ? a : b` | `Bool` (cond) | Inline ternary conditional |
-| 15 | `\|>` | `x \|> f` | Any | Pipeline operator |
-| 16 (Lowest) | *(space)* | `print x * 2 + 1` | Callable | Paren-omitted function call (weakest binding) |
-
-#### Bitwise Operators (`~`, `&`, `^`, `|`, `<<`, `>>`)
-Les provides comprehensive bitwise operators operating on arbitrary-precision integers (`Int`):
-
-- **Bitwise NOT (`~x`)**: Inverts all bits (two's complement complement, equivalent to `-x - 1`). E.g. `~0 == -1`, `~(-1) == 0`.
-- **Bitwise AND (`a & b`)**: Bitwise AND of two integers.
-- **Bitwise XOR (`a ^ b`)**: Bitwise exclusive OR.
-- **Bitwise OR (`a | b`)**: Bitwise inclusive OR. Syntactically unambiguous: expression bitwise OR is separated from union types (`A | B`) and lambda parameters (`|x|:`).
-- **Arithmetic Shift (`<<`, `>>`) with Ruby Semantics**:
-  - `x << n`: Left shift by `n` bits (multiplication by $2^n$).
-  - `x >> n`: Arithmetic right shift by `n` bits (floor division by $2^n$). Preserves signs (e.g. `-8 >> 1 == -4`, `-1 >> 1 == -1`).
-  - Supports arbitrary-precision expansion without overflow or loss of precision.
-  - Negative shift count reverses the shift direction: `x << -n` is equivalent to `x >> n`, and `x >> -n` is equivalent to `x << n`.
-  - Shift count safeguard: shifts exceeding $2^{26}$ bits raise a runtime error (`shift count too large: n`) to prevent memory exhaustion.
-- **Operator Overloading & Pipeline Integration**:
-  - Structs and interfaces can define methods for bitwise operators (`def ~()`, `def &(other)`, `def <<(n)`, `def >>(n)`).
-  - Built-in `Int` exposes bound operator methods (e.g. `(12).&(10)`, `(1).<<(4)`).
-  - Seamlessly supported on RHS of the pipeline operator: `x |> ~`, `x |> &(0xff)`, `x |> >>(2)`.
-
-#### Indexing Details (`[]`)
-- `String`: `s[i]` accesses rune (Unicode code point) at 0-based index `i`, returning a 1-rune `String`. Supports negative index `s[-1]` (last rune). Out-of-bounds index raises a runtime error.
-- `Tuple`: `t[i]` accesses element at 0-based index `i`. Supports negative index `t[-1]` on finite tuples. Negative indexing is not supported on infinite tuples because an infinite sequence has no end, and attempting it raises a runtime error (`cannot use negative index on infinite tuple`). Out-of-bounds index raises a runtime error.
-- `Dict`: `d[key]` accesses value by key (`d["a"]`). Keys are strictly typed (e.g. `1` and `"1"` do not conflict). Non-existent key raises a runtime error.
-
-### 7. Side Effects & I/O Semantics
-- **Output is a Demand Boundary (Strict Evaluation)**:
-  - Demand-driven strict evaluation at built-in effect points (e.g. `print`, `puts`, `exit`). Arguments are forced immediately when the statement executes.
-  - Top-level `return` acts as `exit`, so it also serves as a demand point forcing evaluation of its exit code expression.
-  - Ensures prompt output (e.g. `print "Name: "`) displays before subsequent reads.
-- **Explicit Demand Points (`expr!` / `force expr`)**:
-  - By default, function arguments, variable initializations, tuple elements, and dict values are wrapped in lazy `Thunk`s (while constant literals are evaluated immediately to concrete values in WHNF).
-  - Suffixing an expression with `!` (e.g. `expr!`) or prefixing with `force` (e.g. `force expr`) acts as an unconditional syntax-level strict evaluation demand point.
-  - When passed as a function argument (`f(force expr)` or `f(expr!)`), bound to a variable (`x = force expr`), or stored in a container (`(force expr,)` or `{"k": force expr}`), the expression is strictly evaluated (forced) immediately at that site instead of creating a deferred lazy `Thunk`.
-
-- **Input is a Deferred Thunk (Lazy Read)**:
-  - I/O read operations (e.g. `gets()`) return a deferred `Thunk` without blocking at invocation time.
-  - The actual I/O read / system call occurs only when the value is demanded (e.g., printed, compared, or concatenated). Unused inputs never block or perform reads.
-- **Evaluation Order**:
-  - Binary expressions, tuple elements, and arguments are strictly evaluated and forced **left-to-right**, guaranteeing predictable I/O sequence (e.g. `gets() + gets()`).
-- Inside functions/closures, `return` and `break` are NOT side-effect points; values are carried lazily until demanded.
-- User-defined functions cannot create raw side-effect primitives.
-
-### 8. Type System, Type Inference & Pattern Matching
-- **Static Type Inference & Optional Annotations**:
-  - Les features static type inference based on the Hindley-Milner algorithm. Explicit type annotations on variables, parameters, and return types are entirely optional:
-    ```python
-    x = 10              # inferred as Int
-    s = "hello"         # inferred as String
-    p = (1, "ok")       # inferred as (Int, String)
-    d = {"a": 42}       # inferred as {String: Int}
-    ```
-  - Unannotated function parameters whose types cannot be uniquely constrained fall back to `Unknown`, allowing flexible dynamic code alongside strictly typed code:
-    ```python
-    def identity(x): x  # parameter and return type inferred as Unknown
-    ```
-  - **Inferred Types on Lazy Thunks**:
-    Statically inferred types are propagated to lazy `Thunk` values at runtime (`thunk.InferredType`). This allows runtime type tests (`is`) and inspection (`.Type()`) to determine element types without forcing deferred computations or triggering premature side effects.
-- **Function Types (`->`)**:
-  Function types represent callable types mapping argument types to a return type: `(Arg1, Arg2) -> Ret`.
-  - **Syntax**: `(T1, T2) -> Ret`, `(T) -> Ret`, `() -> Ret`, or right-associative higher-order types `(A) -> (B) -> C`.
-  - **Variable annotations**:
-    ```python
-    f: (Int) -> Int = |x|: x * 2
-    ```
-  - **Higher-order function parameters**:
-    ```python
-    def apply(fn: (Int) -> String, x: Int): String:
-        fn(x)
-    ```
-  - **Function return type annotations**:
-    Return types on `def` can be annotated with `:` or `->`:
-    ```python
-    def add(a: Int, b: Int): Int:
-        a + b
-
-    def multiplier(factor: Int) -> (Int) -> Int:
-        |x: Int|: x * factor
-    ```
-- **Union Types (`A | B`)**:
-  - Types can be composed as unions (e.g., `Int | String`, `Int | Nil`).
-  - **Branch Type Inference**: When conditional branches (such as `? :` or `if/else`) evaluate to different types, the expression is automatically inferred as their union type (`Int | String`).
-- **Type Test Operator `is`**:
-  - Binary operator testing dynamic value type: `expr is Type`.
-  - Evaluates to `Bool` (`true` or `false`).
-  - Supports primitive types, structs, interfaces, unions (`A | B`), and parameterized dictionary types `expr is {KeyType: ValueType}`.
-  ```python
-  x = 10
-  if x is Int:
-      print "an integer"
-
-  d = {"count": 42}
-  if d is {String: Int}:
-      print "dict with String keys and Int values"
-  ```
-  > [!NOTE]
-  > **Dictionary type validation and laziness**:
-  > When checking dictionary types with `expr is {K: V}`, keys and values are verified while strictly preserving lazy evaluation semantics:
-  > - **Constant literals** (e.g. `{"a": "hello"}`) are evaluated immediately at creation (WHNF), so type mismatches are caught right away (`d is {String: Int}` evaluates to `false`).
-  > - **Lazy expressions** (e.g. `{"a": "he" + "llo"}`) carry their statically inferred types (`InferredType`). If the inferred type is incompatible with `V`, `is` returns `false` **without forcing the value**.
-  > - **Exceptions & deferred computations** (e.g. `{"a": 1 / 0}`) with matching inferred types are **not forced**, safely evaluating to `true` without triggering runtime exceptions.
-  > - **Unconstrained values** (such as returns from unannotated functions inferred as `Unknown`) preserve laziness and are skipped until demanded:
-  >   ```python
-  >   def get_val(x): x               # inferred return type: Unknown
-  >   d = {"a": get_val("hello")}
-  >   print (d is {String: Int})       # true (skipped because static type is Unknown)
-  >   _ = force d["a"]                 # forces evaluation of the value ("hello")
-  >   print (d is {String: Int})       # false (now evaluated as String, mismatching Int)
-  >   ```
-
-
-- **Pattern Match Expression `match ... case`**:
-  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, regex patterns (with optional `as m` capture binding), and default `_`:
-  ```python
-  def classify(v):
-      match v:
-          case /^(?P<num>\d+)$/ as m:
-              print "all digits:", m["num"]
-          case {String: Int}:
-              print "dict of string to int"
-          case Int | Float:
-              print "number:", v
-          case String:
-              print "string:", v
-          case nil:
-              print "nil value"
-          case _:
-              print "other"
-
-  classify 100
-  classify "123"
-  classify "les"
-  classify {"a": 1}
-  classify nil
-  ```
-
-### 9. Special Types: `Nil` and `Unknown`
-- **`Nil`**:
-  - Represents the absence of a value (literal `nil`, type `Nil`).
-  - Useful in union types such as `Int | Nil` (nullable/optional semantics).
-- **`Unknown` (Internal Inference Type)**:
-  - Internal compiler placeholder used when a type cannot be statically constrained (for example, unannotated function parameters or empty dictionary `{}`).
-  - Bidirectionally assignable during type inference, allowing unconstrained values to unify with any required type.
-  - **Not a type annotation**: Writing `x: Unknown` is prohibited and causes a compile-time error. All user-facing types must be concrete or interfaces.
-
-### 10. Variadic Arguments & Tuple Unpacking
-
-#### Variadic Parameters (`*args`)
-- Function parameters can accept 0 or more arguments by prefixing with `*`:
-  ```python
-  def log(prefix: String, *args):
-      print prefix, args
-  ```
-- **Type Representation**: A variadic parameter `*args` corresponds to the union type `() | (Unknown, ...)`.
-
-#### Tuple Destructuring in Pattern Matching
-- Extract head and lazy tail stream elements via `(h, ...t)`:
-  ```python
-  def fib(a: Int, b: Int):
-      (a, fib(b, a + b))
-
-  stream = fib(0, 1)
-
-  match stream:
-      case (first, rest):
-          print "first:", first
-          match rest:
-              case (second, ...):
-                  print "second:", second
-  ```
-
-#### Unpack Assignment
-- Unpack fixed-length or stream tuples using either parenthesized or splat syntax:
-  ```python
-  # Cons-cell stream unpacking
-  (f0, s1) = fib(0, 1)
-  (f1, s2) = s1
-
-  # Splat unpack assignment
-  head, ...tail = (1, 2, 3, 4)
-  print head  # 1
-  print tail  # (2, 3, 4)
-  ```
-
-#### Control Flow: `return`, `break`, and `exit`
-- **`return [val]`** (Reserved Keyword):
-  - **Inside `def` function**: Immediately terminates the function and returns `val` (or empty tuple `()` if omitted).
-  - **Inside closure / lambda**: Performs **non-local return** — unwinds the call stack and exits the innermost enclosing `def` function lexical to the closure definition.
-  - **At top level**: Terminates the entire process like `exit [code]`.
-- **`break [val]`** (Reserved Keyword):
-  - Immediately exits the current closure (lambda or block) returning `val` (or `()` if omitted).
-  - Using `break` outside of a closure is a syntax / parser error.
-- **`exit([code])` / `exit`** (Built-in Function):
-  - Terminates the process immediately with an integer status code.
-  - Accepts 0 or 1 argument (`Int` or `Bool`).
-  - Without arguments or bare `exit`: exits with code `0`.
-  - With `true`: code `0`; with `false`: code `1`.
-
-### 11. Structs (`struct`)
-
-Les provides immutable records with methods, Go-style struct embedding, and static ambiguous selector detection.
-
-#### Definition
-- Defined using `struct <Name>:` followed by an indented block.
-- Closed class: Methods must be defined inside the struct body.
-- Fields can have optional type annotations and default values.
-- Identifiers starting with uppercase letters (`[A-Z]`) are public; lowercase (`[a-z_]`) are private.
-- Methods have an implicit receiver `self` (can be omitted in method parameter list, fields directly accessible in scope; or specified explicitly).
-
-```python
-struct Point:
-    x: Int = 0
-    y: Int = 0
-
-    def DistSq():
-        x * x + y * y
-
-    def Add(self, other: Point):
-        Point(x: self.x + other.x, y: self.y + other.y)
-```
-
-#### Instantiation & Functional Updates
-- **Positional Arguments**: `p = Point(10, 20)`
-- **Named Arguments**: `p = Point(y: 20, x: 10)`
-- **Defaults**: Unspecified fields use default expressions or `()`.
-- **Immutable Copy-on-Write Update**: Pass an existing instance as the first positional argument followed by updated named arguments:
-  ```python
-  p2 = Point(p, x: 30)  # y is preserved from p
-  ```
-
-#### Custom Initializer (`def init`) & Argument Auto-Binding
-- Users can define custom initializers using `def init(...)` inside the struct body.
-- **Auto-binding**: Parameters matching struct field names are automatically assigned to `self` upon entry.
-- **Member Assignment**: Fields can be explicitly assigned or overridden via `self.<field> = <expr>` during initialization. Once initialization finishes, struct instances are frozen and strictly immutable (modifying `p.x = ...` outside `init` is a runtime error).
-- **Default Values**: Fields omitted from `init` retain their declared default values.
-
-```python
-struct PolarPoint:
-    x: Float
-    y: Float
-
-    def init(r: Float, theta: Float):
-        self.x = r * cos(theta)
-        self.y = r * sin(theta)
-
-struct Person:
-    name: String
-    age: Int
-    city: String = "Tokyo"
-
-    def init(name, age):
-        if age < 0:
-            exit(1)
-        # name and age are auto-bound; city retains default "Tokyo"
-```
-
-#### Dot Access & `@` Syntactic Sugar for `self.`
-- Member access: `p.x`, `p.DistSq()`
-- Struct fields are lazily evaluated thunks.
-- **`@` Syntactic Sugar for `self.`**:
-  Inside struct methods and `init`, `@<member>` serves as concise syntactic sugar for receiver access:
-  - `@x` desugars to `self.x`
-  - `@calc(a, b)` and statement-start `@calc a, b` desugar to `self.calc(a, b)`
-  - `@x = expr` desugars to `self.x = expr` (valid inside `init`)
-  - `@node.next` desugars to `self.node.next`
-  - Whitespace between `@` and the identifier (e.g. `@ x`) and bare `@` without an identifier are syntax errors.
-
-```python
-struct Point:
-    x: Int
-    y: Int
-
-    def init(x: Int, y: Int):
-        @x = x
-        @y = y
-
-    def Shift(dx: Int, dy: Int) -> Point:
-        Point(x: @x + dx, y: @y + dy)
-
-    def DistanceSquared() -> Int:
-        @x * @x + @y * @y
-```
-
-#### Go-style Struct Embedding & Promotion
-- Structs can embed other structs anonymously by listing their type name in the struct body.
-- Embedded fields and methods are automatically promoted to the outer struct.
-- An embedded type also participates in subtyping: an outer instance satisfies `is Inner`.
-
-```python
-struct Reader:
-    def Read(): "read data"
-
-struct ReadCloser:
-    Reader
-    def Close(): "closed"
-
-rc = ReadCloser()
-print rc.Read()         # "read data" (promoted method)
-print rc is Reader      # true
-```
-
-#### Static Ambiguous Selector Detection
-When multiple embedded structs define the same member (field or method), Les statically reports a type error (`ambiguous selector`) at type-checking / inference time unless the outer struct explicitly defines/overrides the member.
-
-### 12. Interfaces (`interface`) & Structural Typing
-
-Les provides Go-style implicit structural typing (duck typing) via interface declarations.
-
-#### Definition
-- Defined using `interface <Name>:` followed by an indented block.
-- Contains only method signatures: `<name>(<params...>): <ReturnType>`.
-- Receiver (`self`) is omitted from interface method signatures.
-- Interfaces can embed other interfaces.
-
-```python
-interface Reader:
-    Read(n: Int): String
-
-interface Closer:
-    Close(): ()
-
-interface ReadCloser:
-    Reader
-    Closer
-```
-
-#### Implicit Satisfaction (Duck Typing)
-- Types (`struct`) automatically satisfy an interface if they provide all required methods matching the signature.
-- No `implements` keyword required.
-
-```python
-struct File:
-    path: String
-
-    def Read(n: Int):
-        "read bytes"
-
-    def Close():
-        ()
-
-# Statically assignable to ReadCloser
-rc: ReadCloser = File(path: "/tmp/data")
-```
-
-#### Composition & Conflict Resolution
-- Embedding multiple interfaces that declare identical method signatures is valid (unified into one).
-- Conflicting signatures (same method name but differing parameter or return types) produce a static compilation / type error at interface definition time.
-
-#### Dynamic Runtime Checks (`is`)
-- `instance is InterfaceName` dynamically checks whether the target value implements all required methods (including embedded interfaces).
-
-### 13. Error Handling & `interface Error`
-
-Les treats errors as first-class values rather than throwing exceptions, perfectly avoiding evaluation-order leakage in lazy evaluation.
-
-#### `interface Error` & PascalCase Signatures
-In accordance with Go-style visibility conventions (uppercase letter indicates exported/public member), interface method signatures use PascalCase:
-```python
-interface Error:
-    Message(): String
-    Inspect(): String
-```
-
-#### Built-in `Error(msg)` Constructor
-A convenient built-in `Error` constructor generates standard error instances satisfying `interface Error`:
-```python
-err = Error("file not found")
-print err           # "Error: file not found" (formatted via Inspect)
-print err.Message() # "file not found"
-print err is Error  # true
-```
-
-#### Idiomatic Error Handling via Union Types (`Value | Error`) & Pattern Matching
-Functions declare union return types (`Type | Error`) and callers inspect results using pattern matching:
-```python
-def divide(a: Int, b: Int): Int | Error:
-    if b == 0:
-        Error("division by zero")
-    else:
-        a / b
-
-# Pattern matching on Union result
-match divide(10, 0):
-    case Int:
-        print "Success: ", it
-    case Error:
-        print "Failed: ", it.Message()
-```
-
-#### Duck Typing Custom Errors
-Any user-defined struct providing `Message(): String` (or `Error(): String`) automatically satisfies `Error` structurally without explicit declarations:
-```python
-struct ParseError:
-    line: Int
-    detail: String
-
-    def Message():
-        "line " + line + ": " + detail
-
-    def Inspect():
-        "ParseError(" + detail + ")"
-
-# Automatically matches `case Error:` and `is Error`!
-```
-
-## Built-in Functions, Variables, Methods, Interfaces and Modules
-
-### 1. Built-in Functions
-
-#### `def print(*args: Show): ()`
-Outputs string representations of all arguments directly without inserting spaces or appending a trailing newline.
-
-- **Effect**: Built-in demand boundary; forces evaluation of lazy arguments (`Thunk`s).
-- **Arguments**: `*args: Show` — variable number of values satisfying the `Show` interface (`Inspect(): String`).
-- **Returns**: `()` (empty tuple).
-- **Usage**:
-  ```python
-  print "Hello, world!\n"
-  print "a", "b", 42  # outputs "ab42" without space or newline
-  ```
-
-#### `def exit(code: Int | Bool = 0)`
-Terminates the program execution immediately with the given exit status code.
-
-- **Arguments**: Optional 0 or 1 argument (`Int` or `Bool`).
-  - No arguments (`exit` or `exit()`): exits with code `0`.
-  - `Int`: exits with the given integer code (e.g. `exit 0`, `exit 42`).
-  - `Bool`: `true` exits with code `0`, `false` exits with code `1`.
-- **Usage**:
-  ```python
-  exit           # Bare statement auto-call: exits with 0
-  exit 0
-  exit true      # exits with 0
-  exit false     # exits with 1
-  exit 1
-  ```
-
-#### `def gets(): String | Nil`
-
-Reads a single line from standard input, stripping any trailing newline (`\n` or `\r\n`). Returns `nil` upon reaching EOF.
-
-- **Effect**: Returns a deferred lazy `Thunk`. Invoking `gets()` does not block immediately; the actual read occurs only when the value is demanded (e.g. forced via `print`, `!`, or string concatenation).
-- **Arguments**: None (`()`).
-- **Returns**: `String | Nil` — the line content as a `String`, or `nil` on EOF.
-- **Usage**:
-  ```python
-  line = gets()
-  if line is Nil:
-      print "EOF reached\n"
-  else:
-      print "Read line: ", line, "\n"
-  ```
-
-### 2. Built-in Variables & CLI Arguments
-
-Les provides predefined variables for command-line arguments and file path inspection:
-
-| Variable | Type | Scope | Description |
-|---|---|---|---|
-| `Args` | `(String, ...)` | Global built-in | Immutable tuple of command-line arguments passed to the script (excluding the script name). Empty tuple `()` if no arguments were provided. |
-| `ProgramName` | `String` | Global built-in | Path or name of the main program file executed from CLI (equivalent to Ruby's `$0` or Python's `sys.argv[0]`). |
-| `Stdin` | `Reader` | Global built-in | Buffered standard input reader (`bufio::Reader` wrapping `io::Stdin`). |
-| `Stdout` | `Writer` | Global built-in | Buffered standard output writer (`bufio::Writer` wrapping `io::Stdout`). |
-| `Stderr` | `Writer` | Global built-in | Unbuffered standard error writer (`io::Stderr` with no-op `Flush()`). |
-| `scriptName` | `String` | Module-local | File path of the currently executing module / script. Differs from `ProgramName` when evaluated inside an imported module. |
-| `scriptLine` | `Int` | Lexical / Macro | 1-based source line number where `scriptLine` appears (equivalent to C's `__LINE__`). Expanded at parse time. |
-
-**Example**:
-```python
-print "Running program: ", ProgramName, "\n"
-print "This file: ", scriptName, " line: ", scriptLine, "\n"
-print "Argument count: ", len(Args), "\n"
-
-if len(Args) > 0:
-    print "First arg: ", Args[0], "\n"
-```
-
-### 3. Built-in Methods on Primitive Types
-
-Primitive types provide predefined instance methods, indexing mechanisms, length support, and operators, as well as implementations of the `Show` interface.
-
-#### `String`
-
-- `=~(r: Regex): Match | Nil`: Matches string against regular expression `r`, returning `Match` or `nil`.
-- **Methods**:
-  - `s.Len(): Int`: Returns the number of runes (Unicode code points) in `s`.
-  - `s.Type(): String`: Returns `"String"`. Satisfies `interface Show`.
-  - `s.Ord(): Int`: Returns the Unicode code point of the first rune (character) in `s`. Calling `Ord()` on an empty string (`"".Ord()`) raises a runtime error.
-    ```python
-    "A".Ord()        # 65
-    "あ".Ord()       # 12354
-    "Hello".Ord()    # 72 (first character 'H')
-    ```
-  - `s.Int([radix: Int]): Int`: Parses the integer value from `s` using base `radix` (optional, default: `10`; supported: `2`, `8`, `10`, `16`). Parsing scans characters after an optional leading `+` or `-` sign, stopping at the first invalid digit for the radix (ignoring trailing characters and prefixes like `0x`). Returns `0` if no valid digits are found. Specifying an unsupported radix raises a runtime error.
-    ```python
-    "123".Int()        # 123
-    "123a".Int()       # 123 (stops at non-digit 'a')
-    "123a".Int(16)     # 4666 (0x123a)
-    "0x".Int()         # 0 (stops at 'x')
-    "1010".Int(2)      # 10
-    "-42abc".Int()     # -42
-    ```
-  - `s.Bytes(): Bytes`: Returns the UTF-8 byte sequence of `s` as an immutable `Bytes` value.
-    ```python
-    b = "hello".Bytes()  # Bytes with 5 bytes
-    ```
-  - `s.Inspect(): String`: Returns `s` enclosed in double quotes with escape sequences according to LES string literal syntax (e.g., `"\"hello\""`). Satisfies `interface Show`.
-- **Index Access**:
-  - `s[i]: String`: 0-based Unicode rune (code point) indexing, returning a 1-rune `String`. Supports negative indexing (`s[-1]` is the last rune). Out-of-bounds index raises a runtime error.
-- **Operators**:
-  - `s1 + s2 -> String`: Concatenates two strings.
-  - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison based on Unicode code points.
-
-#### `Int`
-- **Methods**:
-  - `n.Type(): String`: Returns `"Int"`. Satisfies `interface Show`.
-  - `n.Float(): Float`: Returns the 64-bit floating-point representation of `n`. For large multi-precision integers exceeding the `Float` range, returns `+Inf` or `-Inf`.
-  - `n.Int(): Int`: Returns `n` (identity conversion).
-  - `n.Abs(): Int`: Returns the absolute value of `n`. If `n == math.MinInt64`, it is automatically promoted to an arbitrary-precision integer.
-  - `n.Floor(): Int`: Returns `n` (identity rounding).
-  - `n.Ceil(): Int`: Returns `n` (identity rounding).
-  - `n.Round(): Int`: Returns `n` (identity rounding).
-  - `n.Chr(): String`: Returns a 1-rune string corresponding to the Unicode code point `n`. Calling `Chr()` on a negative number, a value above `0x10FFFF`, or a surrogate code point (`0xD800`–`0xDFFF`) raises a runtime error.
-    ```python
-    65.Chr()         # "A"
-    12354.Chr()      # "あ"
-    (97).Chr()       # "a"
-    ```
-  - `n.String([radix: Int]): String`: Returns the string representation of integer `n` using base `radix` (optional, default: `10`; supported: `2`, `8`, `10`, `16`). Base 16 uses lowercase characters `a`–`f`. Negative numbers include a leading `-`. Specifying an unsupported radix raises a runtime error.
-    ```python
-    123.String()       # "123"
-    255.String(16)     # "ff"
-    10.String(2)       # "1010"
-    493.String(8)      # "755"
-    (-42).String()     # "-42"
-    ```
-  - `n.Inspect(): String`: Returns the decimal string representation of `n` (e.g., `"42"`). Satisfies `interface Show`.
-- **Operators**:
-  - Arithmetic: `+`, `-`, `*`, `/` (integer division; division by zero raises a runtime error), `%` (modulo).
-  - Unary: `-n` (negation), `+n`, `~n` (bitwise NOT).
-  - Bitwise: `&` (AND), `|` (OR), `^` (XOR), `<<` (arithmetic left shift), `>>` (arithmetic right shift). Shifts follow Ruby semantics (negative shift reverses direction; shifts exceeding $2^{26}$ bits raise a runtime error).
-  - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
-
-#### `Float`
-- **Methods**:
-  - `f.Type(): String`: Returns `"Float"`. Satisfies `interface Show`.
-  - `f.Int(): Int`: Converts `f` to an integer, truncating fractional digits towards zero (Ruby-style `.to_i`). Exceeding standard 64-bit integer range produces an arbitrary-precision integer (`IntValue`). Calling `Int()` on `NaN` or `±Inf` raises a runtime error.
-  - `f.Float(): Float`: Returns `f` (identity conversion).
-  - `f.Abs(): Float`: Returns the absolute value of `f`.
-  - `f.Floor(): Int`: Returns the largest integer less than or equal to `f` (Ruby-style). Calling `Floor()` on `NaN` or `±Inf` raises a runtime error.
-  - `f.Ceil(): Int`: Returns the smallest integer greater than or equal to `f` (Ruby-style). Calling `Ceil()` on `NaN` or `±Inf` raises a runtime error.
-  - `f.Round(): Int`: Returns the integer nearest to `f`, rounding half away from zero (四捨五入). Calling `Round()` on `NaN` or `±Inf` raises a runtime error.
-  - `f.IsNaN(): Bool`: Returns `true` if `f` is IEEE 754 NaN (Not-a-Number), `false` otherwise.
-  - `f.IsInfinite(): Bool`: Returns `true` if `f` is positive or negative infinity (`±Inf`), `false` otherwise.
-  - `f.IsFinite(): Bool`: Returns `true` if `f` is a finite number (neither `NaN` nor `±Inf`), `false` otherwise.
-  - `f.Inspect(): String`: Returns the string representation of `f` (e.g., `"3.14"`). Satisfies `interface Show`.
-- **Operators**:
-  - Arithmetic: `+`, `-`, `*`, `/` (IEEE 754 floating-point operations).
-  - Unary: `-f`, `+f`.
-  - Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`.
-
-#### `Bool`
-- **Methods**:
-  - `b.Type(): String`: Returns `"Bool"`. Satisfies `interface Show`.
-  - `b.Inspect(): String`: Returns `"true"` or `"false"`. Satisfies `interface Show`.
-- **Operators**:
-  - Logical: `&&` (short-circuit logical AND), `||` (short-circuit logical OR), `!` (logical NOT).
-  - Comparison: `==`, `!=`.
-  - Ternary: `cond ? then_val : else_val`.
-
-#### `Nil`
-- **Methods**:
-  - `nil.Type(): String`: Returns `"Nil"`. Satisfies `interface Show`.
-  - `nil.Inspect(): String`: Returns `"nil"`. Satisfies `interface Show`.
-- **Operators**:
-  - Comparison: `==`, `!=` (commonly used for nullable union types, e.g. `val == nil` or `val is Nil`).
-
-#### `Bytes`
-- **Methods**:
-  - `b.Len(): Int`: Returns the number of bytes in `b`.
-  - `b.Type(): String`: Returns `"Bytes"`. Satisfies `interface Show`.
-  - `b.Bytes(): Bytes`: Returns the byte sequence itself (identity conversion).
-  - `b.String(): String`: Decodes the byte sequence as a UTF-8 string. If `b` contains invalid UTF-8 byte sequences, raises a runtime error.
-  - `b.IsValidString(): Bool`: Returns `true` if `b` is a valid UTF-8 sequence, `false` otherwise (useful to check before calling `b.String()`).
-  - `b.Inspect(): String`: Returns the lowercase hexadecimal string representation (e.g., `"68656c6c6f"`). Satisfies `interface Show`, so `print b` outputs this hexadecimal format.
-- **Index Access**:
-  - `b[i]: Int`: Returns the single byte at offset `i` as an `Int` in the range `0`–`255`. Supports negative indexing (`b[-1]` is the last byte). Out-of-bounds index raises a runtime error.
-- **Operators**:
-  - `b1 + b2 -> Bytes`: Concatenates two `Bytes` values.
-  - `==`, `!=`, `<`, `<=`, `>`, `>=`: Lexicographical comparison.
-
-#### `Tuple`
-- **Syntax**:
-  - `()` creates an empty tuple (type `()`).
-  - `(x,)` creates a single-element tuple (trailing comma required to distinguish from grouping `(x)`). Single-element tuple type annotations are written as `(T,)`.
-  - `(x1, x2, ...)` creates a multi-element tuple (e.g. `(1, 2)`).
-  - `(a, ...t, b)`: Spread syntax expands elements of tuple `t` inline into a new tuple literal without forcing lazy thunks.
-  - Type annotations: `(...)` represents an arbitrary tuple type of any length and element types.
-- **Methods**:
-  - `t.Append(elem: T): (...)`: Returns a new tuple with `elem` appended as the final element (does not flatten; passing a tuple nests it).
-  - `t.Prepend(elem: T): (...)`: Returns a new tuple with `elem` prepended as the first element.
-  - `t.Concat(...others: (...)): (...)`: Concatenates all argument tuples to `t` and returns a new tuple.
-  - `t.Slice(start: Int, end: Int = -1): (...)`: Extracts sub-tuple from `start` index up to `end` index (supports negative indexing and out-of-bounds clamping on finite tuples; negative index on an infinite tuple raises a runtime error).
-  - `t.Len(): Int`: Returns the number of elements in `t`. For infinite tuples (streams), returns negative integers based on explicit prefix element count before `...`: `-(k + 1)` where `k` is the prefix length (e.g. `(...)` -> `-1`, `(1, ...)` -> `-2`, `(1, 2, ...)` -> `-3`).
-  - `t.Type(): String`: Returns the string representation of tuple type (e.g., `"(Int, String)"`). Satisfies `interface Show`.
-  - `t.Inspect(): String`: Returns the string representation of `t` (e.g., `"(1, 2)"`, `"()"`). Satisfies `interface Show`.
-- **Index Access**:
-  - `t[i]`: 0-based element indexing. Supports negative indexing (`t[-1]` is the last element) on finite tuples. Attempting negative index on an infinite tuple raises a runtime error (`cannot use negative index on infinite tuple`). Out-of-bounds index raises a runtime error.
-- **Operators & Destructuring**:
-  - `t1 + t2`: Concatenates two tuples (equivalent to `t1.Concat(t2)`).
-  - `t << elem`: Appends `elem` to `t` (equivalent to `t.Append(elem)`).
-  - `==`, `!=`: Structural element-wise equality comparison.
-  - Pattern matching / unpacking: `(a, b) = t`, `(first, *rest) = t`.
-
-#### `Dict`
-- **Type Annotations**:
-  - `{...}` represents an arbitrary dictionary type of any key and value types.
-- **Methods**:
-  - `d.Len(): Int`: Returns the number of key-value pairs in `d`.
-  - `d.Type(): String`: Returns the string representation of dict type (e.g., `"{String: Int}"`, `"{Unknown: Unknown}"`). Satisfies `interface Show`.
-  - `d.Inspect(): String`: Returns the string representation of `d` (e.g., `{"a": 1}`). Satisfies `interface Show`.
-- **Key Access**:
-  - `d[key]: Value`: Returns the value associated with `key`. Non-existent key lookup raises a runtime error.
-- **Operators**:
-  - `==`, `!=`: Structural equality comparison of all key-value entries.
-
-#### Regex
-- **Methods**:
-  - `r.Pattern(): String`: Returns the underlying pattern string.
-  - `r.Flags(): String`: Returns the compiled flag string (e.g. `'i'`).
-  - `r.Test(s: String): Bool`: Returns `true` if regex matches target string `s`.
-  - `r.Match(s: String): Match | Nil`: Matches `s`, returning `Match` on success or `Nil`.
-  - `r.FindAll(s: String, count: Int = -1): (Match, ...)`: Returns a tuple of all non-overlapping matches.
-  - `r.Replace(s: String, repl: String): String`: Replaces the first match with replacement string `repl`.
-  - `r.ReplaceAll(s: String, repl: String): String`: Replaces all matches with `repl`.
-  - `r.Split(s: String, count: Int = -1): (String, ...)`: Splits `s` by regex matches into a tuple of strings.
-  - `r.Inspect(): String`: Returns regex string representation. Satisfies interface `Show`.
-  - `r.Type(): String`: Returns 'Regex'. Satisfies interface `Show`.
-- **Operators**:
-  - `s =~ r`, `r =~ s`: Matches string and regex, returning `Match | Nil`.
-  - `==`, `!=`: Checks equality of pattern and flags.
-
-#### Match
-- **Methods**:
-  - `m.Len(): Int`: Returns number of capture groups including group 0 (full match).
-  - `m.Group(idxOrName: Int | String): String | Nil`: Returns captured string by 0-based index, negative index, or group name; returns `Nil` if unmatched.
-  - `m.Groups(): (String | Nil, ...)`: Returns tuple of capture groups (excluding group 0).
-  - `m.NamedGroups(): {String: String | Nil}`: Returns dictionary of all named capture groups.
-  - `m.Start(idxOrName: Int | String = 0): Int`: Returns 0-based start rune offset, or `-1` if unmatched.
-  - `m.End(idxOrName: Int | String = 0): Int`: Returns 0-based end rune offset, or `-1` if unmatched.
-  - `m.Span(idxOrName: Int | String = 0): (Int, Int)`: Returns `(Start, End)` rune offset tuple, or `(-1, -1)`.
-  - `m.Text(): String`: Returns full matched string (same as `m[0]`).
-  - `m.Target(): String`: Returns original target string searched.
-  - `m.Regex(): Regex`: Returns compiled Regex object that produced this match.
-  - `m.Inspect(): String`: Returns human-readable representation. Satisfies interface `Show`.
-  - `m.Type(): String`: Returns 'Match'. Satisfies interface `Show`.
-- **Index Access**:
-  - `m[i]`: 0-based capture group index (`m[0]` is full match, `m[1..n]` are captures). Supports negative indexing (`m[-1]`). Implements `Indexable[Int, String | Nil]`.
-  - `m["name"]`: Named capture group access. Implements `Indexable[String, String | Nil]`.
-- **Operators**:
-  - `==`, `!=`: Compares target, regex pattern/flags, and capture spans.
-
-### 4. Built-in Interfaces
-
-Les provides predefined standard interfaces in the global scope for polymorphism, string conversion, and error handling:
-
-#### `interface Show`
-Declares the contract for converting values to human-readable string representations and inspecting their runtime type:
-```python
-interface Show:
-    def Inspect(): String
-    def Type(): String
-```
-- **Implicit Satisfaction**: All primitive types (`String`, `Int`, `Float`, `Bool`, `Nil`, `Bytes`, `Tuple`, `Dict`, `Regex`, `Match`), functions, and struct instances implicitly satisfy `interface Show`.
-
-- **Usage**: Built-in functions like `print` accept any value satisfying `Show` (`*args: Show`). Any user-defined `struct` implementing `Inspect(): String` automatically satisfies `Show`.
-
-#### `interface Error`
-Declares the contract for error values:
-```python
-interface Error:
-    def Message(): String
-    def Inspect(): String
-```
-- **Implicit Satisfaction**: Standard error instances created via the built-in `Error(msg)` function satisfy `Error`. In addition, any user-defined `struct` implementing `Message(): String` (or `Error(): String`) automatically satisfies `Error` structurally without explicit declarations.
-- **Usage**: Extensively used in union return types (`Type | Error`) and type-narrowing expressions (`val is Error` or `match val: case Error:`).
-
-#### `interface Indexable[K, V]`
-Declares the contract for types supporting index-based element access and length inspection:
-```python
-interface Indexable[K, V]:
-    def [](key: K) -> V
-    def Len(): Int
-```
-- **Implicit Satisfaction**: Built-in collections (`Tuple`, `Dict`, `String`, `Bytes`) and user-defined structs with index operator `def [](key)` and `def Len(): Int` satisfy `Indexable[K, V]`.
-  - `(Int, String)` satisfies `Indexable[Int, Int | String]`
-  - `(1, ...)` satisfies `Indexable[Int, Int]`
-  - `{String: Int}` satisfies `Indexable[String, Int]`
-  - `String` satisfies `Indexable[Int, String]`
-  - `Bytes` satisfies `Indexable[Int, Int]`
-- **Unspecialized Form**: `val is Indexable` matches any indexable collection without type argument specialization.
-
-#### `interface Equatable[T]`
-Declares the contract for types supporting equality comparison (`==`):
-```python
-interface Equatable[T]:
-    def ==(other: T) -> Bool
-```
-- **Implicit Satisfaction**: All primitive types (`Int`, `Float`, `String`, `Bytes`, `Bool`, `Nil`, `Regex`, `Match`, `Tuple`, `Dict`) and user-defined structs implementing `def ==(other)` implicitly satisfy `Equatable[T]`.
-- **Unspecialized Form**: `val is Equatable` matches any equatable value without type argument specialization.
-
-#### `interface Comparable[T]`
-Declares the contract for types supporting relational ordering (`<`) and equality (`==`):
-```python
-interface Comparable[T]:
-    Equatable[T]
-    def ==(other: T) -> Bool
-    def <(other: T) -> Bool
-```
-- **Implicit Satisfaction**: Naturally ordered types (`Int`, `Float`, `String`, `Bytes`) and user-defined structs implementing `<` and `==` satisfy `Comparable[T]`.
-- **Unspecialized Form**: `val is Comparable` matches any comparable value without type argument specialization.
-
-#### `interface Numeric[T]`
-Declares the contract for numeric types supporting conversion to `Int` and `Float`, absolute value inspection, and arithmetic operators:
-```python
-interface Numeric[T]:
-    Comparable[T]
-    def Int() -> Int
-    def Float() -> Float
-    def Abs() -> T
-    def +(other: T) -> T
-    def -(other: T) -> T
-    def *(other: T) -> T
-    def /(other: T) -> T
-```
-- **Implicit Satisfaction**:
-  - `Int` satisfies `Numeric[Int]` and unspecialized `Numeric`.
-  - `Float` satisfies `Numeric[Float]` and unspecialized `Numeric`.
-  - User-defined structs implementing `.Int()`, `.Float()`, `.Abs()`, `+`, `-`, `*`, `/`, and comparison methods satisfy `Numeric[T]`.
-- **Unspecialized Form**: `val is Numeric` matches any numeric type.
-
-### 5. Built-in Modules
-
-#### Standard I/O Module (`io`)
-
-The built-in `io` module provides stream I/O abstractions, interfaces, and standard stream access.
-
-```python
-import io
-```
-
-##### Core Interfaces
-- **`Reader`**: `Read(n: Int): Bytes | Nil`
-- **`Writer`**: `Write(b: Bytes): Int`, `Flush(): ()`
-- **`Closer`**: `Close(): ()`
-- **`ReadCloser`**: embeds `Reader`, `Closer` (`Read`, `Close`)
-- **`WriteCloser`**: embeds `Writer`, `Closer` (`Write`, `Flush`, `Close`)
-
-##### Standard Streams
-- **`io::Stdin`**: Standard input instance satisfying `Reader`, `Closer`, and `ReadCloser`.
-  - `Read(n: Int): Bytes | Nil`: reads up to `n` bytes as a `Bytes` sequence (`n == 0` returns empty `Bytes()`, EOF returns `nil`).
-  - `Close(): ()`: closes standard input.
-- **`io::Stdout`**: Standard output instance satisfying `Writer`, `Closer`, and `WriteCloser`.
-  - `Write(b: Bytes): Int`: writes byte sequence `b` directly to standard output (automatically flushes any buffered `Stdout` first).
-  - `Flush(): ()`: flushes standard output.
-  - `Close(): ()`: closes standard output (automatically flushes buffered `Stdout` first).
-- **`io::Stderr`**: Standard error instance satisfying `Writer`, `Closer`, and `WriteCloser`.
-  - `Write(b: Bytes): Int`: writes byte sequence `b` directly to standard error without buffering (automatically flushes any buffered `Stdout` first).
-  - `Flush(): ()`: provides a no-op `Flush(): ()` for `Writer` / `bufio.Writer` interface compatibility.
-  - `Close(): ()`: closes standard error.
-
-#### Buffered I/O Module (`bufio`)
-
-The built-in `bufio` module wraps stream I/O objects with buffering, line reading, and flushing capabilities.
-
-```python
-import bufio
-```
-
-##### Structs & Constructors
-- **`bufio::Reader(r: Reader): Reader`**: Constructs a buffered reader wrapping an underlying `Reader` (such as `io::Stdin` or a custom struct implementing `Read`). If `r` is already a `bufio::Reader`, returns it directly.
-  - `Read(n: Int): Bytes | Nil`: Reads up to `n` bytes from buffer/stream. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
-  - `ReadLine(): String | Nil`: Reads a single line as UTF-8 string, stripping trailing `\n` or `\r\n`.
-  - `ReadString(delim: String): String | Nil`: Reads until the given delimiter string (supports multi-character delimiters). Returns accumulated text as UTF-8 string including delimiter; if EOF is reached before the delimiter, returns all accumulated trailing text up to EOF; returns `nil` only if EOF is encountered with 0 bytes read.
-  - `Peek(n: Int): Bytes | Nil`: Peeks ahead up to `n` bytes without advancing the reader cursor. `n == 0` returns empty `Bytes()`; `n < 0` produces a runtime error.
-- **`bufio::Writer(w: Writer): Writer`**: Constructs a buffered writer wrapping an underlying `Writer` (such as `io::Stdout` or a custom struct implementing `Write`). Automatically tracked and flushed on program exit or `exit()`. If `w` is already a `bufio::Writer`, returns it directly.
-  - `Write(b: Bytes): Int`: Appends byte sequence `b` to write buffer.
-  - `Flush(): ()`: Flushes buffered data to the underlying stream.
-
-## Planned Features / Future Work
+### Options
+| Option | Description |
+|---|---|
+| `-v` | Display version and platform information, then exit. |
+| `-c` | Check syntax only without type checking or execution. |
+| `-t` | Check syntax and static types (including resolving and verifying imported modules) without execution. |
+| `-e <code>` | Evaluate the inline script string directly. |
+
+---
+
+## Planned Features / Roadmap
 
 ### 1. Hexadecimal Floating-Point Literals
-
 - Exact IEEE 754 representation using hexadecimal floats with binary exponents (`p` / `P` power of 2):
   - Syntax: `0x1.0p0`, `0xAB.CDEFp4`, `0x1.fp-3`
-  - Disambiguation strategy: Since built-in types have a closed set of methods (no user monkey-patching), the lexer attempts to interpret `0x...` followed by `.` as a floating-point literal first. If it satisfies float syntax, it is treated as a float; otherwise, it falls back to integer dot/method access.
-- **Built-in Methods on Numeric Literals & Disambiguation**:
-  - Direct method invocation on literals (e.g., `42.Inspect()`, `3.14.Inspect()`).
-  - Decimal floats require a digit immediately following the dot (`42.0`), whereas a dot followed by an identifier letter (`42.Inspect()`) is disambiguated as a method call on integer `42`.
+  - Lexer disambiguation: parses `0x...` followed by `.` as float literals where valid, falling back to integer member access otherwise.
 
-### 2. String Interpolation (#{})
+### 2. String Interpolation (`#{}`)
+- Ruby-style string interpolation within double-quoted strings:
+  - `"User: #{name}, Age: #{age}\n"` evaluates embedded expressions via `Inspect()` (`interface Show`).
+  - Single-quoted strings (`'...'`) remain literal without interpolation.
 
-Ruby-style string interpolation within double-quoted strings:
+### 3. Null-Safe Navigation (`?.`) & Coalescing Operator (`??`)
+- Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
+  - Safe navigation: `user?.Profile?.Name` (safely yields `nil` if intermediate receiver is `nil`).
+  - Null coalescing: `user?.Name ?? "Guest"` (provides fallback expression when operand is `nil`).
 
-- **Double-quoted Strings (`"..."`)**: Expressions inside `#{...}` are evaluated and converted to strings via their `Inspect()` method (satisfying `Show`):
-  ```python
-  name = "Alice"
-  age = 30
-  print "User: #{name}, Age: #{age}\n"
-  print "Result: #{1 + 2 * 3}\n"
-  ```
-- **Single-quoted Strings (`'...'`)**: Raw / literal strings without expression interpolation; `#{expr}` is treated literally as text:
-  ```python
-  print 'Literal #{name}\n'  # prints "Literal #{name}\n"
-  ```
+### 4. `Self` Pseudo-Type & Default Type Parameters (`[T = Self]`)
+- **`Self` Pseudo-Type**:
+  - Dynamically refers to the receiver type in `interface` and `struct` method signatures (arguments and return types).
+- **Default Type Parameters**:
+  - Allows interface definitions to provide default type parameters, eliminating boilerplate for symmetric operations:
+    ```python
+    interface Equatable[T = Self]:
+        def ==(other: T) -> Bool
 
-### 3. Null-Safe Navigation (?.) & Coalescing Operator (??)
+    interface Comparable[T = Self]:
+        Equatable[T]
+        def <(other: T) -> Bool
 
-Syntactic sugar for handling `Nil` and nullable union types (`Type | Nil`):
+    interface Numeric[T = Self]:
+        Comparable[T]
+        def +(other: T) -> Self
+        def -(other: T) -> Self
+        def *(other: T) -> Self
+        def /(other: T) -> Self
+        def Int() -> Int
+        def Float() -> Float
+        def Abs() -> Self
+    ```
+  - Unspecialized use (`val is Numeric` or `[N: Numeric]`) automatically defaults `T` to `Self`.
+  - Explicit specialization (`val is Numeric[Int]`) overrides default parameter binding.
 
-- **Safe Navigation (`?.`)**: Safely navigates fields or methods without runtime errors if the target is `nil`, evaluating to `nil`:
-  ```python
-  user?.Profile?.Name
-  ```
-- **Null Coalescing (`??`)**: Fallback expression if the left operand is `nil` (equivalent to `a != nil ? a : b`):
-  ```python
-  displayName = user?.Name ?? "Guest"
-  ```
+---
 
 ## License
 
@@ -1264,6 +222,8 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
+
+---
 
 ## Contributions
 
