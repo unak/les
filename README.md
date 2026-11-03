@@ -668,7 +668,7 @@ struct Person:
 - **`@` Syntactic Sugar for `self.`**:
   Inside struct methods and `init`, `@<member>` serves as concise syntactic sugar for receiver access:
   - `@x` desugars to `self.x`
-  - `@calc(a, b)` desugars to `self.calc(a, b)`
+  - `@calc(a, b)` and statement-start `@calc a, b` desugar to `self.calc(a, b)`
   - `@x = expr` desugars to `self.x = expr` (valid inside `init`)
   - `@node.next` desugars to `self.node.next`
   - Whitespace between `@` and the identifier (e.g. `@ x`) and bare `@` without an identifier are syntax errors.

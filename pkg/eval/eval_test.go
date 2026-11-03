@@ -6611,5 +6611,130 @@ print @foo
 	if _, err := ev3.EvalProgram(prog3); err == nil || !strings.Contains(err.Error(), "self") {
 		t.Fatalf("expected undefined identifier 'self' error, got %v", err)
 	}
+
+	// 4. Paren-omitted method calls: @log "msg", @report @count, self.log "msg"
+	code4 := `
+struct Worker:
+    count: Int
+
+    def init(c: Int):
+        @count = c
+
+    def appendLog(msg: String):
+        print msg + ";"
+
+    def run():
+        @appendLog "started"
+        @report @count
+        self.appendLog "finished"
+
+    def report(n: Int):
+        print "count=" + n.Inspect() + ";"
+
+w = Worker(42)
+w.run()
+`
+	out4, err4 := runLesCode(code4)
+	if err4 != nil {
+		t.Fatalf("unexpected eval error in Worker paren-omitted test: %v", err4)
+	}
+	if out4 != "started;count=42;finished;" {
+		t.Fatalf("expected out4 == 'started;count=42;finished;', got %q", out4)
+	}
+
+	// 5. Pipeline operator with @: val |> @Double
+	code5 := `
+struct Transformer:
+    scale: Int
+
+    def init(s: Int):
+        @scale = s
+
+    def mul(x: Int) -> Int:
+        x * @scale
+
+    def process(base: Int) -> Int:
+        base |> @mul
+
+t = Transformer(5)
+resPipe = t.process(8)
+`
+	ev5 := NewEvaluator()
+	prog5 := parser.NewParser(lexer.NewLexer(code5)).ParseProgram()
+	if _, err := ev5.EvalProgram(prog5); err != nil {
+		t.Fatalf("unexpected eval error in Transformer pipe test: %v", err)
+	}
+	if v, _ := ev5.globalEnv.Get("resPipe"); Force(v).(IntValue) != NewIntValue(40) {
+		t.Fatalf("expected resPipe == 40, got %v", v)
+	}
+
+	// 6. Closure / Lambda capturing @ member
+	code6 := `
+struct Stepper:
+    base: Int
+
+    def init(b: Int):
+        @base = b
+
+    def makeAdder() -> (Int) -> Int:
+        |step|: @base + step
+
+s = Stepper(100)
+adder = s.makeAdder()
+resClosure = adder(25)
+`
+	ev6 := NewEvaluator()
+	prog6 := parser.NewParser(lexer.NewLexer(code6)).ParseProgram()
+	if _, err := ev6.EvalProgram(prog6); err != nil {
+		t.Fatalf("unexpected eval error in Stepper closure test: %v", err)
+	}
+	if v, _ := ev6.globalEnv.Get("resClosure"); Force(v).(IntValue) != NewIntValue(125) {
+		t.Fatalf("expected resClosure == 125, got %v", v)
+	}
+
+	// 7. Chained struct access and indexing: @head.next.val, @items[0]
+	code7 := `
+struct Node:
+    val: Int
+    next: Node
+
+struct Container:
+    head: Node
+    items: (Int, Int, Int)
+
+    def init(h: Node, arr: (Int, Int, Int)):
+        @head = h
+        @items = arr
+
+    def first() -> Int:
+        @items[0]
+
+    def second() -> Int:
+        @items[1]
+
+    def nextVal() -> Int:
+        @head.next.val
+
+n2 = Node(val: 99, next: nil)
+n1 = Node(val: 11, next: n2)
+c = Container(n1, (10, 20, 30))
+fItem = c.first()
+sItem = c.second()
+nVal = c.nextVal()
+`
+	ev7 := NewEvaluator()
+	prog7 := parser.NewParser(lexer.NewLexer(code7)).ParseProgram()
+	if _, err := ev7.EvalProgram(prog7); err != nil {
+		t.Fatalf("unexpected eval error in Container index test: %v", err)
+	}
+	if v, _ := ev7.globalEnv.Get("fItem"); Force(v).(IntValue) != NewIntValue(10) {
+		t.Fatalf("expected fItem == 10, got %v", v)
+	}
+	if v, _ := ev7.globalEnv.Get("sItem"); Force(v).(IntValue) != NewIntValue(20) {
+		t.Fatalf("expected sItem == 20, got %v", v)
+	}
+	if v, _ := ev7.globalEnv.Get("nVal"); Force(v).(IntValue) != NewIntValue(99) {
+		t.Fatalf("expected nVal == 99, got %v", v)
+	}
 }
 

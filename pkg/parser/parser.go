@@ -1151,15 +1151,15 @@ func (p *Parser) isAtMemberAssignOnCurrentLine() bool {
 
 func (p *Parser) parseAtMemberAssignStmt() *ast.MemberAssignStmt {
 	pos := p.curPos()
+	if !p.peekTokenIs(lexer.TokenIdent) {
+		p.addError(p.curToken.Line, p.curToken.Col, "expected identifier immediately after '@', got %s", lexer.FormatToken(p.peekToken))
+		return nil
+	}
 	if p.peekToken.Line != p.curToken.Line || p.peekToken.Col != p.curToken.Col+1 {
 		p.addError(p.curToken.Line, p.curToken.Col, "whitespace not allowed between '@' and identifier")
 		return nil
 	}
 	p.nextToken() // advance to member ident
-	if !p.curTokenIs(lexer.TokenIdent) {
-		p.addError(p.curToken.Line, p.curToken.Col, "expected identifier immediately after '@', got %s", lexer.FormatToken(p.curToken))
-		return nil
-	}
 	member := p.curToken.Literal
 	if !p.expectPeek(lexer.TokenAssign) {
 		return nil
@@ -1415,7 +1415,8 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	if isStmtStart && precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {
 		_, isIdent := prefix.(*ast.Identifier)
 		_, isModAccess := prefix.(*ast.ModuleAccessExpr)
-		if isIdent || isModAccess {
+		_, isMemAccess := prefix.(*ast.MemberAccessExpr)
+		if isIdent || isModAccess || isMemAccess {
 			p.inParenOmissionCall = true
 			args := p.parseCallArgumentsWithoutParens()
 			p.inParenOmissionCall = false
@@ -1426,9 +1427,10 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 				block = p.parseBlockLiteral()
 			}
 			prefix = &ast.CallExpr{
-				Callee: prefix,
-				Args:   args,
-				Block:  block,
+				Position: prefix.Pos(),
+				Callee:   prefix,
+				Args:     args,
+				Block:    block,
 			}
 		}
 	}
@@ -1440,6 +1442,26 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 	for !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenSemicolon) && !p.peekTokenIs(lexer.TokenEOF) && precedence < p.peekPrecedence() {
 		p.nextToken()
 		prefix = p.parseInfix(prefix)
+	}
+
+	if isStmtStart && precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {
+		if _, isMemAccess := prefix.(*ast.MemberAccessExpr); isMemAccess {
+			p.inParenOmissionCall = true
+			args := p.parseCallArgumentsWithoutParens()
+			p.inParenOmissionCall = false
+
+			var block *ast.BlockLiteral
+			if p.peekTokenIs(lexer.TokenDo) {
+				p.nextToken()
+				block = p.parseBlockLiteral()
+			}
+			prefix = &ast.CallExpr{
+				Position: prefix.Pos(),
+				Callee:   prefix,
+				Args:     args,
+				Block:    block,
+			}
+		}
 	}
 
 	return prefix
@@ -1510,15 +1532,15 @@ func (p *Parser) parsePrefix() ast.Expr {
 	pos := p.curPos()
 	switch p.curToken.Type {
 	case lexer.TokenAt:
+		if !p.peekTokenIs(lexer.TokenIdent) {
+			p.addError(p.curToken.Line, p.curToken.Col, "expected identifier immediately after '@', got %s", lexer.FormatToken(p.peekToken))
+			return nil
+		}
 		if p.peekToken.Line != p.curToken.Line || p.peekToken.Col != p.curToken.Col+1 {
 			p.addError(p.curToken.Line, p.curToken.Col, "whitespace not allowed between '@' and identifier")
 			return nil
 		}
 		p.nextToken() // advance to member identifier
-		if !p.curTokenIs(lexer.TokenIdent) {
-			p.addError(p.curToken.Line, p.curToken.Col, "expected identifier immediately after '@', got %s", lexer.FormatToken(p.curToken))
-			return nil
-		}
 		memberName := p.curToken.Literal
 		return &ast.MemberAccessExpr{
 			Position: pos,

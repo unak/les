@@ -2157,6 +2157,9 @@ struct Foo:
 	if len(pWs.Errors()) == 0 {
 		t.Fatalf("expected error for whitespace between '@' and ident, got none")
 	}
+	if !strings.Contains(pWs.Errors()[0], "whitespace not allowed between '@' and identifier") {
+		t.Fatalf("expected whitespace error message, got %v", pWs.Errors()[0])
+	}
 
 	// 3. Syntax errors: bare @
 	bareInput := `
@@ -2168,6 +2171,108 @@ struct Foo:
 	pBare.ParseProgram()
 	if len(pBare.Errors()) == 0 {
 		t.Fatalf("expected error for bare '@', got none")
+	}
+	if !strings.Contains(pBare.Errors()[0], "expected identifier immediately after '@'") {
+		t.Fatalf("expected 'expected identifier immediately after @' error message, got %v", pBare.Errors()[0])
+	}
+
+	// 4. Paren-omitted method calls: @log "hello", @report @count, self.log "world", @add 1, 2
+	parenOmitInput := `
+struct Worker:
+    count: Int
+    def run():
+        @log "hello"
+        @report @count
+        self.log "world"
+        @add 1, 2
+`
+	progParen := NewParser(lexer.NewLexer(parenOmitInput)).ParseProgram()
+	sWorker := progParen.Body[0].(*ast.StructDef)
+	runMethod := sWorker.Methods[0]
+	if len(runMethod.Body) != 4 {
+		t.Fatalf("expected 4 statements in run(), got %d", len(runMethod.Body))
+	}
+	// stmt 0: @log "hello"
+	stmt0, ok := runMethod.Body[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected *ast.ExprStmt, got %T", runMethod.Body[0])
+	}
+	call0, ok := stmt0.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for @log \"hello\", got %T", stmt0.Value)
+	}
+	mem0, ok := call0.Callee.(*ast.MemberAccessExpr)
+	if !ok || mem0.Member != "log" {
+		t.Fatalf("expected callee self.log, got %v", call0.Callee)
+	}
+	if len(call0.Args) != 1 {
+		t.Fatalf("expected 1 arg for @log, got %d", len(call0.Args))
+	}
+
+	// stmt 1: @report @count
+	stmt1 := runMethod.Body[1].(*ast.ExprStmt)
+	call1, ok := stmt1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for @report @count, got %T", stmt1.Value)
+	}
+	mem1 := call1.Callee.(*ast.MemberAccessExpr)
+	if mem1.Member != "report" {
+		t.Fatalf("expected callee self.report, got %s", mem1.Member)
+	}
+	arg1Mem, ok := call1.Args[0].(*ast.MemberAccessExpr)
+	if !ok || arg1Mem.Member != "count" {
+		t.Fatalf("expected arg self.count, got %v", call1.Args[0])
+	}
+
+	// stmt 2: self.log "world"
+	stmt2 := runMethod.Body[2].(*ast.ExprStmt)
+	call2, ok := stmt2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for self.log \"world\", got %T", stmt2.Value)
+	}
+	mem2 := call2.Callee.(*ast.MemberAccessExpr)
+	if mem2.Member != "log" {
+		t.Fatalf("expected callee self.log, got %s", mem2.Member)
+	}
+
+	// stmt 3: @add 1, 2
+	stmt3 := runMethod.Body[3].(*ast.ExprStmt)
+	call3, ok := stmt3.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for @add 1, 2, got %T", stmt3.Value)
+	}
+	if len(call3.Args) != 2 {
+		t.Fatalf("expected 2 args for @add, got %d", len(call3.Args))
+	}
+
+	// 5. Chained access and indexing
+	chainInput := `
+struct Node:
+    next: Node
+    items: [Int]
+    def test():
+        x = @node.next.val
+        y = @items[0]
+        z = @items[1:3]
+`
+	progChain := NewParser(lexer.NewLexer(chainInput)).ParseProgram()
+	sNode := progChain.Body[0].(*ast.StructDef)
+	testMethod := sNode.Methods[0]
+	// x = @node.next.val
+	xDecl := testMethod.Body[0].(*ast.VarDecl)
+	xMem, ok := xDecl.Value.(*ast.MemberAccessExpr)
+	if !ok || xMem.Member != "val" {
+		t.Fatalf("expected .val member access, got %v", xDecl.Value)
+	}
+	// y = @items[0]
+	yDecl := testMethod.Body[1].(*ast.VarDecl)
+	yIdx, ok := yDecl.Value.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected IndexExpr, got %T", yDecl.Value)
+	}
+	itemsMem, ok := yIdx.Target.(*ast.MemberAccessExpr)
+	if !ok || itemsMem.Member != "items" {
+		t.Fatalf("expected target @items, got %v", yIdx.Target)
 	}
 }
 
