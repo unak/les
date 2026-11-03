@@ -785,17 +785,19 @@ func (m *ModuleValue) String() string { return fmt.Sprintf("<module %s>", m.Name
 
 // StructDefValue represents struct type definition (usable as constructor).
 type StructDefValue struct {
-	Name          string
-	TypeParams    []ast.TypeParam
-	TypeArgs      []string
-	FieldOrder    []string
-	FieldDefaults map[string]ast.Expr
-	EmbeddedNames []string
-	Methods       map[string]*ast.FuncDef
-	AllMethods    map[string][]*ast.FuncDef
-	Env           *Environment
-	StructType    any // Inferred *types.StructType
-	Origin        *StructDefValue
+	Name            string
+	TypeParams      []ast.TypeParam
+	TypeArgs        []string
+	FieldOrder      []string
+	FieldDefaults   map[string]ast.Expr
+	EmbeddedNames   []string
+	DirectFields    map[string]bool
+	AmbiguousFields map[string]bool
+	Methods         map[string]*ast.FuncDef
+	AllMethods      map[string][]*ast.FuncDef
+	Env             *Environment
+	StructType      any // Inferred *types.StructType
+	Origin          *StructDefValue
 }
 
 func (s *StructDefValue) String() string {
@@ -1094,6 +1096,12 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 
 // LookupMember searches for field or method on StructInstance with Go-style promotion rules.
 func (si *StructInstance) LookupMember(name string) (Value, error) {
+	if si.Def != nil && si.Def.AmbiguousFields != nil && si.Def.AmbiguousFields[name] {
+		if si.Def.DirectFields == nil || !si.Def.DirectFields[name] {
+			return nil, fmt.Errorf("ambiguous selector '%s' on type %s", name, si.Def.Name)
+		}
+	}
+
 	// 1. Direct fields
 	if v, ok := si.Fields[name]; ok {
 		return v, nil

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"les/pkg/ast"
 	"les/pkg/lexer"
 	"les/pkg/parser"
 )
@@ -2414,5 +2415,33 @@ func TestCrossModuleEmbeddedStructLookupAmbiguity(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ambiguous selector 'Foo'") {
 		t.Fatalf("expected ambiguous selector error, got: %v", err)
+	}
+}
+
+func TestModuleAccessPrivateAndEmptyStaticCheck(t *testing.T) {
+	inf := NewInferencer()
+	inf.modules["mod"] = &ModuleType{
+		Name: "mod",
+		Exports: map[string]Type{
+			"PublicFunc": &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+		},
+	}
+
+	privExpr := &ast.ModuleAccessExpr{
+		Module: "mod",
+		Member: "privateFunc",
+	}
+	_, err := inf.inferExpr(privExpr)
+	if err == nil || !strings.Contains(err.Error(), "cannot access private member 'privateFunc' from module 'mod'") {
+		t.Fatalf("expected private member error, got: %v", err)
+	}
+
+	emptyExpr := &ast.ModuleAccessExpr{
+		Module: "mod",
+		Member: "",
+	}
+	_, err = inf.inferExpr(emptyExpr)
+	if err == nil || !strings.Contains(err.Error(), "empty member name in module access") {
+		t.Fatalf("expected empty member error, got: %v", err)
 	}
 }

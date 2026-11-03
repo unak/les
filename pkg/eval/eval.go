@@ -897,6 +897,18 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		newIDef.TypeArgs = append([]string(nil), typeArgs...)
 		return &newIDef, nil
 
+	case *BuiltinFunc:
+		if v.TypeDef != nil {
+			specTypeDef, err := specializeGenericValue(v.TypeDef, typeArgs, env)
+			if err != nil {
+				return nil, err
+			}
+			newBf := *v
+			newBf.TypeDef = specTypeDef
+			return &newBf, nil
+		}
+		return val, nil
+
 	default:
 		return val, nil
 	}
@@ -1274,18 +1286,25 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 	case *ast.StructDef:
 		sDef := &StructDefValue{
-			Name:          s.Name,
-			TypeParams:    s.TypeParams,
-			FieldOrder:    make([]string, 0),
-			FieldDefaults: make(map[string]ast.Expr),
-			EmbeddedNames: make([]string, 0),
-			Methods:       make(map[string]*ast.FuncDef),
-			AllMethods:    make(map[string][]*ast.FuncDef),
-			Env:           env,
+			Name:            s.Name,
+			TypeParams:      s.TypeParams,
+			FieldOrder:      make([]string, 0),
+			FieldDefaults:   make(map[string]ast.Expr),
+			EmbeddedNames:   make([]string, 0),
+			DirectFields:    make(map[string]bool),
+			AmbiguousFields: make(map[string]bool),
+			Methods:         make(map[string]*ast.FuncDef),
+			AllMethods:      make(map[string][]*ast.FuncDef),
+			Env:             env,
 		}
 
+		embSeen := make(map[string]bool)
 		for _, f := range s.Fields {
 			if f.IsEmbedded {
+				if embSeen[f.Name] {
+					sDef.AmbiguousFields[f.Name] = true
+				}
+				embSeen[f.Name] = true
 				embName := f.TypeAnnot
 				if embName == "" {
 					embName = f.Name
@@ -1293,6 +1312,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 				sDef.EmbeddedNames = append(sDef.EmbeddedNames, embName)
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
 			} else {
+				sDef.DirectFields[f.Name] = true
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
 				if f.DefaultValue != nil {
 					sDef.FieldDefaults[f.Name] = f.DefaultValue
@@ -1550,8 +1570,8 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			alias = modVal.Name
 		}
 		// Register module with alias name
-		modVal.Name = alias
-		env.RegisterModule(modVal)
+		// Register module with alias name without mutating cached modVal
+		env.RegisterModule(&ModuleValue{Name: alias, Exports: modVal.Exports})
 		if s.Path != alias {
 			env.RegisterModule(&ModuleValue{Name: s.Path, Exports: modVal.Exports})
 		}

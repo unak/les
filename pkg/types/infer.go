@@ -1681,12 +1681,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		st := &StructType{
-			Name:       s.Name,
-			TypeParams: typeParamDefs,
-			Fields:     make(map[string]Type),
-			FieldOrder: make([]string, 0),
-			Embedded:   make([]*StructType, 0),
-			Methods:    make(map[string]*FuncType),
+			Name:            s.Name,
+			TypeParams:      typeParamDefs,
+			Fields:          make(map[string]Type),
+			FieldOrder:      make([]string, 0),
+			Embedded:        make([]*StructType, 0),
+			DirectFields:    make(map[string]bool),
+			AmbiguousFields: make(map[string]bool),
+			Methods:         make(map[string]*FuncType),
 		}
 		if inf.StmtTypes != nil {
 			inf.StmtTypes[s] = st
@@ -1705,8 +1707,13 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		// Process fields
+		embSeen := make(map[string]bool)
 		for _, f := range s.Fields {
 			if f.IsEmbedded {
+				if embSeen[f.Name] {
+					st.AmbiguousFields[f.Name] = true
+				}
+				embSeen[f.Name] = true
 				embType, err := inf.parseTypeAnnot(f.TypeAnnot)
 				if err != nil {
 					if origScope != nil {
@@ -1725,6 +1732,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				st.Fields[f.Name] = embStruct
 				st.FieldOrder = append(st.FieldOrder, f.Name)
 			} else {
+				st.DirectFields[f.Name] = true
 				fieldType, err := inf.parseTypeAnnot(f.TypeAnnot)
 				if err != nil {
 					if origScope != nil {
@@ -2017,26 +2025,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		if _, hasInit := st.Methods["init"]; !hasInit {
-			embeddedSet := make(map[string]bool)
-			for _, emb := range st.Embedded {
-				embeddedSet[emb.Name] = true
-			}
 			var initParamTypes []Type
 			minArity := 0
-			for _, fName := range st.FieldOrder {
-				if embeddedSet[fName] {
+			for _, f := range s.Fields {
+				if f.IsEmbedded {
 					continue
 				}
-				initParamTypes = append(initParamTypes, st.Fields[fName])
-				// Check if field has default value
-				hasDefault := false
-				for _, f := range s.Fields {
-					if f.Name == fName && f.DefaultValue != nil {
-						hasDefault = true
-						break
-					}
-				}
-				if !hasDefault {
+				initParamTypes = append(initParamTypes, st.Fields[f.Name])
+				if f.DefaultValue == nil {
 					minArity++
 				}
 			}
@@ -3409,6 +3405,12 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		return TypeUnknown, nil
 	case *ast.ModuleAccessExpr:
 		if mod, ok := inf.modules[e.Module]; ok {
+			if len(e.Member) == 0 {
+				return nil, inf.nodeErr(e, "empty member name in module access")
+			}
+			if e.Member[0] < 'A' || e.Member[0] > 'Z' {
+				return nil, inf.nodeErr(e, "cannot access private member '%s' from module '%s'", e.Member, e.Module)
+			}
 			if t, ok := mod.Exports[e.Member]; ok {
 				return t, nil
 			}

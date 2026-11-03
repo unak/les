@@ -1409,15 +1409,17 @@ type StructFieldInfo struct {
 
 // StructType represents user-defined struct type with fields, embedded structs, and methods.
 type StructType struct {
-	Name          string
-	TypeParams    []TypeParamDef
-	TypeArgs      []Type
-	GenericOrigin *StructType
-	Fields        map[string]Type
-	FieldOrder    []string
-	Embedded      []*StructType
-	Methods       map[string]*FuncType
-	instCache     map[string]*StructType
+	Name            string
+	TypeParams      []TypeParamDef
+	TypeArgs        []Type
+	GenericOrigin   *StructType
+	Fields          map[string]Type
+	FieldOrder      []string
+	Embedded        []*StructType
+	DirectFields    map[string]bool
+	AmbiguousFields map[string]bool
+	Methods         map[string]*FuncType
+	instCache       map[string]*StructType
 }
 
 func (s *StructType) ClearInstCache() {
@@ -1459,6 +1461,12 @@ type memberCandidate struct {
 // LookupMember searches for field or method on StructType with Go-style promotion rules.
 // Returns member type, or error if not found or ambiguous.
 func (s *StructType) LookupMember(name string) (Type, error) {
+	if s.AmbiguousFields != nil && s.AmbiguousFields[name] {
+		if s.DirectFields == nil || !s.DirectFields[name] {
+			return nil, fmt.Errorf("ambiguous selector '%s' on type %s", name, s.Name)
+		}
+	}
+
 	// 1. Direct fields & methods on self (depth 0)
 	if ft, ok := s.Fields[name]; ok {
 		return ft, nil
@@ -1660,13 +1668,15 @@ func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
 	}
 
 	inst := &StructType{
-		Name:          origin.Name,
-		TypeParams:    origin.TypeParams,
-		TypeArgs:      typeArgs,
-		GenericOrigin: origin,
-		FieldOrder:    origin.FieldOrder,
-		Fields:        make(map[string]Type),
-		Methods:       make(map[string]*FuncType),
+		Name:            origin.Name,
+		TypeParams:      origin.TypeParams,
+		TypeArgs:        typeArgs,
+		GenericOrigin:   origin,
+		FieldOrder:      origin.FieldOrder,
+		Fields:          make(map[string]Type),
+		Methods:         make(map[string]*FuncType),
+		DirectFields:    origin.DirectFields,
+		AmbiguousFields: origin.AmbiguousFields,
 	}
 	if origin.instCache == nil {
 		origin.instCache = make(map[string]*StructType)

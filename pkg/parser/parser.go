@@ -1909,7 +1909,7 @@ func (p *Parser) parseInfix(left ast.Expr) ast.Expr {
 		}
 		memberName := p.curToken.Literal
 		return &ast.ModuleAccessExpr{
-			Position: pos,
+			Position: ident.Position,
 			Module:   ident.Name,
 			Member:   memberName,
 		}

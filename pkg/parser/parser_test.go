@@ -252,6 +252,9 @@ print math::Pi`
 	if modAccess.Module != "math" || modAccess.Member != "Add" {
 		t.Fatalf("unexpected modAccess: %+v", modAccess)
 	}
+	if modAccess.Position.Col != 7 {
+		t.Fatalf("expected modAccess Position.Column to be 7, got %d", modAccess.Position.Col)
+	}
 
 	// Verify old @mod.Member is rejected
 	errInput := `res = @math.Add(1, 2)`
