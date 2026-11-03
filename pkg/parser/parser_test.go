@@ -256,13 +256,36 @@ print math::Pi`
 		t.Fatalf("expected modAccess Position.Column to be 7, got %d", modAccess.Position.Col)
 	}
 
-	// Verify old @mod.Member is rejected
+	// Verify old @mod.Member is rejected at type check / eval time (or invalid usage)
 	errInput := `res = @math.Add(1, 2)`
 	lErr := lexer.NewLexer(errInput)
 	pErr := NewParser(lErr)
-	pErr.ParseProgram()
-	if len(pErr.Errors()) == 0 {
-		t.Fatalf("expected parser error for old @mod.Member syntax, got none")
+	progErr := pErr.ParseProgram()
+	if len(pErr.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", pErr.Errors())
+	}
+	// Verify that @math.Add parsed into self.math.Add (MemberAccessExpr with target self)
+	varDeclErr, ok := progErr.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", progErr.Body[0])
+	}
+	callErr, ok := varDeclErr.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", varDeclErr.Value)
+	}
+	memAccess, ok := callErr.Callee.(*ast.MemberAccessExpr)
+	if !ok {
+		t.Fatalf("expected MemberAccessExpr, got %T", callErr.Callee)
+	}
+	if memAccess.Member != "Add" {
+		t.Fatalf("expected member Add, got %s", memAccess.Member)
+	}
+	targetMem, ok := memAccess.Target.(*ast.MemberAccessExpr)
+	if !ok || targetMem.Member != "math" {
+		t.Fatalf("expected target to be self.math, got %v", memAccess.Target)
+	}
+	if ident, ok := targetMem.Target.(*ast.Identifier); !ok || ident.Name != "self" {
+		t.Fatalf("expected root target to be 'self', got %v", targetMem.Target)
 	}
 
 	// Verify dict type annotation with module type
@@ -2063,3 +2086,88 @@ import bufio
 		t.Fatalf("unexpected imp3: %+v", prog.Body[2])
 	}
 }
+
+func TestParseAtSugarForSelf(t *testing.T) {
+	// 1. Basic field access and method call desugaring
+	input := `
+struct Counter:
+    count: Int
+
+    def init(c: Int):
+        @count = c
+
+    def Inc():
+        @count = @count + 1
+        @report(@count)
+
+    def report(n: Int):
+        print n
+`
+	prog := NewParser(lexer.NewLexer(input)).ParseProgram()
+	if len(prog.Body) != 1 {
+		t.Fatalf("expected 1 StructDef, got %d", len(prog.Body))
+	}
+	sDef, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected *ast.StructDef, got %T", prog.Body[0])
+	}
+
+	// Check init: @count = c desugared to MemberAssignStmt with Target self
+	initMethod := sDef.Methods[0]
+	assignStmt, ok := initMethod.Body[0].(*ast.MemberAssignStmt)
+	if !ok {
+		t.Fatalf("expected *ast.MemberAssignStmt, got %T", initMethod.Body[0])
+	}
+	if target, ok := assignStmt.Target.(*ast.Identifier); !ok || target.Name != "self" {
+		t.Fatalf("expected target 'self', got %v", assignStmt.Target)
+	}
+	if assignStmt.Member != "count" {
+		t.Fatalf("expected member 'count', got %q", assignStmt.Member)
+	}
+
+	// Check Inc: @count = @count + 1 and @report(@count)
+	incMethod := sDef.Methods[1]
+	incAssign, ok := incMethod.Body[0].(*ast.MemberAssignStmt)
+	if !ok {
+		t.Fatalf("expected *ast.MemberAssignStmt, got %T", incMethod.Body[0])
+	}
+	binExpr, ok := incAssign.Value.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr, got %T", incAssign.Value)
+	}
+	atCount, ok := binExpr.Left.(*ast.MemberAccessExpr)
+	if !ok {
+		t.Fatalf("expected *ast.MemberAccessExpr, got %T", binExpr.Left)
+	}
+	if target, ok := atCount.Target.(*ast.Identifier); !ok || target.Name != "self" {
+		t.Fatalf("expected target 'self', got %v", atCount.Target)
+	}
+	if atCount.Member != "count" {
+		t.Fatalf("expected member 'count', got %q", atCount.Member)
+	}
+
+	// 2. Syntax errors: whitespace between @ and ident
+	wsInput := `
+struct Foo:
+    def bar():
+        @ count = 10
+`
+	pWs := NewParser(lexer.NewLexer(wsInput))
+	pWs.ParseProgram()
+	if len(pWs.Errors()) == 0 {
+		t.Fatalf("expected error for whitespace between '@' and ident, got none")
+	}
+
+	// 3. Syntax errors: bare @
+	bareInput := `
+struct Foo:
+    def bar():
+        return @
+`
+	pBare := NewParser(lexer.NewLexer(bareInput))
+	pBare.ParseProgram()
+	if len(pBare.Errors()) == 0 {
+		t.Fatalf("expected error for bare '@', got none")
+	}
+}
+

@@ -6009,10 +6009,9 @@ func TestModuleDoubleColonScopeAccess(t *testing.T) {
 	}
 
 	codeOld := `print @math.Add(1, 2)`
-	pOld := parser.NewParser(lexer.NewLexer(codeOld))
-	pOld.ParseProgram()
-	if len(pOld.Errors()) == 0 {
-		t.Fatalf("expected parser error on old @math.Add syntax, got none")
+	progOld := parser.NewParser(lexer.NewLexer(codeOld)).ParseProgram()
+	if _, err := ev.EvalProgram(progOld); err == nil || !strings.Contains(err.Error(), "self") {
+		t.Fatalf("expected undefined identifier 'self' error on old @math.Add syntax, got %v", err)
 	}
 
 	// Verify generic struct matching with module qualification: val is mod::Struct[T]
@@ -6532,3 +6531,85 @@ print res
 		t.Fatalf("expected ambiguous selector error, got: %v", err)
 	}
 }
+
+func TestAtSugarForSelf(t *testing.T) {
+	// 1. Basic struct with init, methods, and arithmetic using @
+	code1 := `
+struct Point:
+    x: Int
+    y: Int
+
+    def init(x: Int, y: Int):
+        @x = x
+        @y = y
+
+    def Shift(dx: Int, dy: Int) -> Point:
+        Point(@x + dx, @y + dy)
+
+    def DistanceSquared() -> Int:
+        @x * @x + @y * @y
+
+    def ToString() -> String:
+        "(" + @x.Inspect() + ", " + @y.Inspect() + ")"
+
+p = Point(3, 4)
+d1 = p.DistanceSquared()
+p2 = p.Shift(1, 2)
+d2 = p2.DistanceSquared()
+s = p.ToString()
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in Point test: %v", err)
+	}
+	if v, _ := ev1.globalEnv.Get("d1"); Force(v).(IntValue) != NewIntValue(25) {
+		t.Fatalf("expected d1 == 25 (3*3 + 4*4), got %v", v)
+	}
+	if v, _ := ev1.globalEnv.Get("d2"); Force(v).(IntValue) != NewIntValue(52) {
+		t.Fatalf("expected d2 == 52 (4*4 + 6*6), got %v", v)
+	}
+	if v, _ := ev1.globalEnv.Get("s"); Force(v).(StringValue) != "(3, 4)" {
+		t.Fatalf("expected s == \"(3, 4)\", got %v", v)
+	}
+
+	// 2. Chained method calls and self calls using @
+	code2 := `
+struct Calculator:
+    acc: Int
+
+    def init(v: Int):
+        @acc = v
+
+    def add(x: Int) -> Int:
+        @acc + x
+
+    def Double() -> Int:
+        @add(@acc)
+
+    def Get() -> Int:
+        @acc
+
+c = Calculator(10)
+res = c.Double()
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in Calculator test: %v", err)
+	}
+	if v, _ := ev2.globalEnv.Get("res"); Force(v).(IntValue) != NewIntValue(20) {
+		t.Fatalf("expected res == 20, got %v", v)
+	}
+
+	// 3. Error when using @ outside a struct method
+	code3 := `
+print @foo
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err == nil || !strings.Contains(err.Error(), "self") {
+		t.Fatalf("expected undefined identifier 'self' error, got %v", err)
+	}
+}
+

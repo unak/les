@@ -662,9 +662,32 @@ struct Person:
         # name and age are auto-bound; city retains default "Tokyo"
 ```
 
-#### Dot Access
+#### Dot Access & `@` Syntactic Sugar for `self.`
 - Member access: `p.x`, `p.DistSq()`
 - Struct fields are lazily evaluated thunks.
+- **`@` Syntactic Sugar for `self.`**:
+  Inside struct methods and `init`, `@<member>` serves as concise syntactic sugar for receiver access:
+  - `@x` desugars to `self.x`
+  - `@calc(a, b)` desugars to `self.calc(a, b)`
+  - `@x = expr` desugars to `self.x = expr` (valid inside `init`)
+  - `@node.next` desugars to `self.node.next`
+  - Whitespace between `@` and the identifier (e.g. `@ x`) and bare `@` without an identifier are syntax errors.
+
+```python
+struct Point:
+    x: Int
+    y: Int
+
+    def init(x: Int, y: Int):
+        @x = x
+        @y = y
+
+    def Shift(dx: Int, dy: Int) -> Point:
+        Point(x: @x + dx, y: @y + dy)
+
+    def DistanceSquared() -> Int:
+        @x * @x + @y * @y
+```
 
 #### Go-style Struct Embedding & Promotion
 - Structs can embed other structs anonymously by listing their type name in the struct body.

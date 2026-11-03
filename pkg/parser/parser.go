@@ -198,6 +198,12 @@ func (p *Parser) parseStmt() ast.Stmt {
 		} else {
 			res = p.parseExprStmt()
 		}
+	case lexer.TokenAt:
+		if p.isAtMemberAssignOnCurrentLine() {
+			res = p.parseAtMemberAssignStmt()
+		} else {
+			res = p.parseExprStmt()
+		}
 	case lexer.TokenIdent:
 		// Check for unpacked assignment without paren: h, ...t = expr
 		if p.peekTokenIs(lexer.TokenComma) && p.hasAssignOnCurrentLine() {
@@ -1132,6 +1138,43 @@ func (p *Parser) isMemberAssignOnCurrentLine() bool {
 	return strings.HasPrefix(afterIdent, "=") && !strings.HasPrefix(afterIdent, "==") && !strings.HasPrefix(afterIdent, "=>") && !strings.HasPrefix(afterIdent, "=~")
 }
 
+func (p *Parser) isAtMemberAssignOnCurrentLine() bool {
+	if p.peekToken.Line != p.curToken.Line || p.peekToken.Col != p.curToken.Col+1 {
+		return false
+	}
+	if !p.peekTokenIs(lexer.TokenIdent) {
+		return false
+	}
+	rest := strings.TrimSpace(p.l.PeekRestOfLine())
+	return strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") && !strings.HasPrefix(rest, "=>") && !strings.HasPrefix(rest, "=~")
+}
+
+func (p *Parser) parseAtMemberAssignStmt() *ast.MemberAssignStmt {
+	pos := p.curPos()
+	if p.peekToken.Line != p.curToken.Line || p.peekToken.Col != p.curToken.Col+1 {
+		p.addError(p.curToken.Line, p.curToken.Col, "whitespace not allowed between '@' and identifier")
+		return nil
+	}
+	p.nextToken() // advance to member ident
+	if !p.curTokenIs(lexer.TokenIdent) {
+		p.addError(p.curToken.Line, p.curToken.Col, "expected identifier immediately after '@', got %s", lexer.FormatToken(p.curToken))
+		return nil
+	}
+	member := p.curToken.Literal
+	if !p.expectPeek(lexer.TokenAssign) {
+		return nil
+	}
+	p.nextToken() // consume '='
+	val := p.parseExpr(PREC_LOWEST)
+	p.consumeStmtEnd()
+	return &ast.MemberAssignStmt{
+		Position: pos,
+		Target:   &ast.Identifier{Position: pos, Name: "self"},
+		Member:   member,
+		Value:    val,
+	}
+}
+
 func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
 	pos := p.curPos()
 	target := &ast.Identifier{Position: pos, Name: p.curToken.Literal}
@@ -1441,7 +1484,7 @@ func (p *Parser) canStartArgument() bool {
 	case lexer.TokenMinus, lexer.TokenPlus:
 		return p.isUnaryMinusOrPlusArg()
 	case lexer.TokenIdent, lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenBool, lexer.TokenNil, lexer.TokenRegex,
-		lexer.TokenLBrace, lexer.TokenMatch, lexer.TokenForce:
+		lexer.TokenLBrace, lexer.TokenMatch, lexer.TokenForce, lexer.TokenAt:
 		return true
 	default:
 		return false
@@ -1466,6 +1509,22 @@ func (p *Parser) parseCallArgumentsWithoutParens() []ast.Expr {
 func (p *Parser) parsePrefix() ast.Expr {
 	pos := p.curPos()
 	switch p.curToken.Type {
+	case lexer.TokenAt:
+		if p.peekToken.Line != p.curToken.Line || p.peekToken.Col != p.curToken.Col+1 {
+			p.addError(p.curToken.Line, p.curToken.Col, "whitespace not allowed between '@' and identifier")
+			return nil
+		}
+		p.nextToken() // advance to member identifier
+		if !p.curTokenIs(lexer.TokenIdent) {
+			p.addError(p.curToken.Line, p.curToken.Col, "expected identifier immediately after '@', got %s", lexer.FormatToken(p.curToken))
+			return nil
+		}
+		memberName := p.curToken.Literal
+		return &ast.MemberAccessExpr{
+			Position: pos,
+			Target:   &ast.Identifier{Position: pos, Name: "self"},
+			Member:   memberName,
+		}
 	case lexer.TokenIdent:
 		if p.peekTokenIs(lexer.TokenColonColon) {
 			modName := p.curToken.Literal
