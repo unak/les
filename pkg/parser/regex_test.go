@@ -134,7 +134,6 @@ match s:
 	}
 }
 
-
 func TestParseMatchCaseParenthesizedRegexAndDictRegexColon(t *testing.T) {
 	input := `
 match s:

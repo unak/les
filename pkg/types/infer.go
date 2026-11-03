@@ -301,7 +301,6 @@ func extractTupleBindingTypes(t Type, numElements int, hasRest bool) ([]Type, Ty
 	return elemUnknowns, restT, false
 }
 
-
 // Scope tracks lexical bindings and detects duplicate declarations in the same scope.
 type Scope struct {
 	parent   *Scope
@@ -869,6 +868,11 @@ func makeBufioModuleType(alias string) *ModuleType {
 			"Writer": writerStruct,
 		},
 	}
+}
+
+var defaultBuiltinModules = map[string]*ModuleType{
+	"io":    makeIOModuleType("io"),
+	"bufio": makeBufioModuleType("bufio"),
 }
 
 func (inf *Inferencer) SetModuleLoader(loader func(path string) (*ModuleType, error)) {
@@ -1677,12 +1681,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		st := &StructType{
-			Name:       s.Name,
-			TypeParams: typeParamDefs,
-			Fields:     make(map[string]Type),
-			FieldOrder: make([]string, 0),
-			Embedded:   make([]*StructType, 0),
-			Methods:    make(map[string]*FuncType),
+			Name:            s.Name,
+			TypeParams:      typeParamDefs,
+			Fields:          make(map[string]Type),
+			FieldOrder:      make([]string, 0),
+			Embedded:        make([]*StructType, 0),
+			DirectFields:    make(map[string]bool),
+			AmbiguousFields: make(map[string]bool),
+			Methods:         make(map[string]*FuncType),
 		}
 		if inf.StmtTypes != nil {
 			inf.StmtTypes[s] = st
@@ -1701,8 +1707,13 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		// Process fields
+		embSeen := make(map[string]bool)
 		for _, f := range s.Fields {
 			if f.IsEmbedded {
+				if embSeen[f.Name] {
+					st.AmbiguousFields[f.Name] = true
+				}
+				embSeen[f.Name] = true
 				embType, err := inf.parseTypeAnnot(f.TypeAnnot)
 				if err != nil {
 					if origScope != nil {
@@ -1721,6 +1732,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				st.Fields[f.Name] = embStruct
 				st.FieldOrder = append(st.FieldOrder, f.Name)
 			} else {
+				st.DirectFields[f.Name] = true
 				fieldType, err := inf.parseTypeAnnot(f.TypeAnnot)
 				if err != nil {
 					if origScope != nil {
@@ -1736,10 +1748,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		// Process methods in two passes:
 		// Pass A: Build and register method signatures on st.Methods so self-calls and forward calls work
 		type methodWorkItem struct {
-			methodDef        *ast.FuncDef
-			methodType       *FuncType
-			methodScope      *Scope
-			declaredRetType  Type
+			methodDef       *ast.FuncDef
+			methodType      *FuncType
+			methodScope     *Scope
+			declaredRetType Type
 		}
 		var methodItems []*methodWorkItem
 
@@ -2013,26 +2025,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		if _, hasInit := st.Methods["init"]; !hasInit {
-			embeddedSet := make(map[string]bool)
-			for _, emb := range st.Embedded {
-				embeddedSet[emb.Name] = true
-			}
 			var initParamTypes []Type
 			minArity := 0
-			for _, fName := range st.FieldOrder {
-				if embeddedSet[fName] {
+			for _, f := range s.Fields {
+				if f.IsEmbedded {
 					continue
 				}
-				initParamTypes = append(initParamTypes, st.Fields[fName])
-				// Check if field has default value
-				hasDefault := false
-				for _, f := range s.Fields {
-					if f.Name == fName && f.DefaultValue != nil {
-						hasDefault = true
-						break
-					}
-				}
-				if !hasDefault {
+				initParamTypes = append(initParamTypes, st.Fields[f.Name])
+				if f.DefaultValue == nil {
 					minArity++
 				}
 			}
@@ -2268,19 +2268,31 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if alias == "" {
 				alias = "io"
 			}
-			inf.modules[alias] = makeIOModuleType(alias)
+			mod := makeIOModuleType(alias)
+			inf.modules[alias] = mod
+			inf.modules["io"] = mod
 		} else if s.Path == "bufio" {
 			alias := s.Alias
 			if alias == "" {
 				alias = "bufio"
 			}
-			inf.modules[alias] = makeBufioModuleType(alias)
+			mod := makeBufioModuleType(alias)
+			inf.modules[alias] = mod
+			inf.modules["bufio"] = mod
 		} else if inf.moduleLoader != nil {
 			mod, err := inf.moduleLoader(s.Path)
 			if err != nil {
 				return err
 			}
-			inf.modules[s.Alias] = mod
+			if s.Alias != "" {
+				inf.modules[s.Alias] = mod
+			}
+			if s.Path != "" {
+				inf.modules[s.Path] = mod
+			}
+			if mod != nil && mod.Name != "" {
+				inf.modules[mod.Name] = mod
+			}
 		}
 		return nil
 	case *ast.ModuleDecl:
@@ -3393,12 +3405,18 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		return TypeUnknown, nil
 	case *ast.ModuleAccessExpr:
 		if mod, ok := inf.modules[e.Module]; ok {
+			if len(e.Member) == 0 {
+				return nil, inf.nodeErr(e, "empty member name in module access")
+			}
+			if e.Member[0] < 'A' || e.Member[0] > 'Z' {
+				return nil, inf.nodeErr(e, "cannot access private member '%s' from module '%s'", e.Member, e.Module)
+			}
 			if t, ok := mod.Exports[e.Member]; ok {
 				return t, nil
 			}
 			return nil, inf.nodeErr(e, "undefined member '%s' in module '%s'", e.Member, e.Module)
 		}
-		return TypeUnknown, nil
+		return nil, inf.nodeErr(e, "module '%s' not found or not imported", e.Module)
 	case *ast.IsExpr:
 		_, err := inf.inferExpr(e.Expr)
 		if err != nil {
@@ -3650,7 +3668,6 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}, nil
 	}
 
-
 	switch annot {
 	case "Int":
 		return TypeInt, nil
@@ -3731,6 +3748,10 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			} else if r == '}' {
 				brDepth--
 			} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+				if i+1 < len(innerRunes) && innerRunes[i+1] == ':' {
+					i++ // skip '::' scope resolution operator
+					continue
+				}
 				colonIdx = i
 				break
 			}
@@ -3754,7 +3775,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		return nil, fmt.Errorf("unknown type '%s'", annot)
 	}
 
-	// Parameterized type annotation: Name[T1, T2] or @mod.Name[T1, T2]
+	// Parameterized type annotation: Name[T1, T2] or mod::Name[T1, T2]
 	if strings.HasSuffix(annot, "]") {
 		depth := 0
 		pDepth := 0
@@ -3793,7 +3814,8 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}
 		if bracketIdx > 0 && depth == 0 && pDepth == 0 && brDepth == 0 {
 			baseStr := strings.TrimSpace(string(runes[:bracketIdx]))
-			if !strings.ContainsAny(baseStr, "->()[]{}:|, \t\n") {
+			baseCheck := strings.ReplaceAll(baseStr, "::", "")
+			if !strings.ContainsAny(baseCheck, "->()[]{}:|, \t\n") {
 				argsStr := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
 				baseType, err := inf.parseTypeAnnot(baseStr)
 				if err != nil {
@@ -3820,28 +3842,33 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}
 	}
 
-	if inf != nil {
-		if strings.HasPrefix(annot, "@") {
-			parts := strings.SplitN(annot[1:], ".", 2)
-			if len(parts) == 2 {
-				modName := parts[0]
-				typeName := parts[1]
-				if mod, ok := inf.modules[modName]; ok {
-					if mod.Types != nil {
-						if t, ok := mod.Types[typeName]; ok {
-							return t, nil
-						}
-					}
-					if t, ok := mod.Exports[typeName]; ok {
+	if strings.Contains(annot, "::") {
+		parts := strings.SplitN(annot, "::", 2)
+		if len(parts) == 2 {
+			modName := parts[0]
+			typeName := parts[1]
+			var mod *ModuleType
+			if inf != nil && inf.modules != nil {
+				mod = inf.modules[modName]
+			}
+			if mod == nil {
+				mod = defaultBuiltinModules[modName]
+			}
+			if mod != nil {
+				if mod.Types != nil {
+					if t, ok := mod.Types[typeName]; ok {
 						return t, nil
 					}
 				}
+				if t, ok := mod.Exports[typeName]; ok {
+					return t, nil
+				}
 			}
 		}
-		if inf.scope != nil {
-			if t, ok := inf.scope.Lookup(annot); ok {
-				return t, nil
-			}
+	}
+	if inf != nil && inf.scope != nil {
+		if t, ok := inf.scope.Lookup(annot); ok {
+			return t, nil
 		}
 	}
 
@@ -4068,6 +4095,10 @@ func (inf *Inferencer) parsePatternTypeAnnot(annot string) (Type, Type, error) {
 			} else if r == '}' {
 				brD--
 			} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+				if i+1 < len(innerRunes) && innerRunes[i+1] == ':' {
+					i++ // skip '::' scope resolution operator
+					continue
+				}
 				colonIdx = i
 				break
 			}
@@ -4470,4 +4501,3 @@ func getFirstParamType(fnT *FuncType) (Type, bool) {
 	}
 	return nil, false
 }
-

@@ -760,6 +760,10 @@ func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings
 				} else if r == '}' {
 					brDepth--
 				} else if r == ':' && pDepth == 0 && bDepth == 0 && brDepth == 0 {
+					if i+1 < len(inner) && inner[i+1] == ':' {
+						i++ // skip '::' scope resolution operator
+						continue
+					}
 					colonIdx = i
 					break
 				}
@@ -773,7 +777,12 @@ func matchTypeStringToField(declaredType types.Type, valTypeStr string, bindings
 		}
 	case *types.StructType:
 		base, args, isGen := parseGenericTypeAnnot(valTypeStr)
-		if isGen && dt.Name == base {
+		baseName := base
+		if strings.Contains(baseName, "::") {
+			parts := strings.Split(baseName, "::")
+			baseName = parts[len(parts)-1]
+		}
+		if isGen && (dt.Name == base || dt.Name == baseName) {
 			for i := 0; i < len(dt.TypeArgs) && i < len(args); i++ {
 				matchTypeStringToField(dt.TypeArgs[i], args[i], bindings)
 			}
@@ -839,6 +848,11 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 	switch v := val.(type) {
 	case *StructDefValue:
 		newDef := *v
+		if v.Origin != nil {
+			newDef.Origin = v.Origin
+		} else {
+			newDef.Origin = v
+		}
 		newDef.TypeArgs = append([]string(nil), typeArgs...)
 		if v.StructType != nil {
 			if st, ok := v.StructType.(*types.StructType); ok && len(st.TypeParams) > 0 {
@@ -882,6 +896,18 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		newIDef := *v
 		newIDef.TypeArgs = append([]string(nil), typeArgs...)
 		return &newIDef, nil
+
+	case *BuiltinFunc:
+		if v.TypeDef != nil {
+			specTypeDef, err := specializeGenericValue(v.TypeDef, typeArgs, env)
+			if err != nil {
+				return nil, err
+			}
+			newBf := *v
+			newBf.TypeDef = specTypeDef
+			return &newBf, nil
+		}
+		return val, nil
 
 	default:
 		return val, nil
@@ -933,7 +959,8 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 		return annot, nil, false
 	}
 	base := strings.TrimSpace(string(runes[:bracketIdx]))
-	if strings.ContainsAny(base, "->()[]{}:|, \t\n") {
+	baseCheck := strings.ReplaceAll(base, "::", "")
+	if strings.ContainsAny(baseCheck, "->()[]{}:|, \t\n") {
 		return annot, nil, false
 	}
 	inner := strings.TrimSpace(string(runes[bracketIdx+1 : len(runes)-1]))
@@ -1259,18 +1286,25 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 
 	case *ast.StructDef:
 		sDef := &StructDefValue{
-			Name:          s.Name,
-			TypeParams:    s.TypeParams,
-			FieldOrder:    make([]string, 0),
-			FieldDefaults: make(map[string]ast.Expr),
-			EmbeddedNames: make([]string, 0),
-			Methods:       make(map[string]*ast.FuncDef),
-			AllMethods:    make(map[string][]*ast.FuncDef),
-			Env:           env,
+			Name:            s.Name,
+			TypeParams:      s.TypeParams,
+			FieldOrder:      make([]string, 0),
+			FieldDefaults:   make(map[string]ast.Expr),
+			EmbeddedNames:   make([]string, 0),
+			DirectFields:    make(map[string]bool),
+			AmbiguousFields: make(map[string]bool),
+			Methods:         make(map[string]*ast.FuncDef),
+			AllMethods:      make(map[string][]*ast.FuncDef),
+			Env:             env,
 		}
 
+		embSeen := make(map[string]bool)
 		for _, f := range s.Fields {
 			if f.IsEmbedded {
+				if embSeen[f.Name] {
+					sDef.AmbiguousFields[f.Name] = true
+				}
+				embSeen[f.Name] = true
 				embName := f.TypeAnnot
 				if embName == "" {
 					embName = f.Name
@@ -1278,6 +1312,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 				sDef.EmbeddedNames = append(sDef.EmbeddedNames, embName)
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
 			} else {
+				sDef.DirectFields[f.Name] = true
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
 				if f.DefaultValue != nil {
 					sDef.FieldDefaults[f.Name] = f.DefaultValue
@@ -1349,6 +1384,28 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			return nil, err
 		}
 		si.Fields[s.Member] = val
+		if si.Def != nil && len(si.Def.EmbeddedNames) > 0 {
+			forced := Force(val)
+			if embInst, ok := forced.(*StructInstance); ok {
+				for _, embName := range si.Def.EmbeddedNames {
+					lookupName := embName
+					if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+						lookupName = base
+					}
+					fName := lookupName
+					if strings.Contains(fName, "::") {
+						parts := strings.Split(fName, "::")
+						fName = parts[len(parts)-1]
+					}
+					if s.Member == fName || s.Member == lookupName {
+						si.Embedded[lookupName] = embInst
+						si.Fields[lookupName] = embInst
+						si.Fields[fName] = embInst
+						break
+					}
+				}
+			}
+		}
 		return nil, nil
 
 	case *ast.ReturnStmt:
@@ -1513,8 +1570,8 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			alias = modVal.Name
 		}
 		// Register module with alias name
-		modVal.Name = alias
-		env.RegisterModule(modVal)
+		// Register module with alias name without mutating cached modVal
+		env.RegisterModule(&ModuleValue{Name: alias, Exports: modVal.Exports})
 		if s.Path != alias {
 			env.RegisterModule(&ModuleValue{Name: s.Path, Exports: modVal.Exports})
 		}
@@ -2110,16 +2167,19 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 	case *ast.ModuleAccessExpr:
 		mod, ok := env.GetModule(e.Module)
 		if !ok {
-			return nil, fmt.Errorf("module '@%s' not found or not imported", e.Module)
+			return nil, fmt.Errorf("module '%s' not found or not imported", e.Module)
+		}
+		if len(e.Member) == 0 {
+			return nil, fmt.Errorf("empty member name in module access")
 		}
 		// Enforce Go-style visibility: member must start with Uppercase letter to be public
 		firstChar := e.Member[0]
 		if firstChar < 'A' || firstChar > 'Z' {
-			return nil, fmt.Errorf("cannot access private member '%s' from module '@%s'", e.Member, e.Module)
+			return nil, fmt.Errorf("cannot access private member '%s' from module '%s'", e.Member, e.Module)
 		}
 		val, ok := mod.Exports[e.Member]
 		if !ok {
-			return nil, fmt.Errorf("member '%s' not exported by module '@%s'", e.Member, e.Module)
+			return nil, fmt.Errorf("member '%s' not exported by module '%s'", e.Member, e.Module)
 		}
 		return val, nil
 
@@ -2246,17 +2306,37 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			} else if ident, isIdent := args[0].(*ast.Identifier); isIdent {
 				if v, ok := env.Get(ident.Name); ok {
 					if evaluated, isEval := PeekEvaluated(v); isEval {
-						if si, ok := evaluated.(*StructInstance); ok && si.Def.Name == sDef.Name {
-							isPotentialBase = true
+						if si, ok := evaluated.(*StructInstance); ok && si.Def != nil {
+							siRoot := si.Def
+							if siRoot.Origin != nil {
+								siRoot = siRoot.Origin
+							}
+							sDefRoot := sDef
+							if sDefRoot.Origin != nil {
+								sDefRoot = sDefRoot.Origin
+							}
+							if siRoot == sDefRoot {
+								isPotentialBase = true
+							}
 						}
 					}
 				}
 			}
 			if isPotentialBase {
 				val := Force(th0)
-				if si, ok := val.(*StructInstance); ok && si.Def.Name == sDef.Name {
-					baseInstance = si
-					argStartIdx = 1
+				if si, ok := val.(*StructInstance); ok && si.Def != nil {
+					siRoot := si.Def
+					if siRoot.Origin != nil {
+						siRoot = siRoot.Origin
+					}
+					sDefRoot := sDef
+					if sDefRoot.Origin != nil {
+						sDefRoot = sDefRoot.Origin
+					}
+					if siRoot == sDefRoot {
+						baseInstance = si
+						argStartIdx = 1
+					}
 				}
 			}
 		}
@@ -2283,10 +2363,33 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			}
 		}
 		for _, embName := range sDef.EmbeddedNames {
-			if fVal, ok := fields[embName]; ok {
+			lookupName := embName
+			if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+				lookupName = base
+			}
+			fName := lookupName
+			if strings.Contains(fName, "::") {
+				parts := strings.Split(fName, "::")
+				fName = parts[len(parts)-1]
+			}
+			if fVal, ok := fields[fName]; ok {
 				forced := Force(fVal)
 				if si, ok := forced.(*StructInstance); ok {
-					embedded[embName] = si
+					embedded[lookupName] = si
+					fields[lookupName] = si
+				}
+			} else if fVal, ok := fields[lookupName]; ok {
+				forced := Force(fVal)
+				if si, ok := forced.(*StructInstance); ok {
+					embedded[lookupName] = si
+					fields[fName] = si
+				}
+			} else if fVal, ok := fields[embName]; ok {
+				forced := Force(fVal)
+				if si, ok := forced.(*StructInstance); ok {
+					embedded[lookupName] = si
+					fields[lookupName] = si
+					fields[fName] = si
 				}
 			}
 		}
@@ -2326,8 +2429,14 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		lookup := embName
 		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
 			isEmbeddedField[base] = true
+			lookup = base
+		}
+		if strings.Contains(lookup, "::") {
+			parts := strings.Split(lookup, "::")
+			isEmbeddedField[parts[len(parts)-1]] = true
 		}
 	}
 
@@ -2348,49 +2457,109 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	// Populate embedded struct instances
 	for _, embName := range sDef.EmbeddedNames {
 		lookupName := embName
-		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+		var embTypeArgs []string
+		if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
 			lookupName = base
+			embTypeArgs = make([]string, len(args))
+			substMap := make(map[string]string)
+			for i, tp := range sDef.TypeParams {
+				if i < len(sDef.TypeArgs) {
+					substMap[tp.Name] = sDef.TypeArgs[i]
+				}
+			}
+			for i, a := range args {
+				embTypeArgs[i] = substituteTypeString(a, substMap)
+			}
 		}
+		fName := lookupName
+		if strings.Contains(fName, "::") {
+			parts := strings.Split(fName, "::")
+			fName = parts[len(parts)-1]
+		}
+
+		searchEnv := env
+		if sDef.Env != nil {
+			searchEnv = sDef.Env
+		}
+		var embDefVal Value
+		var ok bool
+		if strings.Contains(lookupName, "::") {
+			parts := strings.SplitN(lookupName, "::", 2)
+			if mod, modOk := searchEnv.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			} else if mod, modOk := env.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			}
+		} else {
+			embDefVal, ok = searchEnv.Get(lookupName)
+			if !ok && searchEnv != env {
+				embDefVal, ok = env.Get(lookupName)
+			}
+		}
+		var targetDef *StructDefValue
+		if ok {
+			forcedEmb := Force(embDefVal)
+			if bf, isBF := forcedEmb.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+				forcedEmb = Force(bf.TypeDef)
+			}
+			if embDef, ok := forcedEmb.(*StructDefValue); ok {
+				targetDef = embDef
+				if len(embTypeArgs) > 0 {
+					if sp, err := specializeGenericValue(embDef, embTypeArgs, searchEnv); err == nil {
+						if spDef, ok := sp.(*StructDefValue); ok {
+							targetDef = spDef
+						}
+					}
+				}
+			}
+		}
+
+		matchesTargetDef := func(si *StructInstance) bool {
+			if si == nil || si.Def == nil || targetDef == nil {
+				return false
+			}
+			siRoot := si.Def
+			if siRoot.Origin != nil {
+				siRoot = siRoot.Origin
+			}
+			targetRoot := targetDef
+			if targetRoot.Origin != nil {
+				targetRoot = targetRoot.Origin
+			}
+			return siRoot == targetRoot
+		}
+
 		if fVal, ok := fields[lookupName]; ok {
 			forced := Force(fVal)
-			if si, ok := forced.(*StructInstance); ok {
+			if si, ok := forced.(*StructInstance); ok && matchesTargetDef(si) {
 				embedded[lookupName] = si
+				fields[fName] = si
+			}
+		} else if fVal, ok := fields[fName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok && matchesTargetDef(si) {
+				embedded[lookupName] = si
+				fields[lookupName] = si
 			}
 		} else if fVal, ok := fields[embName]; ok {
 			forced := Force(fVal)
-			if si, ok := forced.(*StructInstance); ok {
+			if si, ok := forced.(*StructInstance); ok && matchesTargetDef(si) {
 				embedded[lookupName] = si
+				fields[lookupName] = si
+				fields[fName] = si
 			}
-		} else {
-			var embTypeArgs []string
-			if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
-				lookupName = base
-				embTypeArgs = make([]string, len(args))
-				substMap := make(map[string]string)
-				for i, tp := range sDef.TypeParams {
-					if i < len(sDef.TypeArgs) {
-						substMap[tp.Name] = sDef.TypeArgs[i]
-					}
-				}
-				for i, a := range args {
-					embTypeArgs[i] = substituteTypeString(a, substMap)
-				}
+		}
+		if embedded[lookupName] == nil && targetDef != nil {
+			targetEnv := env
+			if targetDef.Env != nil {
+				targetEnv = targetDef.Env
 			}
-			if embDefVal, ok := env.Get(lookupName); ok {
-				if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
-					targetDef := embDef
-					if len(embTypeArgs) > 0 {
-						if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
-							if spDef, ok := sp.(*StructDefValue); ok {
-								targetDef = spDef
-							}
-						}
-					}
-					subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
-					if err == nil {
-						embedded[lookupName] = subInst
-						fields[lookupName] = subInst
-					}
+			subInst, err := targetEnv.instantiateStruct(targetDef, []ast.Expr{})
+			if err == nil {
+				embedded[lookupName] = subInst
+				fields[lookupName] = subInst
+				if _, exists := fields[fName]; !exists {
+					fields[fName] = subInst
 				}
 			}
 		}
@@ -2436,8 +2605,14 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	isEmbeddedField := make(map[string]bool)
 	for _, embName := range sDef.EmbeddedNames {
 		isEmbeddedField[embName] = true
+		lookup := embName
 		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
 			isEmbeddedField[base] = true
+			lookup = base
+		}
+		if strings.Contains(lookup, "::") {
+			parts := strings.Split(lookup, "::")
+			isEmbeddedField[parts[len(parts)-1]] = true
 		}
 	}
 
@@ -2470,20 +2645,53 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 				embTypeArgs[i] = substituteTypeString(a, substMap)
 			}
 		}
-		if embDefVal, ok := env.Get(lookupName); ok {
-			if embDef, ok := Force(embDefVal).(*StructDefValue); ok {
+		searchEnv := env
+		if sDef.Env != nil {
+			searchEnv = sDef.Env
+		}
+		var embDefVal Value
+		var ok bool
+		if strings.Contains(lookupName, "::") {
+			parts := strings.SplitN(lookupName, "::", 2)
+			if mod, modOk := searchEnv.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			} else if mod, modOk := env.GetModule(parts[0]); modOk {
+				embDefVal, ok = mod.Exports[parts[1]]
+			}
+		} else {
+			embDefVal, ok = searchEnv.Get(lookupName)
+			if !ok && searchEnv != env {
+				embDefVal, ok = env.Get(lookupName)
+			}
+		}
+		if ok {
+			forcedEmb := Force(embDefVal)
+			if bf, isBF := forcedEmb.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+				forcedEmb = Force(bf.TypeDef)
+			}
+			if embDef, ok := forcedEmb.(*StructDefValue); ok {
 				targetDef := embDef
 				if len(embTypeArgs) > 0 {
-					if sp, err := specializeGenericValue(embDef, embTypeArgs, env); err == nil {
+					if sp, err := specializeGenericValue(embDef, embTypeArgs, searchEnv); err == nil {
 						if spDef, ok := sp.(*StructDefValue); ok {
 							targetDef = spDef
 						}
 					}
 				}
-				subInst, err := env.instantiateStruct(targetDef, []ast.Expr{})
+				targetEnv := env
+				if targetDef.Env != nil {
+					targetEnv = targetDef.Env
+				}
+				subInst, err := targetEnv.instantiateStruct(targetDef, []ast.Expr{})
 				if err == nil {
 					embedded[lookupName] = subInst
 					fields[lookupName] = subInst
+					fName := lookupName
+					if strings.Contains(fName, "::") {
+						parts := strings.Split(fName, "::")
+						fName = parts[len(parts)-1]
+					}
+					fields[fName] = subInst
 				}
 			}
 		}
@@ -2599,6 +2807,32 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	_, err := env.invokeClosure(closure, argValues)
 	if err != nil {
 		return nil, err
+	}
+
+	// Synchronize embedded struct instances from fields if updated during init
+	for _, embName := range sDef.EmbeddedNames {
+		lookupName := embName
+		if base, _, isGen := parseGenericTypeAnnot(embName); isGen {
+			lookupName = base
+		}
+		fName := lookupName
+		if strings.Contains(fName, "::") {
+			parts := strings.Split(fName, "::")
+			fName = parts[len(parts)-1]
+		}
+		if fVal, ok := fields[fName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				inst.Embedded[lookupName] = si
+				inst.Fields[lookupName] = si
+			}
+		} else if fVal, ok := fields[lookupName]; ok {
+			forced := Force(fVal)
+			if si, ok := forced.(*StructInstance); ok {
+				inst.Embedded[lookupName] = si
+				inst.Fields[fName] = si
+			}
+		}
 	}
 
 	// 7. Freeze instance
@@ -4938,6 +5172,10 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				} else if r == '}' {
 					brD--
 				} else if r == ':' && pD == 0 && bD == 0 && brD == 0 {
+					if i+1 < len(innerRunes) && innerRunes[i+1] == ':' {
+						i++ // skip '::' scope resolution operator
+						continue
+					}
 					if colonIdx != -1 {
 						return false
 					}
@@ -5045,18 +5283,62 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		baseName, typeArgs, isGeneric := parseGenericTypeAnnot(typeAnnot)
 		if isGeneric {
 			if si, ok := val.(*StructInstance); ok {
-				if si.Def.Name == baseName {
+				var sEnv *Environment
+				if len(optEnv) > 0 && optEnv[0] != nil {
+					sEnv = optEnv[0]
+				} else if si.Def.Env != nil {
+					sEnv = si.Def.Env
+				}
+				matchesStruct := si.Def.Name == baseName
+				if !matchesStruct && strings.Contains(baseName, "::") {
+					parts := strings.SplitN(baseName, "::", 2)
+					if len(parts) == 2 && si.Def.Name == parts[1] {
+						if sEnv != nil {
+							if modVal, found := sEnv.GetModule(parts[0]); found {
+								if expVal, ok := modVal.Exports[parts[1]]; ok {
+									forcedExp := Force(expVal)
+									if bf, isBF := forcedExp.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+										forcedExp = Force(bf.TypeDef)
+									}
+									if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
+										siRoot := si.Def
+										if siRoot != nil && siRoot.Origin != nil {
+											siRoot = siRoot.Origin
+										}
+										if siRoot == structDef {
+											matchesStruct = true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				if matchesStruct {
 					if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
 						inferStructInstanceTypeArgs(si)
 					}
 					if len(si.TypeArgs) == len(typeArgs) {
 						allMatch := true
+						var sInf *types.Inferencer
+						if sEnv != nil && sEnv.Inferencer != nil {
+							if inf, ok := sEnv.Inferencer.(*types.Inferencer); ok {
+								sInf = inf
+							}
+						}
 						for i, ta := range typeArgs {
 							if si.TypeArgs[i] == ta {
 								continue
 							}
-							actualT, err1 := types.ParseTypeAnnot(si.TypeArgs[i])
-							targetT, err2 := types.ParseTypeAnnot(ta)
+							var actualT, targetT types.Type
+							var err1, err2 error
+							if sInf != nil {
+								actualT, err1 = sInf.ParseTypeAnnot(si.TypeArgs[i])
+								targetT, err2 = sInf.ParseTypeAnnot(ta)
+							} else {
+								actualT, err1 = types.ParseTypeAnnot(si.TypeArgs[i])
+								targetT, err2 = types.ParseTypeAnnot(ta)
+							}
 							if err1 == nil && err2 == nil && types.IsAssignableTo(actualT, targetT) {
 								continue
 							}
@@ -5083,8 +5365,8 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			}
 			if searchEnv != nil {
 				var ifaceDef *InterfaceDefValue
-				if strings.HasPrefix(baseName, "@") && strings.Contains(baseName, ".") {
-					parts := strings.SplitN(baseName[1:], ".", 2)
+				if strings.Contains(baseName, "::") {
+					parts := strings.SplitN(baseName, "::", 2)
 					if modVal, found := searchEnv.GetModule(parts[0]); found {
 						if expVal, ok := modVal.Exports[parts[1]]; ok {
 							forcedExp := Force(expVal)
@@ -5139,9 +5421,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		}
 
 		if searchEnv != nil {
-			// Check if typeAnnot is module qualified: @io.Reader or @bufio.Reader
-			if strings.HasPrefix(typeAnnot, "@") && strings.Contains(typeAnnot, ".") {
-				parts := strings.SplitN(typeAnnot[1:], ".", 2)
+			// Check if typeAnnot is module qualified: io::Reader or bufio::Reader
+			if strings.Contains(typeAnnot, "::") {
+				parts := strings.SplitN(typeAnnot, "::", 2)
 				modName := parts[0]
 				typeName := parts[1]
 				if modVal, found := searchEnv.GetModule(modName); found {
@@ -5156,11 +5438,19 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						}
 						if structDef, isStruct := forcedExp.(*StructDefValue); isStruct {
 							if si, ok := val.(*StructInstance); ok && si.Def != nil {
-								if si.Def == structDef {
+								siRoot := si.Def
+								if siRoot.Origin != nil {
+									siRoot = siRoot.Origin
+								}
+								if siRoot == structDef {
 									return true
 								}
 								for _, emb := range si.Embedded {
-									if emb.Def == structDef {
+									embRoot := emb.Def
+									if embRoot != nil && embRoot.Origin != nil {
+										embRoot = embRoot.Origin
+									}
+									if embRoot == structDef {
 										return true
 									}
 								}
@@ -5493,22 +5783,36 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 		if isGen {
 			lookupName = embBase
 		}
+		asIface := func(v Value) *InterfaceDefValue {
+			forced := Force(v)
+			if bf, ok := forced.(*BuiltinFunc); ok && bf.TypeDef != nil {
+				forced = Force(bf.TypeDef)
+			}
+			if id, ok := forced.(*InterfaceDefValue); ok {
+				return id
+			}
+			return nil
+		}
 		if env != nil {
 			// If iface belongs to a specific module, resolve embedded interface from that owning module first
 			if iface.ModuleName != "" {
 				if mod, found := env.GetModule(iface.ModuleName); found {
 					if expVal, exists := mod.Exports[lookupName]; exists {
-						if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
-							embDef = ed
-						}
+						embDef = asIface(expVal)
+					}
+				}
+			}
+			if embDef == nil && strings.Contains(lookupName, "::") {
+				parts := strings.SplitN(lookupName, "::", 2)
+				if mod, found := env.GetModule(parts[0]); found {
+					if expVal, exists := mod.Exports[parts[1]]; exists {
+						embDef = asIface(expVal)
 					}
 				}
 			}
 			if embDef == nil {
 				if embVal, found := env.Get(lookupName); found {
-					if ed, isIface := Force(embVal).(*InterfaceDefValue); isIface {
-						embDef = ed
-					}
+					embDef = asIface(embVal)
 				}
 			}
 			if embDef == nil {
@@ -5516,7 +5820,7 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				for cur := env; cur != nil; cur = cur.parent {
 					for _, mod := range cur.modules {
 						if expVal, exists := mod.Exports[lookupName]; exists {
-							if ed, isIface := Force(expVal).(*InterfaceDefValue); isIface {
+							if ed := asIface(expVal); ed != nil {
 								embDef = ed
 								break
 							}

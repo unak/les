@@ -111,4 +111,3 @@ c = Config()
 		t.Fatalf("expected struct constructor arity error, got nil")
 	}
 }
-

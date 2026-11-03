@@ -72,7 +72,7 @@ func (i *Identifier) node()         {}
 func (i *Identifier) expr()         {}
 func (i *Identifier) Pos() Position { return i.Position }
 
-// ModuleAccessExpr represents @module.Member expression.
+// ModuleAccessExpr represents module::Member expression.
 type ModuleAccessExpr struct {
 	Position Position
 	Module   string
@@ -426,7 +426,7 @@ func (e *ExprStmt) Pos() Position { return e.Position }
 type TypeParam struct {
 	Position   Position
 	Name       string
-	Constraint string // Empty if unconstrained; otherwise type annotation (e.g. "@io.ReadCloser", "Int | Float")
+	Constraint string // Empty if unconstrained; otherwise type annotation (e.g. "io::ReadCloser", "Int | Float")
 }
 
 func (tp TypeParam) Pos() Position { return tp.Position }

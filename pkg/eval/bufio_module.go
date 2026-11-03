@@ -137,7 +137,7 @@ func (a *customWriterAdapter) Write(p []byte) (n int, err error) {
 	return 0, fmt.Errorf("Write returned unexpected type %s", typeNameOf(forced))
 }
 
-// initBufioModule registers the built-in @bufio module.
+// initBufioModule registers the built-in bufio module.
 func (ev *Evaluator) initBufioModule() {
 	bufioExports := make(map[string]Value)
 
@@ -262,7 +262,7 @@ func (ev *Evaluator) initBufioModule() {
 		},
 	}
 
-	// Reader constructor: @bufio.Reader(r)
+	// Reader constructor: bufio::Reader(r)
 	readerConstructor := &BuiltinFunc{
 		Name:    "Reader",
 		TypeDef: readerDef,
@@ -276,7 +276,7 @@ func (ev *Evaluator) initBufioModule() {
 			}
 			target := Force(args[0])
 
-			// A7: If target is already a @bufio.Reader instance, return it directly.
+			// A7: If target is already a bufio::Reader instance, return it directly.
 			if si, ok := target.(*StructInstance); ok && si.Def == readerDef {
 				return si, nil
 			}
@@ -303,7 +303,7 @@ func (ev *Evaluator) initBufioModule() {
 	}
 	bufioExports["Reader"] = readerConstructor
 
-	// Writer constructor: @bufio.Writer(w)
+	// Writer constructor: bufio::Writer(w)
 	writerConstructor := &BuiltinFunc{
 		Name:    "Writer",
 		TypeDef: writerDef,
@@ -317,7 +317,7 @@ func (ev *Evaluator) initBufioModule() {
 			}
 			target := Force(args[0])
 
-			// A7: If target is already a @bufio.Writer instance, return it directly.
+			// A7: If target is already a bufio::Writer instance, return it directly.
 			if si, ok := target.(*StructInstance); ok && si.Def == writerDef {
 				return si, nil
 			}

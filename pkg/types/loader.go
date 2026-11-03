@@ -81,15 +81,21 @@ func (fml *FileModuleLoader) Load(modPath string) (*ModuleType, error) {
 
 	// Collect exported members: uppercase identifiers [A-Z]
 	exports := make(map[string]Type)
+	typesMap := make(map[string]Type)
 	for name, typ := range modInf.scope.bindings {
 		if len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' {
 			exports[name] = typ
+			switch typ.(type) {
+			case *StructType, *InterfaceType:
+				typesMap[name] = typ
+			}
 		}
 	}
 
 	modVal := &ModuleType{
 		Name:    modName,
 		Exports: exports,
+		Types:   typesMap,
 	}
 
 	fml.cache[modPath] = modVal

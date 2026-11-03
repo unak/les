@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"les/pkg/ast"
 	"les/pkg/lexer"
 	"les/pkg/parser"
 )
@@ -452,8 +453,8 @@ func TestModuleTypeChecking(t *testing.T) {
 	// 1. Success matching
 	inputValid := `
 import math
-res: Int = @math.Add(1, 2)
-pi: Float = @math.Pi
+res: Int = math::Add(1, 2)
+pi: Float = math::Pi
 `
 	progValid := parser.NewParser(lexer.NewLexer(inputValid)).ParseProgram()
 	if err := inf.InferProgram(progValid); err != nil {
@@ -463,7 +464,7 @@ pi: Float = @math.Pi
 	// 2. Type mismatch with module return type
 	inputMismatch := `
 import math
-res: String = @math.Add(1, 2)
+res: String = math::Add(1, 2)
 `
 	progMismatch := parser.NewParser(lexer.NewLexer(inputMismatch)).ParseProgram()
 	infMismatch := NewInferencer()
@@ -475,7 +476,7 @@ res: String = @math.Add(1, 2)
 	// 3. Undefined member in module
 	inputUndefined := `
 import math
-res = @math.Subtract(10, 5)
+res = math::Subtract(10, 5)
 `
 	progUndefined := parser.NewParser(lexer.NewLexer(inputUndefined)).ParseProgram()
 	infUndefined := NewInferencer()
@@ -516,8 +517,8 @@ Version = "1.0"
 	mainCode := `
 import calc
 
-ans: Int = @calc.Add(10, 20)
-ver: String = @calc.Version
+ans: Int = calc::Add(10, 20)
+ver: String = calc::Version
 `
 	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
 	if err := inf.InferProgram(prog); err != nil {
@@ -529,7 +530,7 @@ ver: String = @calc.Version
 	infPrivate.SetModuleLoader(loader.Load)
 	privateCode := `
 import calc
-x = @calc.helper(5)
+x = calc::helper(5)
 `
 	progPrivate := parser.NewParser(lexer.NewLexer(privateCode)).ParseProgram()
 	if err := infPrivate.InferProgram(progPrivate); err == nil {
@@ -541,7 +542,7 @@ x = @calc.helper(5)
 	infBuiltins.SetModuleLoader(loader.Load)
 	builtinLeakCode := `
 import calc
-s = @calc.Stdout
+s = calc::Stdout
 `
 	progBuiltins := parser.NewParser(lexer.NewLexer(builtinLeakCode)).ParseProgram()
 	if err := infBuiltins.InferProgram(progBuiltins); err == nil {
@@ -778,15 +779,15 @@ l: String | Nil = Stdin.ReadLine()
 s: String | Nil = Stdin.ReadString(":")
 p: Bytes | Nil = Stdin.Peek(5)
 
-# Test @io module
-rawW: Int = @io.Stdout.Write("raw".Bytes())
-rawR: Bytes | Nil = @io.Stdin.Read(10)
-@io.Stdout.Flush()
-@io.Stderr.Flush()
+# Test io module
+rawW: Int = io::Stdout.Write("raw".Bytes())
+rawR: Bytes | Nil = io::Stdin.Read(10)
+io::Stdout.Flush()
+io::Stderr.Flush()
 
-# Test @bufio module constructors
-br = @bufio.Reader(@io.Stdin)
-bw = @bufio.Writer(@io.Stdout)
+# Test bufio module constructors
+br = bufio::Reader(io::Stdin)
+bw = bufio::Writer(io::Stdout)
 l2: String | Nil = br.ReadLine()
 bw.Flush()
 `
@@ -802,7 +803,7 @@ func TestIOAndBufioTypeAnnotations(t *testing.T) {
 import io
 import bufio
 
-def readAll(r: @io.Reader): Bytes | Nil:
+def readAll(r: io::Reader): Bytes | Nil:
     r.Read(100)
 
 struct CustomReader:
@@ -812,18 +813,32 @@ struct CustomReader:
 cr = CustomReader()
 res: Bytes | Nil = readAll(cr)
 
-# Test @bufio.Reader and @bufio.Writer type annotations
-def wrapBuf(br: @bufio.Reader, bw: @bufio.Writer): ():
+# Test bufio::Reader and bufio::Writer type annotations
+def wrapBuf(br: bufio::Reader, bw: bufio::Writer): ():
     bw.Flush()
 
-# Test assignability of global Stdin/Stdout to @bufio.Reader/@bufio.Writer
-rGlobal: @bufio.Reader = Stdin
-wGlobal: @bufio.Writer = Stdout
+# Test assignability of global Stdin/Stdout to bufio::Reader/bufio::Writer
+rGlobal: bufio::Reader = Stdin
+wGlobal: bufio::Writer = Stdout
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	inf := NewInferencer()
 	if err := inf.InferProgram(prog); err != nil {
 		t.Fatalf("type inference error for qualified type annotations: %v", err)
+	}
+
+	// Verify module type inside dictionary type annotations and patterns
+	tVal, errVal := inf.ParseTypeAnnot("{String: io::Reader}")
+	if errVal != nil || tVal == nil {
+		t.Fatalf("failed to parse {String: io::Reader}: %v", errVal)
+	}
+	tKey, errKey := inf.ParseTypeAnnot("{io::Reader: String}")
+	if errKey != nil || tKey == nil {
+		t.Fatalf("failed to parse {io::Reader: String}: %v", errKey)
+	}
+	_, _, errPat := inf.ParsePatternTypeAnnot("{io::Reader: _}")
+	if errPat != nil {
+		t.Fatalf("failed to parse pattern {io::Reader: _}: %v", errPat)
 	}
 }
 
@@ -843,12 +858,12 @@ def Add(a: Int, b: Int): Int:
 	inf := NewInferencer()
 	inf.SetModuleLoader(loader.Load)
 
-	// An annotation referencing @math.Add should be the function type (Int, Int) -> Int,
+	// An annotation referencing math::Add should be the function type (Int, Int) -> Int,
 	// NOT unwrapped to its return type Int!
 	testCode := `
 import math
 
-fn: @math.Add = @math.Add
+fn: math::Add = math::Add
 res: Int = fn(10, 20)
 `
 	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
@@ -856,35 +871,35 @@ res: Int = fn(10, 20)
 		t.Fatalf("unexpected type error when using exported function type annotation: %v", err)
 	}
 
-	// Verify that annotating an Int with @math.Add fails because @math.Add is a function type, not Int
+	// Verify that annotating an Int with math::Add fails because math::Add is a function type, not Int
 	testMismatchCode := `
 import math
 
-notInt: @math.Add = 42
+notInt: math::Add = 42
 `
 	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
 	infMismatch := NewInferencer()
 	infMismatch.SetModuleLoader(loader.Load)
 	if err := infMismatch.InferProgram(progMismatch); err == nil {
-		t.Fatalf("expected type mismatch annotating Int with @math.Add, but got nil")
+		t.Fatalf("expected type mismatch annotating Int with math::Add, but got nil")
 	}
 }
 
 func TestBuiltinModuleTypeAnnotationsWithoutImport(t *testing.T) {
 	inf := NewInferencer()
 	testCode := `
-def readStream(r: @bufio.Reader): String | Nil:
+def readStream(r: bufio::Reader): String | Nil:
     r.ReadLine()
 
 res: String | Nil = readStream(Stdin)
 `
 	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
 	if err := inf.InferProgram(prog); err != nil {
-		t.Fatalf("unexpected type error when using @bufio.Reader without import: %v", err)
+		t.Fatalf("unexpected type error when using bufio::Reader without import: %v", err)
 	}
 
 	testMismatchCode := `
-def readStream(r: @bufio.Reader): String | Nil:
+def readStream(r: bufio::Reader): String | Nil:
     r.ReadLine()
 
 bad: String | Nil = readStream(Stdout)
@@ -892,7 +907,7 @@ bad: String | Nil = readStream(Stdout)
 	inf2 := NewInferencer()
 	progMismatch := parser.NewParser(lexer.NewLexer(testMismatchCode)).ParseProgram()
 	if err := inf2.InferProgram(progMismatch); err == nil {
-		t.Fatalf("expected type error passing Stdout to @bufio.Reader parameter, got nil")
+		t.Fatalf("expected type error passing Stdout to bufio::Reader parameter, got nil")
 	}
 }
 
@@ -1095,7 +1110,6 @@ d: {String: Int} = {"a": get_val(42)}
 		t.Fatalf("unexpected type error assigning Unknown-valued dict to typed dict: %v", err)
 	}
 
-
 	// 14. IsAssignableTo with TypeUnknown:
 	emptyDict := &DictType{Key: TypeUnknown, Value: TypeUnknown}
 	intDict := &DictType{Key: TypeString, Value: TypeInt}
@@ -1206,8 +1220,8 @@ func TestUnknownTypeAnnotationError(t *testing.T) {
 		},
 		{
 			name:        "module type unknown",
-			code:        `x: @unknownmod.Type = 1`,
-			expectedErr: "unknown type '@unknownmod.Type'",
+			code:        `x: unknownmod::Type = 1`,
+			expectedErr: "unknown type 'unknownmod::Type'",
 		},
 		{
 			name:        "prohibit Any type annotation",
@@ -1238,7 +1252,6 @@ match 1:
 			expectedErr: "unknown type 'Unknown'",
 		},
 	}
-
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2225,5 +2238,210 @@ abs_val = get_num(true).Abs()
 	expectedUnion := NewUnionType(TypeInt, TypeFloat)
 	if absT, ok := uInf.scope.Lookup("abs_val"); !ok || !absT.Equals(expectedUnion) {
 		t.Errorf("expected abs_val to be Int | Float, got %v", absT)
+	}
+}
+
+func TestFileModuleCanonicalImportAndTypes(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "les_mod_canonical_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	subDir := filepath.Join(tempDir, "utils")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create sub dir: %v", err)
+	}
+
+	mathCode := `
+module math
+
+struct Point:
+    x: Int
+    y: Int
+
+interface Summer:
+    Sum(): Int
+
+def Add(a: Int, b: Int) -> Int:
+    a + b
+`
+	mathPath := filepath.Join(subDir, "math.les")
+	if err := os.WriteFile(mathPath, []byte(mathCode), 0644); err != nil {
+		t.Fatalf("failed to write math.les: %v", err)
+	}
+
+	loader := NewFileModuleLoader(tempDir)
+
+	// Verify modVal.Types populated
+	modVal, err := loader.Load("utils/math")
+	if err != nil {
+		t.Fatalf("failed to load utils/math: %v", err)
+	}
+	if modVal.Types == nil {
+		t.Fatalf("expected modVal.Types to be non-nil")
+	}
+	if _, ok := modVal.Types["Point"].(*StructType); !ok {
+		t.Errorf("expected modVal.Types[Point] to be *StructType, got %v", modVal.Types["Point"])
+	}
+	if _, ok := modVal.Types["Summer"].(*InterfaceType); !ok {
+		t.Errorf("expected modVal.Types[Summer] to be *InterfaceType, got %v", modVal.Types["Summer"])
+	}
+
+	// Verify import by path registers canonical name "math" in Inferencer
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	mainCode := `
+import "utils/math"
+
+p: math::Point = math::Point(10, 20)
+res: Int = math::Add(p.x, p.y)
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error using canonical module name: %v", err)
+	}
+}
+func TestUnimportedModuleAndEmbeddedModuleTypeChecking(t *testing.T) {
+	// 1. Unimported module expression access should produce a static type error
+	unimportedCode := `
+x = nonexistent_mod::Foo()
+`
+	uProg := parser.NewParser(lexer.NewLexer(unimportedCode)).ParseProgram()
+	uInf := NewInferencer()
+	err := uInf.InferProgram(uProg)
+	if err == nil {
+		t.Fatalf("expected type error accessing unimported module, got nil")
+	}
+	if !strings.Contains(err.Error(), "module 'nonexistent_mod' not found or not imported") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// 2. Struct embedding a module struct
+	tempDir, err := os.MkdirTemp("", "les_mod_embed_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	baseCode := `
+module base
+
+struct Base:
+    id: Int
+`
+	basePath := filepath.Join(tempDir, "base.les")
+	if err := os.WriteFile(basePath, []byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	loader := NewFileModuleLoader(tempDir)
+	inf := NewInferencer()
+	inf.SetModuleLoader(loader.Load)
+
+	mainCode := `
+import base
+
+struct Child:
+    base::Base
+    name: String
+
+c = Child("hello")
+cId: Int = c.id
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error on embedded module struct: %v", err)
+	}
+}
+func TestBuiltinModuleTypeResolutionInNilInferencer(t *testing.T) {
+	// 1. io::Reader via package-level ParseTypeAnnot (inf == nil)
+	rType, err := ParseTypeAnnot("io::Reader")
+	if err != nil {
+		t.Fatalf("expected io::Reader to be resolved in nil inferencer, got: %v", err)
+	}
+	if iface, ok := rType.(*InterfaceType); !ok || iface.Name != "io.Reader" {
+		t.Fatalf("expected *InterfaceType with name 'io.Reader', got: %v", rType)
+	}
+
+	// 2. bufio::Writer via package-level ParseTypeAnnot
+	wType, err := ParseTypeAnnot("bufio::Writer")
+	if err != nil {
+		t.Fatalf("expected bufio::Writer to be resolved in nil inferencer, got: %v", err)
+	}
+	if st, ok := wType.(*StructType); !ok || st.Name != "bufio.Writer" {
+		t.Fatalf("expected *StructType with name 'bufio.Writer', got: %v", wType)
+	}
+}
+
+func TestAliasedBuiltinModuleRegistersCanonicalPath(t *testing.T) {
+	inf := NewInferencer()
+	code := `
+import io as myio
+import bufio as mybufio
+
+r1: myio::Reader | Nil = nil
+r2: io::Reader | Nil = nil
+w1: mybufio::Writer | Nil = nil
+w2: bufio::Writer | Nil = nil
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("expected both aliased and canonical builtin module access to pass type check, got: %v", err)
+	}
+}
+
+func TestCrossModuleEmbeddedStructLookupAmbiguity(t *testing.T) {
+	s1 := &StructType{
+		Name: "Base",
+		Methods: map[string]*FuncType{
+			"Foo": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+		},
+	}
+	s2 := &StructType{
+		Name: "Base",
+		Methods: map[string]*FuncType{
+			"Foo": {Arg: &TupleType{Elems: []Type{}}, Ret: TypeString},
+		},
+	}
+	parent := &StructType{
+		Name:     "Parent",
+		Embedded: []*StructType{s1, s2},
+	}
+	_, err := parent.LookupMember("Foo")
+	if err == nil {
+		t.Fatalf("expected ambiguity error when embedding two structs named Base with member Foo, got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous selector 'Foo'") {
+		t.Fatalf("expected ambiguous selector error, got: %v", err)
+	}
+}
+
+func TestModuleAccessPrivateAndEmptyStaticCheck(t *testing.T) {
+	inf := NewInferencer()
+	inf.modules["mod"] = &ModuleType{
+		Name: "mod",
+		Exports: map[string]Type{
+			"PublicFunc": &FuncType{Arg: &TupleType{Elems: []Type{}}, Ret: TypeInt},
+		},
+	}
+
+	privExpr := &ast.ModuleAccessExpr{
+		Module: "mod",
+		Member: "privateFunc",
+	}
+	_, err := inf.inferExpr(privExpr)
+	if err == nil || !strings.Contains(err.Error(), "cannot access private member 'privateFunc' from module 'mod'") {
+		t.Fatalf("expected private member error, got: %v", err)
+	}
+
+	emptyExpr := &ast.ModuleAccessExpr{
+		Module: "mod",
+		Member: "",
+	}
+	_, err = inf.inferExpr(emptyExpr)
+	if err == nil || !strings.Contains(err.Error(), "empty member name in module access") {
+		t.Fatalf("expected empty member error, got: %v", err)
 	}
 }

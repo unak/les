@@ -191,7 +191,6 @@ def test(s: String): String:
 	}
 }
 
-
 func TestRegexTupleAndDictPatternInference(t *testing.T) {
 	inf := NewInferencer()
 	nTup, cTup, err := inf.ParsePatternTypeAnnot(`(/^\d+$/, Int)`)

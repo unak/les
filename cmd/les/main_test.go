@@ -242,5 +242,3 @@ func TestErrorReportingFormat(t *testing.T) {
 		t.Fatalf("expected warning %q, got %q", expectedWarn, infWarn.Warnings()[0].String())
 	}
 }
-
-

@@ -138,7 +138,9 @@ func (v IntValue) Equal(other IntValue) bool {
 
 // Cmp compares v and other and returns:
 // -1 if v <  other
-//  0 if v == other
+//
+//	0 if v == other
+//
 // +1 if v >  other
 func (v IntValue) Cmp(other IntValue) int {
 	if v.big == nil && other.big == nil {
@@ -783,16 +785,19 @@ func (m *ModuleValue) String() string { return fmt.Sprintf("<module %s>", m.Name
 
 // StructDefValue represents struct type definition (usable as constructor).
 type StructDefValue struct {
-	Name          string
-	TypeParams    []ast.TypeParam
-	TypeArgs      []string
-	FieldOrder    []string
-	FieldDefaults map[string]ast.Expr
-	EmbeddedNames []string
-	Methods       map[string]*ast.FuncDef
-	AllMethods    map[string][]*ast.FuncDef
-	Env           *Environment
-	StructType    any // Inferred *types.StructType
+	Name            string
+	TypeParams      []ast.TypeParam
+	TypeArgs        []string
+	FieldOrder      []string
+	FieldDefaults   map[string]ast.Expr
+	EmbeddedNames   []string
+	DirectFields    map[string]bool
+	AmbiguousFields map[string]bool
+	Methods         map[string]*ast.FuncDef
+	AllMethods      map[string][]*ast.FuncDef
+	Env             *Environment
+	StructType      any // Inferred *types.StructType
+	Origin          *StructDefValue
 }
 
 func (s *StructDefValue) String() string {
@@ -1026,8 +1031,10 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 		}
 	}
 
-	visited := make(map[string]bool)
-	visited[si.Def.Name] = true
+	visited := make(map[*StructDefValue]bool)
+	if si.Def != nil {
+		visited[si.Def] = true
+	}
 
 	for len(currentLevel) > 0 {
 		type candidate struct {
@@ -1038,10 +1045,12 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 		var nextLevel []*StructInstance
 
 		for _, emb := range currentLevel {
-			if visited[emb.Def.Name] {
-				continue
+			if emb.Def != nil {
+				if visited[emb.Def] {
+					continue
+				}
+				visited[emb.Def] = true
 			}
-			visited[emb.Def.Name] = true
 
 			if emb.Def != nil && emb.Def.AllMethods != nil {
 				for _, m := range emb.Def.AllMethods[name] {
@@ -1087,6 +1096,12 @@ func (si *StructInstance) LookupMethod(name string, arity int) (*Closure, error)
 
 // LookupMember searches for field or method on StructInstance with Go-style promotion rules.
 func (si *StructInstance) LookupMember(name string) (Value, error) {
+	if si.Def != nil && si.Def.AmbiguousFields != nil && si.Def.AmbiguousFields[name] {
+		if si.Def.DirectFields == nil || !si.Def.DirectFields[name] {
+			return nil, fmt.Errorf("ambiguous selector '%s' on type %s", name, si.Def.Name)
+		}
+	}
+
 	// 1. Direct fields
 	if v, ok := si.Fields[name]; ok {
 		return v, nil
@@ -1116,8 +1131,10 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 		}
 	}
 
-	visited := make(map[string]bool)
-	visited[si.Def.Name] = true
+	visited := make(map[*StructDefValue]bool)
+	if si.Def != nil {
+		visited[si.Def] = true
+	}
 
 	for len(currentLevel) > 0 {
 		type candidate struct {
@@ -1128,15 +1145,16 @@ func (si *StructInstance) LookupMember(name string) (Value, error) {
 		var nextLevel []*StructInstance
 
 		for _, emb := range currentLevel {
-			if visited[emb.Def.Name] {
-				continue
+			if emb.Def != nil {
+				if visited[emb.Def] {
+					continue
+				}
+				visited[emb.Def] = true
 			}
-			visited[emb.Def.Name] = true
 
 			if v, ok := emb.Fields[name]; ok {
 				candidates = append(candidates, candidate{val: v, origin: emb.Def.Name})
-			}
-			if emb.Def != nil && emb.Def.AllMethods != nil {
+			} else if emb.Def != nil && emb.Def.AllMethods != nil {
 				if ms, ok := emb.Def.AllMethods[name]; ok && len(ms) > 0 {
 					candidates = append(candidates, candidate{val: emb.makeDispatcher(name, ms), origin: emb.Def.Name})
 				}
@@ -1691,9 +1709,9 @@ func CompileRegex(pattern, flags string) (*RegexValue, error) {
 type MatchValue struct {
 	Target string
 	Regex  *RegexValue
-	Groups []Value // 0: full match, 1..n: capture groups (StringValue or NilValue)
+	Groups []Value          // 0: full match, 1..n: capture groups (StringValue or NilValue)
 	Names  map[string]Value // named capture mapping
-	Spans  [][2]int // rune-based [start, end] for each group, or [-1, -1] if unmatched
+	Spans  [][2]int         // rune-based [start, end] for each group, or [-1, -1] if unmatched
 }
 
 func (mv *MatchValue) String() string {

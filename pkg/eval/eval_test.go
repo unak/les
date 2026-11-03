@@ -2,14 +2,15 @@ package eval
 
 import (
 	"errors"
-	"math"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"les/pkg/ast"
 	"les/pkg/lexer"
 	"les/pkg/parser"
 )
@@ -250,10 +251,10 @@ y = gets()
 		t.Fatalf("expected 'i/o error', got %v", err)
 	}
 
-	// Test shared buffer between gets() and @io.Stdin.Read
+	// Test shared buffer between gets() and io::Stdin.Read
 	codeMixed := `import io
 l = gets()
-rest = @io.Stdin.Read(5)
+rest = io::Stdin.Read(5)
 print l, "|", rest.String()
 `
 	evMixed := NewEvaluator()
@@ -273,10 +274,10 @@ print l, "|", rest.String()
 func TestIOReaderInterface(t *testing.T) {
 	code := `import io
 
-stdin = @io.Stdin
-isReader = stdin is @io.Reader
-isCloser = stdin is @io.Closer
-isReadCloser = stdin is @io.ReadCloser
+stdin = io::Stdin
+isReader = stdin is io::Reader
+isCloser = stdin is io::Closer
+isReadCloser = stdin is io::ReadCloser
 
 print isReader, " ", isCloser, " ", isReadCloser
 `
@@ -439,8 +440,8 @@ func TestModuleAccessEvaluation(t *testing.T) {
 	}
 	ev.globalEnv.RegisterModule(mathMod)
 
-	// 1. Access public member @math.Add
-	code := `print @math.Add(10, 20)`
+	// 1. Access public member math::Add
+	code := `print math::Add(10, 20)`
 	l := lexer.NewLexer(code)
 	p := parser.NewParser(l)
 	prog := p.ParseProgram()
@@ -452,14 +453,14 @@ func TestModuleAccessEvaluation(t *testing.T) {
 		t.Fatalf("expected 30, got %q", out.String())
 	}
 
-	// 2. Access private member @math.sub should fail with error
-	codeErr := `print @math.sub(10, 20)`
+	// 2. Access private member math::sub should fail with error
+	codeErr := `print math::sub(10, 20)`
 	l2 := lexer.NewLexer(codeErr)
 	p2 := parser.NewParser(l2)
 	prog2 := p2.ParseProgram()
 	_, err2 := ev.EvalProgram(prog2)
 	if err2 == nil {
-		t.Fatalf("expected error accessing private member @math.sub, got nil")
+		t.Fatalf("expected error accessing private member math::sub, got nil")
 	}
 }
 
@@ -2110,12 +2111,12 @@ func TestIOAndBufioModules(t *testing.T) {
 import io
 import bufio
 
-# Test @io raw streams
-n1 = @io.Stdout.Write("raw out\n".Bytes())
-n2 = @io.Stderr.Write("raw err\n".Bytes())
+# Test io raw streams
+n1 = io::Stdout.Write("raw out\n".Bytes())
+n2 = io::Stderr.Write("raw err\n".Bytes())
 
-# Test @bufio.Reader constructor on @io.Stdin
-br = @bufio.Reader(@io.Stdin)
+# Test bufio::Reader constructor on io::Stdin
+br = bufio::Reader(io::Stdin)
 line = br.ReadLine()
 
 print line, " (", n1, ", ", n2, ")"
@@ -2158,8 +2159,8 @@ struct MyWriter:
 mr = MyReader()
 mw = MyWriter()
 
-br = @bufio.Reader(mr)
-bw = @bufio.Writer(mw)
+br = bufio::Reader(mr)
+bw = bufio::Writer(mw)
 
 line = br.ReadLine()
 print "Read:", line, "\n"
@@ -2190,7 +2191,7 @@ import bufio
 # Write without explicit Flush
 Stdout.Write("buffered global\n".Bytes())
 
-bw = @bufio.Writer(Stdout)
+bw = bufio::Writer(Stdout)
 bw.Write("user writer\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2214,9 +2215,9 @@ func TestStreamInterleavingOrder(t *testing.T) {
 	code := `
 import io
 
-# Stdout is buffered, @io.Stdout.Write flushes Stdout first (C/Ruby style)
+# Stdout is buffered, io::Stdout.Write flushes Stdout first (C/Ruby style)
 Stdout.Write("first-".Bytes())
-@io.Stdout.Write("second-".Bytes())
+io::Stdout.Write("second-".Bytes())
 Stdout.Write("third\n".Bytes())
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2272,7 +2273,7 @@ struct EmptyReader:
         Bytes("")
 
 er = EmptyReader()
-br = @bufio.Reader(er)
+br = bufio::Reader(er)
 
 # bufio.ReadLine on reader returning only empty Bytes should eventually see ErrNoProgress as EOF -> Nil
 line = br.ReadLine()
@@ -2300,7 +2301,7 @@ struct FailingWriter:
         b.Len() - 1000 # negative write count causes error
 
 fw = FailingWriter()
-bw = @bufio.Writer(fw)
+bw = bufio::Writer(fw)
 bw.Write("trigger".Bytes())! # force demand point so write buffers
 # Program exits, auto-flush triggers failure in Write
 `
@@ -2330,7 +2331,7 @@ struct LoggingWriter:
         b.Len()
 
 lw = LoggingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 
 # Initial write to Stdout (registered before bw)
 Stdout.Write("first\n".Bytes())
@@ -2354,7 +2355,7 @@ func TestRuntimeQualifiedTypeMatching(t *testing.T) {
 	var stdout strings.Builder
 	ev.SetOutput(&stdout)
 
-	// User struct named Reader must NOT match @bufio.Reader by name alone
+	// User struct named Reader must NOT match bufio::Reader by name alone
 	code := `
 import io
 import bufio
@@ -2364,11 +2365,11 @@ struct Reader:
 
 userR = Reader()
 
-print Stdin is @bufio.Reader, "|"
-print Stdout is @bufio.Writer, "|"
-print @io.Stdin is @io.Reader, "|"
-print @io.Stdout is @io.Writer, "|"
-print userR is @bufio.Reader # must be false (different identity)
+print Stdin is bufio::Reader, "|"
+print Stdout is bufio::Writer, "|"
+print io::Stdin is io::Reader, "|"
+print io::Stdout is io::Writer, "|"
+print userR is bufio::Reader # must be false (different identity)
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	if _, err := ev.EvalProgram(prog); err != nil {
@@ -2392,7 +2393,7 @@ struct LyingWriter:
         999999 # claims to write way more than len(b)
 
 lw = LyingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 bw.Write("hello".Bytes())!
 bw.Flush()!
 `
@@ -2417,7 +2418,7 @@ struct BadWriter:
         "not an integer"
 
 bw_custom = BadWriter()
-bw = @bufio.Writer(bw_custom)
+bw = bufio::Writer(bw_custom)
 bw.Write("hello".Bytes())!
 bw.Flush()!
 `
@@ -2440,7 +2441,7 @@ import bufio
 import io
 
 def Greet(name: String): String:
-    bw = @bufio.Writer(@io.Stdout)
+    bw = bufio::Writer(io::Stdout)
     bw.Write("greeting: ".Bytes())!
     bw.Flush()!
     name
@@ -2459,7 +2460,7 @@ def Greet(name: String): String:
 	mainCode := `
 import helper
 
-msg = @helper.Greet("Les")
+msg = helper::Greet("Les")
 print msg
 `
 	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
@@ -2483,7 +2484,7 @@ struct ExitingWriter:
         exit(42)
 
 ew = ExitingWriter()
-bw = @bufio.Writer(ew)
+bw = bufio::Writer(ew)
 bw.Write("trigger exit".Bytes())!
 bw.Flush()!
 `
@@ -2526,7 +2527,7 @@ def UseStdout(): String:
 import mod
 
 Stdout = 12345
-res = @mod.UseStdout()
+res = mod::UseStdout()
 print res
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2564,7 +2565,7 @@ def Inspect(): String:
 	callerCode := `
 import modinfo
 
-info = @modinfo.Inspect()
+info = modinfo::Inspect()
 print info, "|", scriptName
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2598,14 +2599,14 @@ interface Reader:
 	fml := NewFileModuleLoader(tempDir)
 	ev.SetFileModuleLoader(fml)
 
-	// Even though localmod has a different Reader, @io.Stdin is @io.ReadCloser should resolve
+	// Even though localmod has a different Reader, io::Stdin is io::ReadCloser should resolve
 	// ReadCloser's embedded Reader from the owning 'io' module, NOT localmod!
 	callerCode := `
 import io
 import localmod
 
-stdin = @io.Stdin
-isRC = stdin is @io.ReadCloser
+stdin = io::Stdin
+isRC = stdin is io::ReadCloser
 print isRC
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2634,7 +2635,7 @@ struct Buffer:
         b.Len()
 
 buf = Buffer(content: Bytes(""))
-bw = @bufio.Writer(buf)
+bw = bufio::Writer(buf)
 bw.Write("stale custom output".Bytes())!
 Stdout.Write("stale stdout output".Bytes())!
 (1 / 0)!
@@ -2676,7 +2677,7 @@ struct LoggingWriter:
         b.Len()
 
 lw = LoggingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 bw.Write("hello".Bytes())!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2729,7 +2730,7 @@ struct ExitingBuffer:
         0
 
 eb = ExitingBuffer()
-bw = @bufio.Writer(eb)
+bw = bufio::Writer(eb)
 bw.Write("trigger exit during flush".Bytes())!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -2760,7 +2761,7 @@ struct LoggingWriter:
         b.Len()
 
 lw = LoggingWriter()
-bw = @bufio.Writer(lw)
+bw = bufio::Writer(lw)
 bw.Write("abandoned".Bytes())!
 (1 / 0)!
 `
@@ -2802,7 +2803,7 @@ struct BrokenBuffer:
         0
 
 bb = BrokenBuffer()
-bw = @bufio.Writer(bb)
+bw = bufio::Writer(bb)
 bw.Write("will fail on flush".Bytes())!
 `
 	prog1 := parser.NewParser(lexer.NewLexer(firstCode)).ParseProgram()
@@ -2838,7 +2839,7 @@ struct EmptyReader:
         Bytes("")
 
 er = EmptyReader()
-br = @bufio.Reader(er)
+br = bufio::Reader(er)
 res = br.Peek(5)!
 print res
 `
@@ -2895,7 +2896,7 @@ struct Implementer:
     def Bar(): Int: 2
 
 impl = Implementer()
-res = impl is @pkg.Outer
+res = impl is pkg::Outer
 print res
 `
 	prog := parser.NewParser(lexer.NewLexer(callerCode)).ParseProgram()
@@ -2955,7 +2956,7 @@ func TestStdoutFlushAndCloseFlushesBuffered(t *testing.T) {
 
 	code := `
 Stdout.Write("buffered content".Bytes())!
-@io.Stdout.Flush()
+io::Stdout.Flush()
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
 	_, err := ev.EvalProgram(prog)
@@ -2963,13 +2964,13 @@ Stdout.Write("buffered content".Bytes())!
 		t.Fatalf("unexpected eval error: %v", err)
 	}
 	if out.String() != "buffered content" {
-		t.Fatalf("expected @io.Stdout.Flush() to flush buffered output, got %q", out.String())
+		t.Fatalf("expected io::Stdout.Flush() to flush buffered output, got %q", out.String())
 	}
 
 	out.Reset()
 	codeClose := `
 Stdout.Write("close content".Bytes())!
-@io.Stdout.Close()
+io::Stdout.Close()
 `
 	progClose := parser.NewParser(lexer.NewLexer(codeClose)).ParseProgram()
 	_, err = ev.EvalProgram(progClose)
@@ -2977,7 +2978,7 @@ Stdout.Write("close content".Bytes())!
 		t.Fatalf("unexpected eval error: %v", err)
 	}
 	if out.String() != "close content" {
-		t.Fatalf("expected @io.Stdout.Close() to flush buffered output, got %q", out.String())
+		t.Fatalf("expected io::Stdout.Close() to flush buffered output, got %q", out.String())
 	}
 }
 
@@ -2987,7 +2988,7 @@ func TestCustomReaderPanicRecovery(t *testing.T) {
 struct PanicReader:
     def Read(self, n: Int):
         1 / 0
-r = @bufio.Reader(PanicReader())
+r = bufio::Reader(PanicReader())
 r.ReadLine()!
 `
 	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
@@ -3006,7 +3007,7 @@ func TestCustomWriterShortWrite(t *testing.T) {
 struct ShortWriter:
     def Write(self, b: Bytes):
         0
-w = @bufio.Writer(ShortWriter())
+w = bufio::Writer(ShortWriter())
 w.Write("test".Bytes())!
 w.Flush()!
 `
@@ -3022,10 +3023,10 @@ func TestStdinReadZeroBytesAndEOF(t *testing.T) {
 	ev.SetInput(strings.NewReader("abc"))
 
 	code := `
-z = @io.Stdin.Read(0)!
-a = @io.Stdin.Read(2)!
-b = @io.Stdin.Read(2)!
-c = @io.Stdin.Read(2)!
+z = io::Stdin.Read(0)!
+a = io::Stdin.Read(2)!
+b = io::Stdin.Read(2)!
+c = io::Stdin.Read(2)!
 if z != Bytes(""):
     1 / 0
 if a != Bytes("ab"):
@@ -3955,7 +3956,7 @@ print sub.BaseVal.Type(), "|"
 print Stdin.ReadLine.Type(), "|"
 print Stdout.Write.Type(), "|"
 print Stderr.Write.Type(), "|"
-print (@bufio.Reader).Type(), "|"
+print (bufio::Reader).Type(), "|"
 print Error.Type(), "|"
 print errObj.Message.Type(), "|"
 print shadowed == 123, "|"
@@ -4695,10 +4696,6 @@ print (ds is Pipeline[String]), "\n"
 	}
 }
 
-
-
-
-
 func TestGenericBoxDictAndIndexing(t *testing.T) {
 	code := `struct Box[T]:
     val: T
@@ -4723,9 +4720,6 @@ res2 = l[idx]`
 		t.Fatalf("unexpected output:\ngot:\n%s\nexpected:\n%s", out, expected)
 	}
 }
-
-
-
 
 func TestGenericBugsFixed(t *testing.T) {
 	code1 := `
@@ -5329,23 +5323,23 @@ func TestEvalParenOmissionUnaryCall(t *testing.T) {
 			expected: "-1",
 		},
 		{
-			name: "print binary minus",
-			code: "a = 10\nb = 3\nprint a - b\n",
+			name:     "print binary minus",
+			code:     "a = 10\nb = 3\nprint a - b\n",
 			expected: "7",
 		},
 		{
-			name: "multiple args with unary",
-			code: "a = 5\nprint a, -1, +2\n",
+			name:     "multiple args with unary",
+			code:     "a = 5\nprint a, -1, +2\n",
 			expected: "5-12",
 		},
 		{
-			name: "call user function with unary minus",
-			code: "def negate(x):\n    return -x\nnegate -5\nprint negate(-5)\n",
+			name:     "call user function with unary minus",
+			code:     "def negate(x):\n    return -x\nnegate -5\nprint negate(-5)\n",
 			expected: "5",
 		},
 		{
-			name: "call user function with unary plus",
-			code: "def add_one(x):\n    return x + 1\nadd_one +9\nprint add_one(+9)\n",
+			name:     "call user function with unary plus",
+			code:     "def add_one(x):\n    return x + 1\nadd_one +9\nprint add_one(+9)\n",
 			expected: "10",
 		},
 	}
@@ -5971,3 +5965,570 @@ print zero.IsNaN(), " ", zero.IsInfinite(), " ", zero.IsFinite()
 	}
 }
 
+func TestModuleDoubleColonScopeAccess(t *testing.T) {
+	ev := NewEvaluator()
+	var out strings.Builder
+	ev.SetOutput(&out)
+	mathExports := map[string]Value{
+		"Add": &BuiltinFunc{
+			Name: "Add",
+			Fn: func(args []Value) (Value, error) {
+				a := Force(args[0]).(IntValue)
+				b := Force(args[1]).(IntValue)
+				return a.Add(b), nil
+			},
+		},
+	}
+	ev.globalEnv.RegisterModule(&ModuleValue{Name: "math", Exports: mathExports})
+
+	// 1. Function call via module::Func(...)
+	codeCall := `print math::Add(10, 20)`
+	progCall := parser.NewParser(lexer.NewLexer(codeCall)).ParseProgram()
+	if _, err := ev.EvalProgram(progCall); err != nil {
+		t.Fatalf("eval module call failed: %v", err)
+	}
+	if strings.TrimSpace(out.String()) != "30" {
+		t.Fatalf("expected 30, got %q", out.String())
+	}
+
+	// 2. Direct paren-omitted call at statement start: math::Add 10, 20
+	codeDirect := `math::Add 10, 20`
+	progDirect := parser.NewParser(lexer.NewLexer(codeDirect)).ParseProgram()
+	val, err := ev.EvalProgram(progDirect)
+	if err != nil {
+		t.Fatalf("eval direct paren-omitted call failed: %v", err)
+	}
+	if v, ok := Force(val).(IntValue); !ok || v != NewIntValue(30) {
+		t.Fatalf("expected 30 from direct call, got %v", val)
+	}
+
+	codeUnknown := `print unknownmod::Foo`
+	progUnknown := parser.NewParser(lexer.NewLexer(codeUnknown)).ParseProgram()
+	if _, err := ev.EvalProgram(progUnknown); err == nil || !strings.Contains(err.Error(), "module 'unknownmod' not found") {
+		t.Fatalf("expected module not found error, got %v", err)
+	}
+
+	codeOld := `print @math.Add(1, 2)`
+	pOld := parser.NewParser(lexer.NewLexer(codeOld))
+	pOld.ParseProgram()
+	if len(pOld.Errors()) == 0 {
+		t.Fatalf("expected parser error on old @math.Add syntax, got none")
+	}
+
+	// Verify generic struct matching with module qualification: val is mod::Struct[T]
+	modBoxCode := `
+struct Box[T]:
+    val: T
+
+def MakeBox[T](x: T) -> Box[T]:
+    Box(val: x)
+`
+	tempDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tempDir, "containers.les"), []byte(modBoxCode), 0644); err != nil {
+		t.Fatalf("failed to write containers.les: %v", err)
+	}
+	evBox := NewEvaluator()
+	evBox.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	codeBoxTest := `
+import containers
+b = containers::Box(42)
+res = b is containers::Box[Int]
+resStr = b is containers::Box[String]
+res
+`
+	progBox := parser.NewParser(lexer.NewLexer(codeBoxTest)).ParseProgram()
+	valBox, errBox := evBox.EvalProgram(progBox)
+	if errBox != nil {
+		t.Fatalf("eval error on generic module struct check: %v", errBox)
+	}
+	forcedVal := Force(valBox)
+	if bVal, ok := forcedVal.(BoolValue); !ok || !bool(bVal) {
+		t.Fatalf("expected b is containers::Box[Int] to be true, got %v", forcedVal)
+	}
+
+	vResStr, ok := evBox.globalEnv.Get("resStr")
+	if !ok {
+		t.Fatalf("expected resStr in globalEnv")
+	}
+	forcedResStr := Force(vResStr)
+	if bVal, ok := forcedResStr.(BoolValue); !ok || bool(bVal) {
+		t.Fatalf("expected b is containers::Box[String] to be false, got %v", forcedResStr)
+	}
+}
+
+func TestEvalEmbeddedModuleTypesAndEmptyMemberGuard(t *testing.T) {
+	// 1. Empty member name guard
+	ev := NewEvaluator()
+	modAccessExpr := &ast.ModuleAccessExpr{
+		Module: "io",
+		Member: "",
+	}
+	_, err := ev.globalEnv.evalExpr(modAccessExpr)
+	if err == nil {
+		t.Fatalf("expected error for empty member name, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty member name") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 2. Struct embedding a module struct at runtime
+	tempDir, err := os.MkdirTemp("", "les_eval_mod_embed_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	baseCode := `
+module base
+
+struct Base:
+    id: Int = 100
+
+    def GetId(self) -> Int:
+        self.id
+`
+	basePath := filepath.Join(tempDir, "base.les")
+	if err := os.WriteFile(basePath, []byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	fml := NewFileModuleLoader(tempDir)
+	evMod := NewEvaluator()
+	evMod.SetModuleLoader(fml.Load)
+
+	mainCode := `
+import base
+
+struct Child:
+    base::Base
+    name: String
+
+c = Child(name: "test")
+cid = c.id
+cmeth = c.GetId()
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	_, err = evMod.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected error evaluating embedded module struct: %v", err)
+	}
+
+	vId, ok := evMod.globalEnv.Get("cid")
+	if !ok || Force(vId) != NewIntValue(100) {
+		t.Fatalf("expected c.id == 100, got %v", vId)
+	}
+	vMeth, ok := evMod.globalEnv.Get("cmeth")
+	if !ok || Force(vMeth) != NewIntValue(100) {
+		t.Fatalf("expected c.GetId() == 100, got %v", vMeth)
+	}
+
+	// 3. Interface embedding a module interface at runtime
+	ifaceCode := `
+interface MyReader:
+    io::Reader
+
+struct SimpleReader:
+    def Read(self, n: Int) -> Bytes | Nil:
+        Bytes("data")
+
+r = SimpleReader()
+res = r is MyReader
+res
+`
+	progIface := parser.NewParser(lexer.NewLexer(ifaceCode)).ParseProgram()
+	valIface, err := ev.EvalProgram(progIface)
+	if err != nil {
+		t.Fatalf("unexpected error checking interface embedding io::Reader: %v", err)
+	}
+	if bVal, ok := Force(valIface).(BoolValue); !ok || !bool(bVal) {
+		t.Fatalf("expected r is MyReader to be true, got %v", valIface)
+	}
+}
+
+func TestGenericModuleTypeArgumentMatchingAndNonGenericStructName(t *testing.T) {
+	tempDir := t.TempDir()
+
+	containersCode := `
+struct Box[T]:
+    val: T
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "containers.les"),
+		[]byte(containersCode), 0644); err != nil {
+		t.Fatalf("failed to write containers.les: %v", err)
+	}
+
+	baseCode := `
+struct Item:
+    name: String
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	testCode := `
+import containers
+import base
+
+struct Item:
+    name: String
+
+struct SimpleReader:
+    def Read(self, n: Int) -> Bytes | Nil:
+        Bytes("data")
+
+r = SimpleReader()
+boxReader = containers::Box(val: r)
+isReaderBox = boxReader is containers::Box[io::Reader]
+
+item = base::Item(name: "gear")
+boxItem = containers::Box(val: item)
+isItemBox = boxItem is containers::Box[base::Item]
+
+isItemDirect = item is base::Item
+isItemUnqualified = item is Item
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	v1, ok := ev.globalEnv.Get("isReaderBox")
+	if !ok || Force(v1) != BoolValue(true) {
+		t.Fatalf("expected isReaderBox to be true, got %v", v1)
+	}
+	v2, ok := ev.globalEnv.Get("isItemBox")
+	if !ok || Force(v2) != BoolValue(true) {
+		t.Fatalf("expected isItemBox to be true, got %v", v2)
+	}
+	v3, ok := ev.globalEnv.Get("isItemDirect")
+	if !ok || Force(v3) != BoolValue(true) {
+		t.Fatalf("expected isItemDirect to be true, got %v", v3)
+	}
+	v4, ok := ev.globalEnv.Get("isItemUnqualified")
+	if !ok || Force(v4) != BoolValue(true) {
+		t.Fatalf("expected isItemUnqualified to be true, got %v", v4)
+	}
+}
+
+func TestDictModuleTypeAndEmbeddedInit(t *testing.T) {
+	tempDir := t.TempDir()
+
+	baseCode := `
+module base
+
+struct Key:
+    id: Int = 1
+
+struct Base:
+    id: Int = 100
+
+    def GetId(self) -> Int:
+        self.id
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to write base.les: %v", err)
+	}
+
+	testCode := `
+import base
+
+struct SimpleReader:
+    def Read(self, n: Int) -> Bytes | Nil:
+        Bytes("data")
+
+r = SimpleReader()
+d1 = {"reader": r}
+isDictReader = d1 is {String: io::Reader}
+
+k = base::Key(id: 1)
+d2 = {k: "val"}
+isDictKey = d2 is {base::Key: String}
+
+struct ChildWithInit:
+    base::Base
+    name: String
+    def init(self, name: String):
+        self.name = name
+
+c = ChildWithInit(name: "child")
+childId = c.id
+childMethod = c.GetId()
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(testCode)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("eval error: %v", err)
+	}
+
+	v1, ok := ev.globalEnv.Get("isDictReader")
+	if !ok || Force(v1) != BoolValue(true) {
+		t.Fatalf("expected isDictReader to be true, got %v", v1)
+	}
+	v2, ok := ev.globalEnv.Get("isDictKey")
+	if !ok || Force(v2) != BoolValue(true) {
+		t.Fatalf("expected isDictKey to be true, got %v", v2)
+	}
+	v3, ok := ev.globalEnv.Get("childId")
+	if !ok || Force(v3) != NewIntValue(100) {
+		t.Fatalf("expected childId to be 100, got %v", v3)
+	}
+	v4, ok := ev.globalEnv.Get("childMethod")
+	if !ok || Force(v4) != NewIntValue(100) {
+		t.Fatalf("expected childMethod to be 100, got %v", v4)
+	}
+}
+
+func TestEmbeddedBuiltinModuleStructAndModuleScopeEmbedding(t *testing.T) {
+	tempDir := t.TempDir()
+	baseCode := `
+struct MyReader:
+    def Read(self, n: Int):
+        return "test data\n".Bytes()
+
+struct Inner:
+    val: Int
+    def getVal(self):
+        return self.val
+
+struct Parent:
+    Inner
+    name: String
+    def getName(self):
+        return self.name
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to create base.les: %v", err)
+	}
+
+	code := `
+import bufio
+import base
+
+struct MyBufReader:
+    bufio::Reader
+    tag: String
+
+mr = base::MyReader()
+br = bufio::Reader(mr)
+my = MyBufReader(br, "tag1")
+line = my.ReadLine()
+
+p = base::Parent(base::Inner(42), "parent")
+pVal = p.getVal()
+pName = p.getName()
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+	v1, ok := ev.globalEnv.Get("line")
+	if !ok || Force(v1) != StringValue("test data") {
+		t.Fatalf("expected line to be 'test data', got %v", v1)
+	}
+	v2, ok := ev.globalEnv.Get("pVal")
+	if !ok || Force(v2) != NewIntValue(42) {
+		t.Fatalf("expected pVal to be 42, got %v", v2)
+	}
+	v3, ok := ev.globalEnv.Get("pName")
+	if !ok || Force(v3) != StringValue("parent") {
+		t.Fatalf("expected pName to be 'parent', got %v", v3)
+	}
+}
+
+func TestCopyUpdateWithEmbeddedModuleStructAndGenericField(t *testing.T) {
+	tempDir := t.TempDir()
+	baseCode := `
+module base
+
+struct Base:
+    id: Int = 100
+
+struct Box[T]:
+    val: T
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to create base.les: %v", err)
+	}
+
+	code := `
+import base
+
+struct Child:
+    base::Base
+    name: String
+
+c1 = Child(name: "first")
+c1Id = c1.id
+c1Name = c1.name
+
+newBase = base::Base(id: 999)
+c2 = Child(c1, Base: newBase, name: "second")
+c2Id = c2.id
+c2Name = c2.name
+
+struct Container[U]:
+    b: base::Box[U]
+
+bx = base::Box(42)
+ct = Container(bx)
+ctVal = ct.b.val
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	if v, ok := ev.globalEnv.Get("c1Id"); !ok || Force(v) !=
+		NewIntValue(100) {
+		t.Fatalf("expected c1Id == 100, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c1Name"); !ok || Force(v) !=
+		StringValue("first") {
+		t.Fatalf("expected c1Name == 'first', got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2Id"); !ok || Force(v) !=
+		NewIntValue(999) {
+		t.Fatalf("expected c2Id == 999, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2Name"); !ok || Force(v) !=
+		StringValue("second") {
+		t.Fatalf("expected c2Name == 'second', got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("ctVal"); !ok || Force(v) !=
+		NewIntValue(42) {
+		t.Fatalf("expected ctVal == 42, got %v", v)
+	}
+}
+
+func TestEmbeddedModuleStructDirectFieldAndInitSync(t *testing.T) {
+	tempDir := t.TempDir()
+	baseCode := `
+module base
+
+struct Base:
+    id: Int = 100
+
+struct Other:
+    tag: String = "other"
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "base.les"),
+		[]byte(baseCode), 0644); err != nil {
+		t.Fatalf("failed to create base.les: %v", err)
+	}
+
+	code := `
+import base
+
+struct ChildNoInit:
+    base::Base
+    name: String
+
+c1 = ChildNoInit(name: "no_init")
+c1BaseId = c1.Base.id
+c1Id = c1.id
+
+struct ChildWithInit:
+    base::Base
+    name: String
+    def init(self, Base: base::Base, name: String):
+        self.Base = Base
+        self.name = name
+
+newB = base::Base(id: 777)
+c2 = ChildWithInit(Base: newB, name: "with_init")
+c2BaseId = c2.Base.id
+c2Id = c2.id
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	_, err := ev.EvalProgram(prog)
+	if err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	if v, ok := ev.globalEnv.Get("c1BaseId"); !ok || Force(v) !=
+		NewIntValue(100) {
+		t.Fatalf("expected c1BaseId == 100, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c1Id"); !ok || Force(v) !=
+		NewIntValue(100) {
+		t.Fatalf("expected c1Id == 100, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2BaseId"); !ok || Force(v) !=
+		NewIntValue(777) {
+		t.Fatalf("expected c2BaseId == 777, got %v", v)
+	}
+	if v, ok := ev.globalEnv.Get("c2Id"); !ok || Force(v) !=
+		NewIntValue(777) {
+		t.Fatalf("expected c2Id == 777, got %v", v)
+	}
+}
+
+func TestEmbeddedModuleStructCrossModuleSameName(t *testing.T) {
+	tempDir := t.TempDir()
+	mod1Code := `
+module mod1
+
+struct Base:
+    def greet(self):
+        "from mod1"
+`
+	mod2Code := `
+module mod2
+
+struct Base:
+    def greet(self):
+        "from mod2"
+`
+	if err := os.WriteFile(filepath.Join(tempDir, "mod1.les"),
+		[]byte(mod1Code), 0644); err != nil {
+		t.Fatalf("failed to create mod1.les: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "mod2.les"),
+		[]byte(mod2Code), 0644); err != nil {
+		t.Fatalf("failed to create mod2.les: %v", err)
+	}
+
+	code := `
+import mod1
+import mod2
+
+struct Multi:
+    mod1::Base
+    mod2::Base
+
+m = Multi()
+res = m.greet()
+print res
+`
+	ev := NewEvaluator()
+	ev.SetFileModuleLoader(NewFileModuleLoader(tempDir))
+	p := parser.NewParser(lexer.NewLexer(code))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	_, err := ev.EvalProgram(prog)
+	if err == nil {
+		t.Fatalf("expected ambiguity error when calling greet() on Multi, got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous selector 'greet'") {
+		t.Fatalf("expected ambiguous selector error, got: %v", err)
+	}
+}

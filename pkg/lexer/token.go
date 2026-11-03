@@ -42,6 +42,7 @@ const (
 	// Punctuation
 	TokenAssign      // =
 	TokenColon       // :
+	TokenColonColon  // ::
 	TokenSemicolon   // ;
 	TokenComma       // ,
 	TokenDot         // .
@@ -58,26 +59,26 @@ const (
 	TokenRBrace      // }
 
 	// Operators
-	TokenPlus    // +
-	TokenMinus   // -
-	TokenStar    // *
-	TokenSlash   // /
-	TokenPercent // %
-	TokenEq      // ==
-	TokenNotEq   // !=
-	TokenLt      // <
-	TokenLte     // <=
-	TokenGt      // >
-	TokenGte     // >=
-	TokenNot       // !
-	TokenAnd         // &&
-	TokenOr          // ||
-	TokenAmpersand   // &
-	TokenTilde       // ~
-	TokenCaret       // ^
-	TokenLShift      // <<
-	TokenRShift      // >>
-	TokenRegexMatch  // =~
+	TokenPlus       // +
+	TokenMinus      // -
+	TokenStar       // *
+	TokenSlash      // /
+	TokenPercent    // %
+	TokenEq         // ==
+	TokenNotEq      // !=
+	TokenLt         // <
+	TokenLte        // <=
+	TokenGt         // >
+	TokenGte        // >=
+	TokenNot        // !
+	TokenAnd        // &&
+	TokenOr         // ||
+	TokenAmpersand  // &
+	TokenTilde      // ~
+	TokenCaret      // ^
+	TokenLShift     // <<
+	TokenRShift     // >>
+	TokenRegexMatch // =~
 )
 
 // Token holds token information.
@@ -150,6 +151,8 @@ func (t TokenType) String() string {
 		return "'='"
 	case TokenColon:
 		return "':'"
+	case TokenColonColon:
+		return "'::'"
 	case TokenSemicolon:
 		return "';'"
 	case TokenComma:
@@ -253,4 +256,3 @@ func FormatToken(tok Token) string {
 		return tok.Type.String()
 	}
 }
-

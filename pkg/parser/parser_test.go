@@ -223,8 +223,8 @@ def Add(a, b):
 }
 
 func TestParseModuleAccessExpr(t *testing.T) {
-	input := `res = @math.Add(1, 2)
-print @math.Pi`
+	input := `res = math::Add(1, 2)
+print math::Pi`
 
 	l := lexer.NewLexer(input)
 	p := NewParser(l)
@@ -251,6 +251,47 @@ print @math.Pi`
 	}
 	if modAccess.Module != "math" || modAccess.Member != "Add" {
 		t.Fatalf("unexpected modAccess: %+v", modAccess)
+	}
+	if modAccess.Position.Col != 7 {
+		t.Fatalf("expected modAccess Position.Column to be 7, got %d", modAccess.Position.Col)
+	}
+
+	// Verify old @mod.Member is rejected
+	errInput := `res = @math.Add(1, 2)`
+	lErr := lexer.NewLexer(errInput)
+	pErr := NewParser(lErr)
+	pErr.ParseProgram()
+	if len(pErr.Errors()) == 0 {
+		t.Fatalf("expected parser error for old @mod.Member syntax, got none")
+	}
+
+	// Verify dict type annotation with module type
+	dictInputs := []string{
+		`d: {String: io::Reader} = {}`,
+		`d: {io::Reader: String} = {}`,
+		`d: {io::Reader: io::Writer} = {}`,
+	}
+	for _, di := range dictInputs {
+		lDict := lexer.NewLexer(di)
+		pDict := NewParser(lDict)
+		pDict.ParseProgram()
+		if len(pDict.Errors()) > 0 {
+			t.Fatalf("expected no parser error for '%s', got: %v", di, pDict.Errors())
+		}
+	}
+
+	// Verify error recovery for non-ident left operand
+	invalidInputs := []string{
+		`x = (1 + 2)::Member`,
+		`y = a::b::c`,
+	}
+	for _, inv := range invalidInputs {
+		lInv := lexer.NewLexer(inv)
+		pInv := NewParser(lInv)
+		pInv.ParseProgram()
+		if len(pInv.Errors()) == 0 {
+			t.Fatalf("expected parser error for '%s', got none", inv)
+		}
 	}
 }
 
@@ -1086,7 +1127,7 @@ func TestNormalizedTypeAnnotationFormatting(t *testing.T) {
 		{`b: (Int, String) = (1, "a")`, `(Int, String)`},
 		{`b: Int | String = 1`, `Int | String`},
 		{`b: (Int) -> String = f`, `(Int) -> String`},
-		{`b: @mod.Type = v`, `@mod.Type`},
+		{`b: mod::Type = v`, `mod::Type`},
 	}
 
 	for _, tt := range tests {
@@ -1963,6 +2004,62 @@ func TestParseIsExprBoolAndEmpty(t *testing.T) {
 	}
 }
 
+func TestParseEmbeddedModuleTypes(t *testing.T) {
+	input := `
+struct MyStruct:
+    io::Reader
 
+interface MyReader:
+    io::Reader
+`
+	prog := NewParser(lexer.NewLexer(input)).ParseProgram()
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
 
+	st, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[0])
+	}
+	if len(st.Fields) != 1 || !st.Fields[0].IsEmbedded {
+		t.Fatalf("expected 1 embedded field, got %+v", st.Fields)
+	}
+	if st.Fields[0].Name != "Reader" || st.Fields[0].TypeAnnot != "io::Reader" {
+		t.Fatalf("unexpected embedded field: %+v", st.Fields[0])
+	}
 
+	iface, ok := prog.Body[1].(*ast.InterfaceDef)
+	if !ok {
+		t.Fatalf("expected InterfaceDef, got %T", prog.Body[1])
+	}
+	if len(iface.Embedded) != 1 || iface.Embedded[0] != "io::Reader" {
+		t.Fatalf("expected 1 embedded interface 'io::Reader', got %+v", iface.Embedded)
+	}
+}
+
+func TestParseImportAsAlias(t *testing.T) {
+	input := `
+import io as myio
+import "math/rand" as r
+import bufio
+`
+	prog := NewParser(lexer.NewLexer(input)).ParseProgram()
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	imp1, ok := prog.Body[0].(*ast.ImportStmt)
+	if !ok || imp1.Path != "io" || imp1.Alias != "myio" {
+		t.Fatalf("unexpected imp1: %+v", prog.Body[0])
+	}
+
+	imp2, ok := prog.Body[1].(*ast.ImportStmt)
+	if !ok || imp2.Path != "math/rand" || imp2.Alias != "r" {
+		t.Fatalf("unexpected imp2: %+v", prog.Body[1])
+	}
+
+	imp3, ok := prog.Body[2].(*ast.ImportStmt)
+	if !ok || imp3.Path != "bufio" || imp3.Alias != "bufio" {
+		t.Fatalf("unexpected imp3: %+v", prog.Body[2])
+	}
+}
