@@ -66,11 +66,12 @@ def safe_divide(a: Int, b: Int): Int | Error:
     else:
         a / b
 
-match safe_divide(10, 0):
+val = safe_divide(10, 0)
+match val:
     case Int:
-        print "Result: ", it, "\n"
+        print "Result: ", val, "\n"
     case Error:
-        print "Error: ", it.Message(), "\n"
+        print "Error: ", val.Message(), "\n"
 ```
 
 ---
