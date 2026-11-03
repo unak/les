@@ -745,11 +745,12 @@ def divide(a: Int, b: Int): Int | Error:
         a / b
 
 # Pattern matching on Union result
-match divide(10, 0):
+res = divide(10, 0)
+match res:
     case Int:
-        print "Success: ", it
+        print "Success: ", res
     case Error:
-        print "Failed: ", it.Message()
+        print "Failed: ", res.Message()
 ```
 
 ### Duck Typing Custom Errors
