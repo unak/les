@@ -256,13 +256,36 @@ print math::Pi`
 		t.Fatalf("expected modAccess Position.Column to be 7, got %d", modAccess.Position.Col)
 	}
 
-	// Verify old @mod.Member is rejected
+	// Verify old @mod.Member is rejected at type check / eval time (or invalid usage)
 	errInput := `res = @math.Add(1, 2)`
 	lErr := lexer.NewLexer(errInput)
 	pErr := NewParser(lErr)
-	pErr.ParseProgram()
-	if len(pErr.Errors()) == 0 {
-		t.Fatalf("expected parser error for old @mod.Member syntax, got none")
+	progErr := pErr.ParseProgram()
+	if len(pErr.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", pErr.Errors())
+	}
+	// Verify that @math.Add parsed into self.math.Add (MemberAccessExpr with target self)
+	varDeclErr, ok := progErr.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected VarDecl, got %T", progErr.Body[0])
+	}
+	callErr, ok := varDeclErr.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected CallExpr, got %T", varDeclErr.Value)
+	}
+	memAccess, ok := callErr.Callee.(*ast.MemberAccessExpr)
+	if !ok {
+		t.Fatalf("expected MemberAccessExpr, got %T", callErr.Callee)
+	}
+	if memAccess.Member != "Add" {
+		t.Fatalf("expected member Add, got %s", memAccess.Member)
+	}
+	targetMem, ok := memAccess.Target.(*ast.MemberAccessExpr)
+	if !ok || targetMem.Member != "math" {
+		t.Fatalf("expected target to be self.math, got %v", memAccess.Target)
+	}
+	if ident, ok := targetMem.Target.(*ast.Identifier); !ok || ident.Name != "self" {
+		t.Fatalf("expected root target to be 'self', got %v", targetMem.Target)
 	}
 
 	// Verify dict type annotation with module type
@@ -2063,3 +2086,193 @@ import bufio
 		t.Fatalf("unexpected imp3: %+v", prog.Body[2])
 	}
 }
+
+func TestParseAtSugarForSelf(t *testing.T) {
+	// 1. Basic field access and method call desugaring
+	input := `
+struct Counter:
+    count: Int
+
+    def init(c: Int):
+        @count = c
+
+    def Inc():
+        @count = @count + 1
+        @report(@count)
+
+    def report(n: Int):
+        print n
+`
+	prog := NewParser(lexer.NewLexer(input)).ParseProgram()
+	if len(prog.Body) != 1 {
+		t.Fatalf("expected 1 StructDef, got %d", len(prog.Body))
+	}
+	sDef, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected *ast.StructDef, got %T", prog.Body[0])
+	}
+
+	// Check init: @count = c desugared to MemberAssignStmt with Target self
+	initMethod := sDef.Methods[0]
+	assignStmt, ok := initMethod.Body[0].(*ast.MemberAssignStmt)
+	if !ok {
+		t.Fatalf("expected *ast.MemberAssignStmt, got %T", initMethod.Body[0])
+	}
+	if target, ok := assignStmt.Target.(*ast.Identifier); !ok || target.Name != "self" {
+		t.Fatalf("expected target 'self', got %v", assignStmt.Target)
+	}
+	if assignStmt.Member != "count" {
+		t.Fatalf("expected member 'count', got %q", assignStmt.Member)
+	}
+
+	// Check Inc: @count = @count + 1 and @report(@count)
+	incMethod := sDef.Methods[1]
+	incAssign, ok := incMethod.Body[0].(*ast.MemberAssignStmt)
+	if !ok {
+		t.Fatalf("expected *ast.MemberAssignStmt, got %T", incMethod.Body[0])
+	}
+	binExpr, ok := incAssign.Value.(*ast.BinaryExpr)
+	if !ok {
+		t.Fatalf("expected BinaryExpr, got %T", incAssign.Value)
+	}
+	atCount, ok := binExpr.Left.(*ast.MemberAccessExpr)
+	if !ok {
+		t.Fatalf("expected *ast.MemberAccessExpr, got %T", binExpr.Left)
+	}
+	if target, ok := atCount.Target.(*ast.Identifier); !ok || target.Name != "self" {
+		t.Fatalf("expected target 'self', got %v", atCount.Target)
+	}
+	if atCount.Member != "count" {
+		t.Fatalf("expected member 'count', got %q", atCount.Member)
+	}
+
+	// 2. Syntax errors: whitespace between @ and ident
+	wsInput := `
+struct Foo:
+    def bar():
+        @ count = 10
+`
+	pWs := NewParser(lexer.NewLexer(wsInput))
+	pWs.ParseProgram()
+	if len(pWs.Errors()) == 0 {
+		t.Fatalf("expected error for whitespace between '@' and ident, got none")
+	}
+	if !strings.Contains(pWs.Errors()[0], "whitespace not allowed between '@' and identifier") {
+		t.Fatalf("expected whitespace error message, got %v", pWs.Errors()[0])
+	}
+
+	// 3. Syntax errors: bare @
+	bareInput := `
+struct Foo:
+    def bar():
+        return @
+`
+	pBare := NewParser(lexer.NewLexer(bareInput))
+	pBare.ParseProgram()
+	if len(pBare.Errors()) == 0 {
+		t.Fatalf("expected error for bare '@', got none")
+	}
+	if !strings.Contains(pBare.Errors()[0], "expected identifier immediately after '@'") {
+		t.Fatalf("expected 'expected identifier immediately after @' error message, got %v", pBare.Errors()[0])
+	}
+
+	// 4. Paren-omitted method calls: @log "hello", @report @count, self.log "world", @add 1, 2
+	parenOmitInput := `
+struct Worker:
+    count: Int
+    def run():
+        @log "hello"
+        @report @count
+        self.log "world"
+        @add 1, 2
+`
+	progParen := NewParser(lexer.NewLexer(parenOmitInput)).ParseProgram()
+	sWorker := progParen.Body[0].(*ast.StructDef)
+	runMethod := sWorker.Methods[0]
+	if len(runMethod.Body) != 4 {
+		t.Fatalf("expected 4 statements in run(), got %d", len(runMethod.Body))
+	}
+	// stmt 0: @log "hello"
+	stmt0, ok := runMethod.Body[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected *ast.ExprStmt, got %T", runMethod.Body[0])
+	}
+	call0, ok := stmt0.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for @log \"hello\", got %T", stmt0.Value)
+	}
+	mem0, ok := call0.Callee.(*ast.MemberAccessExpr)
+	if !ok || mem0.Member != "log" {
+		t.Fatalf("expected callee self.log, got %v", call0.Callee)
+	}
+	if len(call0.Args) != 1 {
+		t.Fatalf("expected 1 arg for @log, got %d", len(call0.Args))
+	}
+
+	// stmt 1: @report @count
+	stmt1 := runMethod.Body[1].(*ast.ExprStmt)
+	call1, ok := stmt1.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for @report @count, got %T", stmt1.Value)
+	}
+	mem1 := call1.Callee.(*ast.MemberAccessExpr)
+	if mem1.Member != "report" {
+		t.Fatalf("expected callee self.report, got %s", mem1.Member)
+	}
+	arg1Mem, ok := call1.Args[0].(*ast.MemberAccessExpr)
+	if !ok || arg1Mem.Member != "count" {
+		t.Fatalf("expected arg self.count, got %v", call1.Args[0])
+	}
+
+	// stmt 2: self.log "world"
+	stmt2 := runMethod.Body[2].(*ast.ExprStmt)
+	call2, ok := stmt2.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for self.log \"world\", got %T", stmt2.Value)
+	}
+	mem2 := call2.Callee.(*ast.MemberAccessExpr)
+	if mem2.Member != "log" {
+		t.Fatalf("expected callee self.log, got %s", mem2.Member)
+	}
+
+	// stmt 3: @add 1, 2
+	stmt3 := runMethod.Body[3].(*ast.ExprStmt)
+	call3, ok := stmt3.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected *ast.CallExpr for @add 1, 2, got %T", stmt3.Value)
+	}
+	if len(call3.Args) != 2 {
+		t.Fatalf("expected 2 args for @add, got %d", len(call3.Args))
+	}
+
+	// 5. Chained access and indexing
+	chainInput := `
+struct Node:
+    next: Node
+    items: [Int]
+    def test():
+        x = @node.next.val
+        y = @items[0]
+        z = @items[1:3]
+`
+	progChain := NewParser(lexer.NewLexer(chainInput)).ParseProgram()
+	sNode := progChain.Body[0].(*ast.StructDef)
+	testMethod := sNode.Methods[0]
+	// x = @node.next.val
+	xDecl := testMethod.Body[0].(*ast.VarDecl)
+	xMem, ok := xDecl.Value.(*ast.MemberAccessExpr)
+	if !ok || xMem.Member != "val" {
+		t.Fatalf("expected .val member access, got %v", xDecl.Value)
+	}
+	// y = @items[0]
+	yDecl := testMethod.Body[1].(*ast.VarDecl)
+	yIdx, ok := yDecl.Value.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected IndexExpr, got %T", yDecl.Value)
+	}
+	itemsMem, ok := yIdx.Target.(*ast.MemberAccessExpr)
+	if !ok || itemsMem.Member != "items" {
+		t.Fatalf("expected target @items, got %v", yIdx.Target)
+	}
+}
+
