@@ -138,9 +138,28 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   def display[T: Show](item: T):
       print item.Inspect()
 
-  def double[T: Numeric](n: T) -> T:
-      n * 2
+  def sum[N: Numeric](a: N, b: N) -> N:
+      a + b
   ```
+- **`Self` Pseudo-Type & Default Type Parameters (`[T = Default]`)**:
+  - Within `interface` and `struct` definitions, `Self` dynamically represents the receiver type in method parameter and return type annotations:
+    ```python
+    interface Cloneable:
+        Clone(): Self
+
+    struct Vec2:
+        x: Int
+        y: Int
+        def Clone() -> Self:
+            Vec2(@x, @y)
+    ```
+  - Type parameters can declare a default type using `[T = Default]` (or `[T: Constraint = Default]`), commonly `[T = Self]` for symmetric operations:
+    ```python
+    interface Addable[T = Self]:
+        +(other: T): Self
+    ```
+  - When an interface with default type parameters is used without explicit type arguments (e.g. `v is Addable` or `[N: Numeric]`), its type parameter automatically defaults to `Self` (the receiver type). Explicit specialization (e.g. `v is Addable[Int]`) overrides the default.
+  - Using `Self` outside `struct` or `interface` definitions (such as in standalone top-level functions) is a compile-time error.
 
 ---
 

@@ -2570,6 +2570,14 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 			p.nextToken() // advance to constraint start
 			tp.Constraint = p.parseTypeAnnotString()
 		}
+		if p.peekTokenIs(lexer.TokenAssign) {
+			p.nextToken() // advance to '='
+			p.nextToken() // advance to default type start
+			tp.Default = p.parseTypeAnnotString()
+			if tp.Default == "" {
+				p.addError(p.curToken.Line, p.curToken.Col, "expected default type after '=' for type parameter '%s'", tp.Name)
+			}
+		}
 		tps = append(tps, tp)
 		if p.peekTokenIs(lexer.TokenComma) {
 			p.nextToken() // advance to ','

@@ -166,32 +166,6 @@ les - arg1 arg2 < script.les
   - Safe navigation: `user?.Profile?.Name` (safely yields `nil` if intermediate receiver is `nil`).
   - Null coalescing: `user?.Name ?? "Guest"` (provides fallback expression when operand is `nil`).
 
-### 4. `Self` Pseudo-Type & Default Type Parameters (`[T = Self]`)
-- **`Self` Pseudo-Type**:
-  - Dynamically refers to the receiver type in `interface` and `struct` method signatures (arguments and return types).
-- **Default Type Parameters**:
-  - Allows interface definitions to provide default type parameters, eliminating boilerplate for symmetric operations:
-    ```python
-    interface Equatable[T = Self]:
-        def ==(other: T) -> Bool
-
-    interface Comparable[T = Self]:
-        Equatable[T]
-        def <(other: T) -> Bool
-
-    interface Numeric[T = Self]:
-        Comparable[T]
-        def +(other: T) -> Self
-        def -(other: T) -> Self
-        def *(other: T) -> Self
-        def /(other: T) -> Self
-        def Int() -> Int
-        def Float() -> Float
-        def Abs() -> Self
-    ```
-  - Unspecialized use (`val is Numeric` or `[N: Numeric]`) automatically defaults `T` to `Self`.
-  - Explicit specialization (`val is Numeric[Int]`) overrides default parameter binding.
-
 ---
 
 ## License

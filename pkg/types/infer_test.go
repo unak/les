@@ -2445,3 +2445,95 @@ func TestModuleAccessPrivateAndEmptyStaticCheck(t *testing.T) {
 		t.Fatalf("expected empty member error, got: %v", err)
 	}
 }
+
+func TestSelfPseudoTypeAndDefaultTypeParamInference(t *testing.T) {
+	code := `
+interface Cloneable:
+    Clone(): Self
+
+interface Addable[T = Self]:
+    +(other: T): Self
+
+struct Vec2:
+    x: Int
+    y: Int
+    def Clone() -> Self:
+        Vec2(@x, @y)
+    def +(other: Self) -> Self:
+        Vec2(@x + other.x, @y + other.y)
+
+struct ScaledVec2:
+    x: Int
+    y: Int
+    def +(scalar: Int) -> Self:
+        ScaledVec2(@x + scalar, @y + scalar)
+
+v1 = Vec2(1, 2)
+v2 = v1.Clone()
+c: Cloneable = v1
+a_self: Addable = v1
+a_int: Addable[Int] = ScaledVec2(1, 2)
+
+def sum[N: Numeric](a: N, b: N) -> N:
+    a + b
+
+def abs_diff[N: Numeric](a: N, b: N) -> N:
+    (a - b).Abs()
+
+s_int = sum(10, 20)
+s_flt = sum(1.5, 2.5)
+d_int = abs_diff(10, 25)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	if v2T, ok := inf.scope.Lookup("v2"); !ok || v2T.String() != "Vec2" {
+		t.Errorf("expected v2 to have type Vec2, got %v", v2T)
+	}
+	if sIntT, ok := inf.scope.Lookup("s_int"); !ok || sIntT != TypeInt {
+		t.Errorf("expected s_int to be Int, got %v", sIntT)
+	}
+	if sFltT, ok := inf.scope.Lookup("s_flt"); !ok || sFltT != TypeFloat {
+		t.Errorf("expected s_flt to be Float, got %v", sFltT)
+	}
+	if dIntT, ok := inf.scope.Lookup("d_int"); !ok || dIntT != TypeInt {
+		t.Errorf("expected d_int to be Int, got %v", dIntT)
+	}
+
+	// Using Self outside struct or interface must fail
+	invalidSelfCodes := []string{
+		"def foo(x: Self) -> Self: x",
+		"x: Self = 42",
+	}
+	for _, bad := range invalidSelfCodes {
+		bProg := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		bInf := NewInferencer()
+		err := bInf.InferProgram(bProg)
+		if err == nil || !strings.Contains(err.Error(), "'Self' type is only valid inside struct or interface definitions") {
+			t.Errorf("expected 'Self' outside struct/interface error for %q, got %v", bad, err)
+		}
+	}
+
+	// Wrong Addable specialization must fail
+	badSpec := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+struct Vec2:
+    x: Int
+    y: Int
+    def +(other: Self) -> Self:
+        Vec2(@x + other.x, @y + other.y)
+
+a_str: Addable[String] = Vec2(1, 2)
+`
+	bsProg := parser.NewParser(lexer.NewLexer(badSpec)).ParseProgram()
+	bsInf := NewInferencer()
+	if err := bsInf.InferProgram(bsProg); err == nil {
+		t.Errorf("expected type mismatch for Addable[String] = Vec2(1, 2), got nil")
+	}
+}
+

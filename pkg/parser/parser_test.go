@@ -2276,3 +2276,59 @@ struct Node:
 	}
 }
 
+func TestParseTypeParamDefaultAndSelf(t *testing.T) {
+	input := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+interface Bounded[T: Numeric = Int, U = Self]:
+    convert(x: T): U
+
+interface Cloneable:
+    Clone(): Self
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("unexpected parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 3 {
+		t.Fatalf("expected 3 statements, got %d", len(prog.Body))
+	}
+
+	iface1, ok := prog.Body[0].(*ast.InterfaceDef)
+	if !ok || iface1.Name != "Addable" {
+		t.Fatalf("expected InterfaceDef Addable, got %+v", prog.Body[0])
+	}
+	if len(iface1.TypeParams) != 1 || iface1.TypeParams[0].Name != "T" || iface1.TypeParams[0].Default != "Self" {
+		t.Fatalf("unexpected TypeParams for Addable: %+v", iface1.TypeParams)
+	}
+	if len(iface1.Methods) != 1 || iface1.Methods[0].ReturnType != "Self" {
+		t.Fatalf("unexpected Methods for Addable: %+v", iface1.Methods)
+	}
+
+	iface2, ok := prog.Body[1].(*ast.InterfaceDef)
+	if !ok || iface2.Name != "Bounded" {
+		t.Fatalf("expected InterfaceDef Bounded, got %+v", prog.Body[1])
+	}
+	if len(iface2.TypeParams) != 2 {
+		t.Fatalf("expected 2 TypeParams for Bounded, got %d", len(iface2.TypeParams))
+	}
+	if iface2.TypeParams[0].Name != "T" || iface2.TypeParams[0].Constraint != "Numeric" || iface2.TypeParams[0].Default != "Int" {
+		t.Fatalf("unexpected TypeParams[0]: %+v", iface2.TypeParams[0])
+	}
+	if iface2.TypeParams[1].Name != "U" || iface2.TypeParams[1].Constraint != "" || iface2.TypeParams[1].Default != "Self" {
+		t.Fatalf("unexpected TypeParams[1]: %+v", iface2.TypeParams[1])
+	}
+
+	iface3, ok := prog.Body[2].(*ast.InterfaceDef)
+	if !ok || iface3.Name != "Cloneable" {
+		t.Fatalf("expected InterfaceDef Cloneable, got %+v", prog.Body[2])
+	}
+	if len(iface3.Methods) != 1 || iface3.Methods[0].Name != "Clone" || iface3.Methods[0].ReturnType != "Self" {
+		t.Fatalf("unexpected Methods for Cloneable: %+v", iface3.Methods)
+	}
+}
+
+

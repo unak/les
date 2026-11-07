@@ -371,7 +371,7 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("Equatable", &InterfaceDefValue{
 		Name: "Equatable",
 		TypeParams: []ast.TypeParam{
-			{Name: "T"},
+			{Name: "T", Default: "Self"},
 		},
 		Methods: map[string]ast.MethodSig{
 			"==": {
@@ -388,7 +388,7 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("Comparable", &InterfaceDefValue{
 		Name: "Comparable",
 		TypeParams: []ast.TypeParam{
-			{Name: "T"},
+			{Name: "T", Default: "Self"},
 		},
 		Embedded: []string{"Equatable[T]"},
 		Methods: map[string]ast.MethodSig{
@@ -432,11 +432,11 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Numeric interface definition: Int(): Int, Float(): Float, Abs(): T, +: T, -: T, *: T, /: T
+	// Built-in Numeric interface definition: Int(): Int, Float(): Float, Abs(): Self, +: Self, -: Self, *: Self, /: Self
 	ev.builtinsEnv.Set("Numeric", &InterfaceDefValue{
 		Name: "Numeric",
 		TypeParams: []ast.TypeParam{
-			{Name: "T"},
+			{Name: "T", Default: "Self"},
 		},
 		Embedded: []string{"Comparable[T]"},
 		Methods: map[string]ast.MethodSig{
@@ -467,35 +467,35 @@ func (ev *Evaluator) registerBuiltins() {
 			"Abs": {
 				Name:       "Abs",
 				Params:     []ast.FuncParam{},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"+": {
 				Name: "+",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"-": {
 				Name: "-",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"*": {
 				Name: "*",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"/": {
 				Name: "/",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 		},
 	})
@@ -973,9 +973,15 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 
 func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string) *InterfaceDefValue {
 	substMap := make(map[string]string)
+	fullArgs := make([]string, len(iface.TypeParams))
 	for i, tp := range iface.TypeParams {
 		if i < len(typeArgs) {
-			substMap[tp.Name] = typeArgs[i]
+			fullArgs[i] = typeArgs[i]
+		} else if tp.Default != "" {
+			fullArgs[i] = substituteTypeString(tp.Default, substMap)
+		}
+		if fullArgs[i] != "" {
+			substMap[tp.Name] = fullArgs[i]
 		}
 	}
 	var newEmbedded []string
@@ -986,7 +992,7 @@ func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string) *Interf
 		Name:       iface.Name,
 		ModuleName: iface.ModuleName,
 		TypeParams: iface.TypeParams,
-		TypeArgs:   append([]string(nil), typeArgs...),
+		TypeArgs:   fullArgs,
 		Embedded:   newEmbedded,
 		Methods:    make(map[string]ast.MethodSig),
 	}
@@ -5569,6 +5575,54 @@ func splitTopLevelCommas(s string) []string {
 }
 
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
+	if len(iface.TypeArgs) == 0 && len(iface.TypeParams) > 0 {
+		allHaveDefault := true
+		for _, tp := range iface.TypeParams {
+			if tp.Default == "" {
+				allHaveDefault = false
+				break
+			}
+		}
+		if allHaveDefault {
+			iface = substituteInterfaceDef(iface, nil)
+		}
+	}
+	selfTypeName := typeNameOf(Force(val))
+	if selfTypeName != "" && selfTypeName != "Unknown" {
+		selfMap := map[string]string{"Self": selfTypeName}
+		var newEmbedded []string
+		for _, emb := range iface.Embedded {
+			newEmbedded = append(newEmbedded, substituteTypeString(emb, selfMap))
+		}
+		var newTypeArgs []string
+		if len(iface.TypeArgs) > 0 {
+			newTypeArgs = make([]string, len(iface.TypeArgs))
+			for i, a := range iface.TypeArgs {
+				newTypeArgs[i] = substituteTypeString(a, selfMap)
+			}
+		}
+		newMethods := make(map[string]ast.MethodSig, len(iface.Methods))
+		for mName, sig := range iface.Methods {
+			newSig := sig
+			newSig.ReturnType = substituteTypeString(sig.ReturnType, selfMap)
+			newParams := make([]ast.FuncParam, len(sig.Params))
+			for i, p := range sig.Params {
+				newP := p
+				newP.TypeAnnot = substituteTypeString(p.TypeAnnot, selfMap)
+				newParams[i] = newP
+			}
+			newSig.Params = newParams
+			newMethods[mName] = newSig
+		}
+		iface = &InterfaceDefValue{
+			Name:       iface.Name,
+			ModuleName: iface.ModuleName,
+			TypeParams: iface.TypeParams,
+			TypeArgs:   newTypeArgs,
+			Embedded:   newEmbedded,
+			Methods:    newMethods,
+		}
+	}
 	hasUnboundTypeParam := func(annot string) bool {
 		if len(iface.TypeArgs) > 0 || len(iface.TypeParams) == 0 {
 			return false

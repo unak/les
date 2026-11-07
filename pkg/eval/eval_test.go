@@ -6738,3 +6738,93 @@ nVal = c.nextVal()
 	}
 }
 
+func TestEvalSelfPseudoTypeAndDefaultTypeParams(t *testing.T) {
+	code := `
+interface Cloneable:
+    Clone(): Self
+
+interface Addable[T = Self]:
+    +(other: T): Self
+
+struct Vec2:
+    x: Int
+    y: Int
+    def Clone() -> Self:
+        Vec2(@x, @y)
+    def +(other: Self) -> Self:
+        Vec2(@x + other.x, @y + other.y)
+
+struct ScaledVec2:
+    x: Int
+    y: Int
+    def +(scalar: Int) -> Self:
+        ScaledVec2(@x + scalar, @y + scalar)
+
+struct FakeClone:
+    x: Int
+    def Clone() -> Int:
+        @x
+
+v = Vec2(3, 4)
+sv = ScaledVec2(3, 4)
+fc = FakeClone(5)
+
+r1 = v is Cloneable
+r2 = fc is Cloneable
+r3 = v is Addable
+r4 = v is Addable[Vec2]
+r5 = v is Addable[Int]
+r6 = sv is Addable
+r7 = sv is Addable[Int]
+
+r8 = 42 is Numeric
+r9 = 3.14 is Numeric
+r10 = 42 is Numeric[Int]
+r11 = 3.14 is Numeric[Int]
+r12 = 3.14 is Numeric[Float]
+
+def sum[N: Numeric](a: N, b: N) -> N:
+    a + b
+
+s1 = sum(10, 20)
+s2 = sum(1.25, 2.75)
+`
+	ev := NewEvaluator()
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	expectedBools := map[string]bool{
+		"r1":  true,
+		"r2":  false,
+		"r3":  true,
+		"r4":  true,
+		"r5":  false,
+		"r6":  false,
+		"r7":  true,
+		"r8":  true,
+		"r9":  true,
+		"r10": true,
+		"r11": false,
+		"r12": true,
+	}
+	for name, exp := range expectedBools {
+		val, ok := ev.globalEnv.Get(name)
+		if !ok {
+			t.Fatalf("missing variable %s", name)
+		}
+		if b, isBool := Force(val).(BoolValue); !isBool || bool(b) != exp {
+			t.Errorf("expected %s == %v, got %v", name, exp, val)
+		}
+	}
+
+	if v, _ := ev.globalEnv.Get("s1"); Force(v).(IntValue) != NewIntValue(30) {
+		t.Errorf("expected s1 == 30, got %v", v)
+	}
+	if v, _ := ev.globalEnv.Get("s2"); Force(v).(FloatValue) != FloatValue(4.0) {
+		t.Errorf("expected s2 == 4.0, got %v", v)
+	}
+}
+
+
