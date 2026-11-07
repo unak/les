@@ -7062,6 +7062,102 @@ c = Container(Tag("box"), 42)
 	}
 }
 
+func TestSelfPseudoTypePass7Eval(t *testing.T) {
+	// 1. Nested generic struct positional construction
+	code1 := `
+struct Box[T]:
+    first: T
+    second: Int
+
+b1 = Box(10, 20)
+b2 = Box(b1, 30)
+b2_first_first = b2.first.first
+b2_first_second = b2.first.second
+b2_second = b2.second
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if n, ok := Force(v).(IntValue); !ok || n != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertInt(ev1, "b2_first_first", 10)
+	assertInt(ev1, "b2_first_second", 20)
+	assertInt(ev1, "b2_second", 30)
+
+	// 2. Method parameter default values referencing self
+	code2 := `
+struct Cell[T]:
+    val: T
+    def dup(other: Self = self) -> Self:
+        other
+    def make_same(other: Self = Cell(self.val)) -> Self:
+        other
+
+c1 = Cell(42)
+c2 = c1.dup()
+c3 = c1.make_same()
+c2_val = c2.val
+c3_val = c3.val
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertInt(ev2, "c2_val", 42)
+	assertInt(ev2, "c3_val", 42)
+
+	// 3. Overloaded operator method runtime interface matching with Self
+	code3 := `
+interface Negatable:
+    -(): Self
+
+interface Sub[T = Self]:
+    -(other: T): T
+
+struct MyNum:
+    val: Int
+    def -() -> Self:
+        MyNum(-self.val)
+    def -(other: Self) -> Self:
+        MyNum(self.val - other.val)
+
+n = MyNum(100)
+is_neg = n is Negatable
+is_sub = n is Sub
+is_sub_mynum = n is Sub[MyNum]
+is_sub_str = n is Sub[String]
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertBool(ev3, "is_neg", true)
+	assertBool(ev3, "is_sub", true)
+	assertBool(ev3, "is_sub_mynum", true)
+	assertBool(ev3, "is_sub_str", false)
+}
+
+
 
 
 

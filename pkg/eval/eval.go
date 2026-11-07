@@ -2368,23 +2368,32 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			}
 			canBeFirstPositional := false
 			if !hasNamedInRest {
-				if initDef, hasInit := sDef.Methods["init"]; hasInit && initDef != nil {
-					maxArity := len(initDef.Params)
-					if len(args) <= maxArity && len(initDef.Params) > 0 {
-						canBeFirstPositional = true
+				var firstExpectedT types.Type
+				maxArity := 0
+				if st, ok := sDef.StructType.(*types.StructType); ok && st != nil {
+					if initFn, hasInit := st.Methods["init"]; hasInit && initFn != nil {
+						maxArity = initFn.MaxArity
+						if tup, ok := initFn.Arg.(*types.TupleType); ok && len(tup.Elems) > 0 {
+							firstExpectedT = tup.Elems[0]
+						}
+					} else {
+						maxArity = len(st.FieldOrder)
+						if len(st.FieldOrder) > 0 {
+							firstExpectedT = st.Fields[st.FieldOrder[0]]
+						}
 					}
+				} else if initDef, hasInit := sDef.Methods["init"]; hasInit && initDef != nil {
+					maxArity = len(initDef.Params)
 				} else {
-					if len(args) <= len(sDef.FieldOrder) && len(sDef.FieldOrder) > 0 {
-						if st, ok := sDef.StructType.(*types.StructType); ok && st != nil {
-							if firstFieldT, exists := st.Fields[sDef.FieldOrder[0]]; exists && firstFieldT != nil {
-								tStr := firstFieldT.String()
-								if strings.Contains(tStr, sDef.Name) || strings.Contains(tStr, "Self") || tStr == "Any" {
-									canBeFirstPositional = true
-								}
-							} else {
-								canBeFirstPositional = true
-							}
-						} else {
+					maxArity = len(sDef.FieldOrder)
+				}
+
+				if len(args) <= maxArity && maxArity > 0 {
+					if firstExpectedT == nil || firstExpectedT == types.TypeUnknown || types.ContainsSelfOrParam(firstExpectedT) {
+						canBeFirstPositional = true
+					} else {
+						tStr := firstExpectedT.String()
+						if strings.Contains(tStr, sDef.Name) || strings.Contains(tStr, "Self") || tStr == "Any" {
 							canBeFirstPositional = true
 						}
 					}
@@ -5918,8 +5927,51 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 						return false
 					}
 				} else {
-					if _, err := si.LookupMethod(mName, expectedCount); err != nil {
+					targetClosure, err := si.LookupMethod(mName, expectedCount)
+					if err != nil {
 						return false
+					}
+					if ft, ok := targetClosure.FuncType.(*types.FuncType); ok && ft != nil {
+						if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil && !hasUnboundTypeParam(sig.ReturnType) {
+							var inf *types.Inferencer
+							if env != nil && env.Inferencer != nil {
+								if i, ok := env.Inferencer.(*types.Inferencer); ok {
+									inf = i
+								}
+							}
+							var expectedRetT types.Type
+							if inf != nil {
+								expectedRetT, _ = inf.ParseTypeAnnot(sig.ReturnType)
+							}
+							if expectedRetT == nil {
+								expectedRetT, _ = types.ParseTypeAnnot(sig.ReturnType)
+							}
+							if expectedRetT != nil && !types.IsAssignableTo(ft.Ret, expectedRetT) {
+								return false
+							}
+						}
+						if env != nil && env.Inferencer != nil {
+							if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+								if srcTup, ok := ft.Arg.(*types.TupleType); ok {
+									paramIdx := 0
+									for _, p := range sig.Params {
+										if p.Name == "self" {
+											continue
+										}
+										if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" && !hasUnboundTypeParam(p.TypeAnnot) {
+											if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
+												if paramIdx < len(srcTup.Elems) {
+													if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {
+														return false
+													}
+												}
+											}
+										}
+										paramIdx++
+									}
+								}
+							}
+						}
 					}
 				}
 			} else {

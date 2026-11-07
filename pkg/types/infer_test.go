@@ -2953,5 +2953,40 @@ def test_node():
 	}
 }
 
+func TestSelfPseudoTypePass7(t *testing.T) {
+	// 1. Nested generic struct positional construction (first field has type parameter T)
+	codeNestedGenericPositional := `
+struct Box[T]:
+    first: T
+    second: Int
+
+def test_nested():
+    b1 = Box(10, 20)
+    b2 = Box(b1, 30)
+    b2
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeNestedGenericPositional)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected nested generic struct positional construction to succeed, got %v", err)
+	}
+
+	// 2. Method parameter default values referencing self, fields, and constructor
+	codeMethodParamDefaults := `
+struct ValueBox[T]:
+    val: T
+    def duplicate(other: Self = self) -> Self:
+        other
+    def make_same(other: Self = ValueBox(self.val)) -> Self:
+        other
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeMethodParamDefaults)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected method parameter default values referencing self and fields to succeed, got %v", err)
+	}
+}
+
+
 
 

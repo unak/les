@@ -931,6 +931,14 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	if si.Def != nil && si.Def.StructType != nil {
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[m.Name]; ok {
+				if len(mType.Overloads) > 0 {
+					for _, ov := range mType.Overloads {
+						if ov.MinArity == len(params) && ov.MaxArity == len(params) {
+							mType = ov
+							break
+						}
+					}
+				}
 				closure.FuncType = mType
 				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
 					bindings := make(map[string]types.Type)

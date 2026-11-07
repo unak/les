@@ -1917,28 +1917,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of struct '%s'", p.Name, m.Name, s.Name)
 				}
 
-				if p.DefaultValue != nil {
-					defT, err := inf.inferExpr(p.DefaultValue)
-					if err != nil {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return err
-					}
-					if pType != TypeUnknown && !IsAssignableTo(defT, pType) {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, pType, defT)
-					}
-				}
-
 				if p.IsVariadic {
 					isVariadic = true
 					callerParamTypes = append(callerParamTypes, pType)
@@ -1984,27 +1962,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					inf.addWarning(m.BlockParam.Pos(), "Unknown type of block parameter '&%s' in method '%s' of struct '%s'", m.BlockParam.Name, m.Name, s.Name)
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
-				if m.BlockParam.DefaultValue != nil {
-					defT, err := inf.inferExpr(m.BlockParam.DefaultValue)
-					if err != nil {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return err
-					}
-					if blockT != TypeUnknown && !IsAssignableTo(defT, blockT) {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return inf.nodeErr(m.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", m.BlockParam.Name, blockT, defT)
-					}
-				}
 				_ = methodScope.Declare(m.BlockParam.Name, blockT)
 			}
 
@@ -2180,6 +2137,64 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					} else {
 						mirrorFn = pm
 					}
+				}
+			}
+
+			paramIdx := 0
+			for _, p := range m.Params {
+				if p.Name == "self" {
+					continue
+				}
+				if p.DefaultValue != nil {
+					defT, err := inf.inferExpr(p.DefaultValue)
+					if err != nil {
+						inf.selfType = prevPassBSelf
+						inf.scope = prevScope
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return err
+					}
+					var pExpected Type = TypeUnknown
+					if tup, ok := item.methodType.Arg.(*TupleType); ok && paramIdx < len(tup.Elems) {
+						pExpected = tup.Elems[paramIdx]
+						if passBSelfType != st {
+							pExpected = ReplaceType(pExpected, st, passBSelfType)
+						}
+					}
+					if pExpected != TypeUnknown && !IsAssignableTo(defT, pExpected) {
+						inf.selfType = prevPassBSelf
+						inf.scope = prevScope
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, pExpected, defT)
+					}
+				}
+				paramIdx++
+			}
+
+			if m.BlockParam != nil && m.BlockParam.DefaultValue != nil {
+				defT, err := inf.inferExpr(m.BlockParam.DefaultValue)
+				if err != nil {
+					inf.selfType = prevPassBSelf
+					inf.scope = prevScope
+					if origScope != nil {
+						inf.scope = origScope
+					}
+					return err
+				}
+				bExpected := item.methodType.BlockParam
+				if passBSelfType != st && bExpected != nil {
+					bExpected = ReplaceType(bExpected, st, passBSelfType)
+				}
+				if bExpected != nil && bExpected != TypeUnknown && !IsAssignableTo(defT, bExpected) {
+					inf.selfType = prevPassBSelf
+					inf.scope = prevScope
+					if origScope != nil {
+						inf.scope = origScope
+					}
+					return inf.nodeErr(m.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", m.BlockParam.Name, bExpected, defT)
 				}
 			}
 
@@ -3173,8 +3188,23 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 									}
 									if len(e.Args) > maxPositional {
 										isCopy = true
-									} else if firstExpectedT != nil && !IsAssignableTo(firstT, firstExpectedT) {
-										isCopy = true
+									} else if firstExpectedT != nil && firstExpectedT != TypeUnknown {
+										testBindings := make(map[string]Type)
+										unifyTypeParams(firstExpectedT, firstT, testBindings)
+										subExpected := Substitute(firstExpectedT, testBindings)
+										if !IsAssignableTo(firstT, subExpected) {
+											isCopy = true
+										} else {
+											for _, tp := range st.TypeParams {
+												if bound, hasB := testBindings[tp.Name]; hasB && tp.Constraint != nil {
+													subC := Substitute(tp.Constraint, testBindings)
+													if !IsAssignableTo(bound, subC) {
+														isCopy = true
+														break
+													}
+												}
+											}
+										}
 									}
 								}
 								if isCopy {
@@ -3268,7 +3298,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 							}
 							if len(e.Args) > maxPositional {
 								isCopyUpdate = true
-							} else if firstExpectedT != nil && !IsAssignableTo(firstT, firstExpectedT) {
+							} else if firstExpectedT != nil && firstExpectedT != TypeUnknown && !IsAssignableTo(firstT, firstExpectedT) {
 								isCopyUpdate = true
 							}
 						}
