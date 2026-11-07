@@ -2987,6 +2987,45 @@ struct ValueBox[T]:
 	}
 }
 
+func TestSelfPseudoTypePass8(t *testing.T) {
+	// 1. Variadic init with Self element type called positionally with struct instances
+	codeVariadicInit := `
+struct Node:
+    id: Int
+    def init(*nodes: Self):
+        self.id = 1
+
+def test_variadic():
+    n1 = Node()
+    n2 = Node(n1, n1)
+    n2
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeVariadicInit)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected variadic init taking Self to succeed, got %v", err)
+	}
+
+	// 2. Generic struct with variadic init taking T
+	codeGenericVariadicInit := `
+struct Group[T]:
+    items: (T, ...)
+    def init(*items: T):
+        self.items = items
+
+def test_group():
+    g1 = Group(1, 2)
+    g2 = Group(g1, g1)
+    g2
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeGenericVariadicInit)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected generic struct with variadic init to succeed, got %v", err)
+	}
+}
+
+
 
 
 

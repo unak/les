@@ -3186,7 +3186,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 											firstExpectedT = st.Fields[st.FieldOrder[0]]
 										}
 									}
-									if len(e.Args) > maxPositional {
+									if maxPositional >= 0 && len(e.Args) > maxPositional {
 										isCopy = true
 									} else if firstExpectedT != nil && firstExpectedT != TypeUnknown {
 										testBindings := make(map[string]Type)
@@ -3296,7 +3296,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 									firstExpectedT = st.Fields[st.FieldOrder[0]]
 								}
 							}
-							if len(e.Args) > maxPositional {
+							if maxPositional >= 0 && len(e.Args) > maxPositional {
 								isCopyUpdate = true
 							} else if firstExpectedT != nil && firstExpectedT != TypeUnknown && !IsAssignableTo(firstT, firstExpectedT) {
 								isCopyUpdate = true

@@ -790,6 +790,7 @@ type StructDefValue struct {
 	TypeArgs        []string
 	FieldOrder      []string
 	FieldDefaults   map[string]ast.Expr
+	FieldTypes      map[string]string
 	EmbeddedNames   []string
 	DirectFields    map[string]bool
 	AmbiguousFields map[string]bool

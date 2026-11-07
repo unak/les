@@ -7157,6 +7157,128 @@ is_sub_str = n is Sub[String]
 	assertBool(ev3, "is_sub_str", false)
 }
 
+func TestSelfPseudoTypePass8Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Variadic init taking Self/T called positionally with struct instances
+	code1 := `
+struct Node:
+    items: ()
+    def init(*nodes: Self):
+        self.items = nodes
+
+n1 = Node()
+n2 = Node(n1, n1)
+len_items = n2.items.Len()
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertInt(ev1, "len_items", 2)
+
+	// 2. Raw Evaluator (sDef.StructType == nil) inferring type params and copy-update
+	code2 := `
+struct Box[T, U = Self]:
+    val: T
+
+struct Point:
+    x: Int
+    y: Int
+
+b = Box(10)
+b_type = b.Type()
+
+p1 = Point(1, 2)
+p2 = Point(p1, y: 100)
+p2_x = p2.x
+p2_y = p2.y
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertString(ev2, "b_type", "Box[Int, Box]")
+	assertInt(ev2, "p2_x", 1)
+	assertInt(ev2, "p2_y", 100)
+
+	// 3. Copy-update of a struct embedding generic struct
+	code3 := `
+struct Meta[T = Self]:
+    tag: String = "default"
+
+struct Wrapper[T]:
+    Meta[Self]
+    val: T
+
+w1 = Wrapper(42)
+w2 = Wrapper(w1, val: 99)
+w2_tag = w2.tag
+w2_val = w2.val
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+	assertString(ev3, "w2_tag", "default")
+	assertInt(ev3, "w2_val", 99)
+
+	// 4. Generic struct instance matching interface with Self
+	code4 := `
+interface Tagged[T, U = Self]:
+    val(): T
+    clone(): U
+
+struct Item[T]:
+    v: T
+    def val() -> T:
+        self.v
+    def clone() -> Self:
+        Item(self.v)
+
+it = Item("apple")
+is_tagged_str = it is Tagged[String]
+is_tagged_int = it is Tagged[Int]
+`
+	ev4 := NewEvaluator()
+	prog4 := parser.NewParser(lexer.NewLexer(code4)).ParseProgram()
+	if _, err := ev4.EvalProgram(prog4); err != nil {
+		t.Fatalf("unexpected eval error in prog4: %v", err)
+	}
+	assertBool(ev4, "is_tagged_str", true)
+	assertBool(ev4, "is_tagged_int", false)
+}
+
+
 
 
 
