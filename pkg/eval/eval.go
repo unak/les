@@ -542,7 +542,7 @@ func valueOrThunkTypeNameWithDepth(val Value, depth int) string {
 	}
 	if thunk, ok := val.(*Thunk); ok {
 		if thunk.InferredType != nil {
-			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown {
+			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown && !types.ContainsSelfOrParam(t) {
 				return t.String()
 			}
 		}
@@ -662,6 +662,51 @@ func typeNameWithDepth(val Value, depth int) string {
 	}
 }
 
+func resolveTypeParamFromEnv(t types.Type, env *Environment, inf *types.Inferencer) types.Type {
+	if t == nil || !types.ContainsSelfOrParam(t) || env == nil {
+		return t
+	}
+	if selfVal, found := env.Get("self"); found && selfVal != nil {
+		forcedSelf := Force(selfVal)
+		if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 && si.Def != nil {
+			bindings := make(map[string]types.Type)
+			for i, tp := range si.Def.TypeParams {
+				if i < len(si.TypeArgs) {
+					var argT types.Type
+					if inf != nil {
+						argT, _ = inf.ParseTypeAnnot(si.TypeArgs[i])
+					}
+					if argT == nil {
+						argT, _ = types.ParseTypeAnnot(si.TypeArgs[i])
+					}
+					if argT != nil {
+						bindings[tp.Name] = argT
+					}
+				}
+			}
+			selfTypeName := fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+			var selfT types.Type
+			if inf != nil {
+				selfT, _ = inf.ParseTypeAnnot(selfTypeName)
+			}
+			if selfT == nil {
+				selfT, _ = types.ParseTypeAnnot(selfTypeName)
+			}
+			if selfT != nil {
+				bindings["Self"] = selfT
+			}
+			if len(bindings) > 0 {
+				subT := types.Substitute(t, bindings)
+				if selfT != nil {
+					subT = types.SubstituteSelf(subT, selfT)
+				}
+				return subT
+			}
+		}
+	}
+	return t
+}
+
 func safeFieldTypeName(val Value) string {
 	if evaluated, ok := PeekEvaluated(val); ok {
 		return typeNameWithDepth(evaluated, 0)
@@ -669,12 +714,44 @@ func safeFieldTypeName(val Value) string {
 	if thunk, ok := val.(*Thunk); ok {
 		if thunk.InferredType != nil {
 			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown {
-				return t.String()
+				if types.ContainsSelfOrParam(t) {
+					var inf *types.Inferencer
+					if thunk.Env != nil && thunk.Env.Inferencer != nil {
+						if i, ok := thunk.Env.Inferencer.(*types.Inferencer); ok {
+							inf = i
+						}
+					}
+					t = resolveTypeParamFromEnv(t, thunk.Env, inf)
+				}
+				if t != nil && t != types.TypeUnknown && !types.ContainsSelfOrParam(t) {
+					return t.String()
+				}
 			}
 		}
 		if thunk.Expr != nil {
 			if litVal, ok := evalLiteral(thunk.Expr); ok {
 				return typeNameWithDepth(litVal, 0)
+			}
+			if id, ok := thunk.Expr.(*ast.Identifier); ok && thunk.Env != nil {
+				if v, found := thunk.Env.Get(id.Name); found && v != nil && v != val {
+					if tName := safeFieldTypeName(v); tName != "" && tName != "Unknown" {
+						return tName
+					}
+				}
+			}
+			if mem, ok := thunk.Expr.(*ast.MemberAccessExpr); ok && thunk.Env != nil {
+				if id, ok := mem.Target.(*ast.Identifier); ok {
+					if objVal, found := thunk.Env.Get(id.Name); found && objVal != nil {
+						forcedObj := Force(objVal)
+						if si, ok := forcedObj.(*StructInstance); ok {
+							if fv, ok := si.Fields[mem.Member]; ok {
+								if tName := safeFieldTypeName(fv); tName != "" && tName != "Unknown" {
+									return tName
+								}
+							}
+						}
+					}
+				}
 			}
 			if tup, ok := thunk.Expr.(*ast.TupleLit); ok {
 				if len(tup.Elements) == 0 {
@@ -810,11 +887,15 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 			}
 		}
 	} else if len(inst.Def.FieldTypes) > 0 {
+		var selfType types.Type
+		if inst.Def != nil && inst.Def.Name != "" {
+			selfType = &types.StructType{Name: inst.Def.Name}
+		}
 		for fName, fAnnot := range inst.Def.FieldTypes {
 			if fVal, ok := inst.Fields[fName]; ok {
 				tName := safeFieldTypeName(fVal)
 				if tName != "" && tName != "Unknown" {
-					if parsedT, err := types.ParseTypeAnnot(fAnnot); err == nil {
+					if parsedT, err := types.ParseTypeAnnotWithParams(fAnnot, inst.Def.TypeParams, selfType); err == nil {
 						matchTypeStringToField(parsedT, tName, bindings)
 					}
 				}
@@ -825,11 +906,7 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 	allFound := true
 	for i, tp := range inst.Def.TypeParams {
 		if inst.Def != nil && inst.Def.Name != "" {
-			selfName := inst.Def.Name
-			if i > 0 {
-				selfName = fmt.Sprintf("%s[%s]", inst.Def.Name, strings.Join(res[:i], ", "))
-			}
-			bindings["Self"] = selfName
+			bindings["Self"] = inst.Def.Name
 		}
 		if b, ok := bindings[tp.Name]; ok {
 			res[i] = b
@@ -2210,11 +2287,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 							typeArgs := make([]string, len(st.TypeArgs))
 							allKnown := true
 							for i, a := range st.TypeArgs {
-								if a == types.TypeUnknown {
+								resolvedA := a
+								if types.ContainsSelfOrParam(resolvedA) {
+									resolvedA = resolveTypeParamFromEnv(resolvedA, env, inf)
+								}
+								if resolvedA == nil || resolvedA == types.TypeUnknown || types.ContainsSelfOrParam(resolvedA) {
 									allKnown = false
 									break
 								}
-								typeArgs[i] = a.String()
+								typeArgs[i] = resolvedA.String()
 							}
 							if allKnown {
 								if sp, err := specializeGenericValue(targetDef, typeArgs, env); err == nil {
@@ -2451,8 +2532,7 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 								canBeFirstPositional = true
 							}
 						}
-					}
-					if !canBeFirstPositional {
+					} else {
 						if firstAnnot != "" {
 							if firstAnnot == "Any" || firstAnnot == "Unknown" || strings.Contains(firstAnnot, sDef.Name) || strings.Contains(firstAnnot, "Self") {
 								canBeFirstPositional = true
@@ -2488,7 +2568,8 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 					if st, ok := th0.InferredType.(*types.StructType); ok && st.Name == sDef.Name {
 						isPotentialBase = true
 					}
-				} else {
+				}
+				if !isPotentialBase {
 					val := Force(th0)
 					if si, ok := val.(*StructInstance); ok && si.Def != nil {
 						siRoot := si.Def
@@ -3953,7 +4034,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			if evaluated, isEval := PeekEvaluated(thunk); isEval {
 				v = evaluated
 			} else if thunk.InferredType != nil {
-				if t, ok := thunk.InferredType.(types.Type); ok && t != nil && t != types.TypeUnknown {
+				if t, ok := thunk.InferredType.(types.Type); ok && t != nil && t != types.TypeUnknown && !types.ContainsSelfOrParam(t) {
 					return t
 				}
 			}

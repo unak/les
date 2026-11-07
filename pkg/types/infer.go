@@ -3976,6 +3976,18 @@ func ParseTypeAnnot(annot string) (Type, error) {
 	return (*Inferencer)(nil).parseTypeAnnot(annot)
 }
 
+// ParseTypeAnnotWithParams parses a type annotation string with known type parameters and optional selfType.
+func ParseTypeAnnotWithParams(annot string, typeParams []ast.TypeParam, selfType ...Type) (Type, error) {
+	inf := &Inferencer{scope: NewScope(nil)}
+	for _, tp := range typeParams {
+		_ = inf.scope.Declare(tp.Name, &TypeParamType{Name: tp.Name})
+	}
+	if len(selfType) > 0 && selfType[0] != nil {
+		inf.selfType = selfType[0]
+	}
+	return inf.parseTypeAnnot(annot)
+}
+
 func (inf *Inferencer) ParseTypeAnnot(annot string) (Type, error) {
 	return inf.parseTypeAnnot(annot)
 }

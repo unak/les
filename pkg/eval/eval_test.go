@@ -7278,6 +7278,109 @@ is_tagged_int = it is Tagged[Int]
 	assertBool(ev4, "is_tagged_int", false)
 }
 
+func TestSelfPseudoTypePass9Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Generic method constructing instance of generic struct with self.v
+	code1 := `
+struct Item[T]:
+    v: T
+    def clone() -> Self:
+        Item(self.v)
+
+def wrap[U](x: U):
+    Item(x)
+
+it = Item("apple")
+c = it.clone()
+c_type = c.Type()
+is_item_str = c is Item[String]
+
+w = wrap(42)
+w_type = w.Type()
+is_item_int = w is Item[Int]
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "c_type", "Item[String]")
+	assertBool(ev1, "is_item_str", true)
+	assertString(ev1, "w_type", "Item[Int]")
+	assertBool(ev1, "is_item_int", true)
+
+	// 2. Positional copy-update on Point(p1, 100) where first field is Int
+	code2 := `
+struct Point:
+    x: Int
+    y: Int
+
+p1 = Point(1, 2)
+p2 = Point(p1, 100)
+p2_x = p2.x
+p2_y = p2.y
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertInt(ev2, "p2_x", 100)
+	assertInt(ev2, "p2_y", 2)
+
+	// 3. Raw Evaluator (sDef.StructType == nil) inferring type parameters via ParseTypeAnnotWithParams
+	sDef := &StructDefValue{
+		Name: "Pair",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+			{Name: "U"},
+		},
+		FieldOrder: []string{"first", "second"},
+		FieldTypes: map[string]string{
+			"first":  "T",
+			"second": "U",
+		},
+	}
+	inst := &StructInstance{
+		Def: sDef,
+		Fields: map[string]Value{
+			"first":  NewIntValue(123),
+			"second": StringValue("hello"),
+		},
+	}
+	inferStructInstanceTypeArgs(inst)
+	if len(inst.TypeArgs) != 2 || inst.TypeArgs[0] != "Int" || inst.TypeArgs[1] != "String" {
+		t.Errorf("expected TypeArgs [Int, String], got %v", inst.TypeArgs)
+	}
+}
+
 
 
 
