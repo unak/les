@@ -6827,4 +6827,66 @@ s2 = sum(1.25, 2.75)
 	}
 }
 
+func TestSelfPseudoTypeReviewBugFixesEval(t *testing.T) {
+	code := `
+struct Item:
+    id: Int
+    def same_type(other: Unknown) -> Bool:
+        other is Self
+    def match_self(other: Unknown) -> String:
+        match other:
+            case Self:
+                "self_match"
+            case _:
+                "other"
+
+struct Pair[T, U = Int]:
+    first: T
+    second: U
+
+i1 = Item(1)
+i2 = Item(2)
+r_is_same = i1.same_type(i2)
+r_is_diff = i1.same_type("not_item")
+r_match_same = i1.match_self(i2)
+r_match_diff = i1.match_self(42)
+
+p = Pair[String]("hello", 123)
+p_is_pair = p is Pair[String, Int]
+p_is_partial = p is Pair[String]
+`
+	ev := NewEvaluator()
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertBool := func(varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if s, ok := Force(v).(StringValue); !ok || string(s) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	assertBool("r_is_same", true)
+	assertBool("r_is_diff", false)
+	assertString("r_match_same", "self_match")
+	assertString("r_match_diff", "other")
+	assertBool("p_is_pair", true)
+	assertBool("p_is_partial", true)
+}
+
+
 

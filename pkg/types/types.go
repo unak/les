@@ -631,6 +631,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 
 	origTarget := target
 	target = ResolveInterfaceForReceiver(target, src)
+	if len(origTarget.TypeArgs) == 0 && len(target.TypeArgs) > 0 && len(origTarget.TypeParams) > 0 {
+		if err := ValidateTypeConstraints(origTarget.TypeParams, target.TypeArgs); err != nil {
+			return false
+		}
+	}
 
 	// If src is itself an interface, check if it contains all required methods
 	if srcIface, ok := src.(*InterfaceType); ok {
@@ -1515,8 +1520,28 @@ func Substitute(t Type, bindings map[string]Type) Type {
 			Value: Substitute(typ.Value, bindings),
 		}
 	case *FuncType:
+		var newTPs []TypeParamDef
+		if len(typ.TypeParams) > 0 {
+			newTPs = make([]TypeParamDef, len(typ.TypeParams))
+			for i, tp := range typ.TypeParams {
+				innerBindings := bindings
+				if _, shadowed := bindings[tp.Name]; shadowed {
+					innerBindings = make(map[string]Type)
+					for k, v := range bindings {
+						if k != tp.Name {
+							innerBindings[k] = v
+						}
+					}
+				}
+				newTPs[i] = TypeParamDef{
+					Name:       tp.Name,
+					Constraint: Substitute(tp.Constraint, innerBindings),
+					Default:    Substitute(tp.Default, innerBindings),
+				}
+			}
+		}
 		newF := &FuncType{
-			TypeParams:    typ.TypeParams,
+			TypeParams:    newTPs,
 			TypeArgs:      typ.TypeArgs,
 			Arg:           Substitute(typ.Arg, bindings),
 			OverloadUnion: typ.OverloadUnion,
@@ -1637,6 +1662,22 @@ func SubstituteSelf(t Type, selfType Type) Type {
 		subBlock := SubstituteSelf(typ.BlockParam, selfType)
 		subRet := SubstituteSelf(typ.Ret, selfType)
 		changed := subArg != typ.Arg || subBlock != typ.BlockParam || subRet != typ.Ret
+		var newTPs []TypeParamDef
+		if len(typ.TypeParams) > 0 {
+			newTPs = make([]TypeParamDef, len(typ.TypeParams))
+			for i, tp := range typ.TypeParams {
+				subC := SubstituteSelf(tp.Constraint, selfType)
+				subD := SubstituteSelf(tp.Default, selfType)
+				if subC != tp.Constraint || subD != tp.Default {
+					changed = true
+				}
+				newTPs[i] = TypeParamDef{
+					Name:       tp.Name,
+					Constraint: subC,
+					Default:    subD,
+				}
+			}
+		}
 		var newOverloads []*FuncType
 		if len(typ.Overloads) > 0 {
 			newOverloads = make([]*FuncType, len(typ.Overloads))
@@ -1652,7 +1693,7 @@ func SubstituteSelf(t Type, selfType Type) Type {
 			return typ
 		}
 		newF := &FuncType{
-			TypeParams:    typ.TypeParams,
+			TypeParams:    newTPs,
 			TypeArgs:      typ.TypeArgs,
 			Arg:           subArg,
 			OverloadUnion: typ.OverloadUnion,
@@ -1914,8 +1955,10 @@ func ValidateTypeConstraints(typeParams []TypeParamDef, typeArgs []Type) error {
 	for i, tp := range typeParams {
 		if tp.Constraint != nil {
 			subConstraint := Substitute(tp.Constraint, bindings)
-			if !IsAssignableTo(fullArgs[i], subConstraint) {
-				return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", fullArgs[i].String(), subConstraint.String(), tp.Name)
+			if !ContainsSelfOrParam(fullArgs[i]) && !ContainsSelfOrParam(subConstraint) {
+				if !IsAssignableTo(fullArgs[i], subConstraint) {
+					return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", fullArgs[i].String(), subConstraint.String(), tp.Name)
+				}
 			}
 		}
 	}
@@ -2085,4 +2128,62 @@ func TypesCanOverlap(t1, t2 Type) bool {
 		return false
 	}
 	return false
+}
+
+// ContainsSelfOrParam returns true if t contains SelfType or TypeParamType.
+func ContainsSelfOrParam(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch typ := t.(type) {
+	case *SelfType, *TypeParamType:
+		return true
+	case *TupleType:
+		for _, el := range typ.Elems {
+			if ContainsSelfOrParam(el) {
+				return true
+			}
+		}
+		return false
+	case *DictType:
+		return ContainsSelfOrParam(typ.Key) || ContainsSelfOrParam(typ.Value)
+	case *FuncType:
+		if ContainsSelfOrParam(typ.Arg) || ContainsSelfOrParam(typ.BlockParam) || ContainsSelfOrParam(typ.Ret) {
+			return true
+		}
+		for _, ov := range typ.Overloads {
+			if ContainsSelfOrParam(ov) {
+				return true
+			}
+		}
+		for _, tp := range typ.TypeParams {
+			if ContainsSelfOrParam(tp.Constraint) || ContainsSelfOrParam(tp.Default) {
+				return true
+			}
+		}
+		return false
+	case *UnionType:
+		for _, m := range typ.Members {
+			if ContainsSelfOrParam(m) {
+				return true
+			}
+		}
+		return false
+	case *StructType:
+		for _, a := range typ.TypeArgs {
+			if ContainsSelfOrParam(a) {
+				return true
+			}
+		}
+		return false
+	case *InterfaceType:
+		for _, a := range typ.TypeArgs {
+			if ContainsSelfOrParam(a) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }

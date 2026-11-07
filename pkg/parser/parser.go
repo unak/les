@@ -2556,6 +2556,7 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 		return nil
 	}
 	p.nextToken() // advance to first param
+	seenDefault := false
 	for {
 		if !p.curTokenIs(lexer.TokenIdent) {
 			p.addError(p.curToken.Line, p.curToken.Col, "expected type parameter name, got %s", p.curToken.Literal)
@@ -2577,6 +2578,9 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 			if tp.Default == "" {
 				p.addError(p.curToken.Line, p.curToken.Col, "expected default type after '=' for type parameter '%s'", tp.Name)
 			}
+			seenDefault = true
+		} else if seenDefault {
+			p.addError(tp.Position.Line, tp.Position.Col, "type parameter '%s' without default cannot follow type parameter with default", tp.Name)
 		}
 		tps = append(tps, tp)
 		if p.peekTokenIs(lexer.TokenComma) {

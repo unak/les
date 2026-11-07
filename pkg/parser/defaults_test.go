@@ -87,6 +87,11 @@ func TestParseTrailingDefaultsErrors(t *testing.T) {
 			input:  "def f(&b1, &b2):\n    pass\n",
 			errSub: "must be the last parameter",
 		},
+		{
+			name:   "required type param after default type param",
+			input:  "struct Foo[T = Int, U]:\n    x: T\n",
+			errSub: "cannot follow type parameter with default",
+		},
 	}
 
 	for _, tt := range tests {

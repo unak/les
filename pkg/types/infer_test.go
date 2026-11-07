@@ -2537,3 +2537,73 @@ a_str: Addable[String] = Vec2(1, 2)
 	}
 }
 
+func TestSelfPseudoTypeReviewBugFixes(t *testing.T) {
+	codeStructSelfTP := `
+struct Node[T = Self]:
+    val: T
+    next: Self | Nil
+
+n = Node(1, nil)
+`
+	prog1 := parser.NewParser(lexer.NewLexer(codeStructSelfTP)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(prog1); err != nil {
+		t.Fatalf("unexpected error for struct with Self in TypeParams: %v", err)
+	}
+
+	// Also check that struct methods with generic TypeParams work
+	codeGenericMethod := `
+struct Item:
+    def clone[U = Self](x: U) -> U:
+        x
+`
+	pGM := parser.NewParser(lexer.NewLexer(codeGenericMethod)).ParseProgram()
+	if err := NewInferencer().InferProgram(pGM); err != nil {
+		t.Fatalf("unexpected error for generic method with [U = Self]: %v", err)
+	}
+
+	// 2. Validate default type against constraint at definition time
+	badDefTime := []string{
+		"struct Bad1[T: Numeric = String]:\n    x: T\n",
+		"def bad2[T: Numeric = String](x: T) -> T: x\n",
+	}
+	for _, bad := range badDefTime {
+		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(p); err == nil {
+			t.Errorf("expected constraint error at definition time for %q, got nil", bad)
+		}
+	}
+
+	// 3. ImplementsInterface constraint check on defaulted [T = Self]
+	codeConstrainedSelfIface := `
+interface NumericAddable[T: Numeric = Self]:
+    +(other: T): Self
+
+x: NumericAddable = "hello"
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeConstrainedSelfIface)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err == nil {
+		t.Errorf("expected 'hello' to NOT satisfy NumericAddable, got success")
+	}
+
+	// 4. Default type arguments for unspecialized struct annotation and field access
+	codeDefaultBox := `
+struct DefaultBox[T = Int]:
+    val: T
+
+b: DefaultBox = DefaultBox(10)
+x: Int = b.val
+`
+	p4 := parser.NewParser(lexer.NewLexer(codeDefaultBox)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(p4); err != nil {
+		t.Fatalf("unexpected error for unspecialized DefaultBox annotation: %v", err)
+	}
+	if bValT, ok := inf4.scope.Lookup("x"); !ok || bValT != TypeInt {
+		t.Errorf("expected x to have type Int, got %v", bValT)
+	}
+}
+
+
