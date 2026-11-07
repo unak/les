@@ -812,6 +812,11 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 	}
 	res := make([]string, len(inst.Def.TypeParams))
 	allFound := true
+	if inst.Def != nil && inst.Def.Name != "" {
+		if _, ok := bindings["Self"]; !ok {
+			bindings["Self"] = inst.Def.Name
+		}
+	}
 	for i, tp := range inst.Def.TypeParams {
 		if b, ok := bindings[tp.Name]; ok {
 			res[i] = b
@@ -848,6 +853,23 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		return types.TypeUnknown
 	}
 
+	if len(typeArgs) > 0 && env != nil {
+		if selfVal, found := env.Get("self"); found && selfVal != nil {
+			forcedSelf := Force(selfVal)
+			selfTypeName := typeNameOf(forcedSelf)
+			if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+				selfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+			}
+			if selfTypeName != "" && selfTypeName != "Unknown" {
+				resolvedArgs := make([]string, len(typeArgs))
+				for i, a := range typeArgs {
+					resolvedArgs[i] = substituteTypeString(a, map[string]string{"Self": selfTypeName})
+				}
+				typeArgs = resolvedArgs
+			}
+		}
+	}
+
 	switch v := val.(type) {
 	case *StructDefValue:
 		newDef := *v
@@ -858,6 +880,7 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		}
 		fullArgs := make([]string, len(v.TypeParams))
 		strBindings := make(map[string]string)
+		strBindings["Self"] = v.Name
 		for i, tp := range v.TypeParams {
 			if i < len(typeArgs) {
 				fullArgs[i] = typeArgs[i]
@@ -891,11 +914,23 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 
 	case *Closure:
 		newClosure := *v
-		newClosure.TypeArgs = append([]string(nil), typeArgs...)
+		fullArgs := make([]string, len(v.TypeParams))
+		strBindings := make(map[string]string)
+		for i, tp := range v.TypeParams {
+			if i < len(typeArgs) {
+				fullArgs[i] = typeArgs[i]
+			} else if tp.Default != "" {
+				fullArgs[i] = substituteTypeString(tp.Default, strBindings)
+			} else {
+				fullArgs[i] = "Unknown"
+			}
+			strBindings[tp.Name] = fullArgs[i]
+		}
+		newClosure.TypeArgs = fullArgs
 		if v.FuncType != nil {
 			if ft, ok := v.FuncType.(*types.FuncType); ok && len(ft.TypeParams) > 0 {
 				bindings := make(map[string]types.Type)
-				for i, argStr := range typeArgs {
+				for i, argStr := range fullArgs {
 					if i < len(ft.TypeParams) {
 						bindings[ft.TypeParams[i].Name] = parseArgType(argStr)
 					}
@@ -908,9 +943,7 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		return &newClosure, nil
 
 	case *InterfaceDefValue:
-		newIDef := *v
-		newIDef.TypeArgs = append([]string(nil), typeArgs...)
-		return &newIDef, nil
+		return substituteInterfaceDef(v, typeArgs), nil
 
 	case *BuiltinFunc:
 		if v.TypeDef != nil {
@@ -2483,6 +2516,7 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			lookupName = base
 			embTypeArgs = make([]string, len(args))
 			substMap := make(map[string]string)
+			substMap["Self"] = sDef.Name
 			for i, tp := range sDef.TypeParams {
 				if i < len(sDef.TypeArgs) {
 					substMap[tp.Name] = sDef.TypeArgs[i]
@@ -2598,6 +2632,7 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	// Re-specialize embedded generic structs if type args were inferred
 	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 		substMap := make(map[string]string)
+		substMap["Self"] = sDef.Name
 		for i, tp := range sDef.TypeParams {
 			if i < len(inst.TypeArgs) {
 				substMap[tp.Name] = inst.TypeArgs[i]
@@ -2657,6 +2692,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			lookupName = base
 			embTypeArgs = make([]string, len(args))
 			substMap := make(map[string]string)
+			substMap["Self"] = sDef.Name
 			for i, tp := range sDef.TypeParams {
 				if i < len(sDef.TypeArgs) {
 					substMap[tp.Name] = sDef.TypeArgs[i]
@@ -2864,6 +2900,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	// Re-specialize embedded generic structs if type args were inferred
 	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 		substMap := make(map[string]string)
+		substMap["Self"] = sDef.Name
 		for i, tp := range sDef.TypeParams {
 			if i < len(inst.TypeArgs) {
 				substMap[tp.Name] = inst.TypeArgs[i]
@@ -5450,15 +5487,6 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			if si.Def.Name == typeAnnot {
 				return true
 			}
-			if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
-				inferStructInstanceTypeArgs(si)
-			}
-			if len(si.TypeArgs) > 0 {
-				annotWithArgs := fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
-				if annotWithArgs == typeAnnot {
-					return true
-				}
-			}
 			for _, emb := range si.Embedded {
 				if checkValueMatchesType(emb, typeAnnot, optEnv...) {
 					return true
@@ -5682,12 +5710,18 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 	}
 	// Validate constraints for resolved type arguments
 	if len(iface.TypeArgs) > 0 && len(iface.TypeParams) > 0 {
+		strMap := make(map[string]string)
+		if selfTypeName != "" {
+			strMap["Self"] = selfTypeName
+		}
+		for j, tp := range iface.TypeParams {
+			if j < len(iface.TypeArgs) {
+				strMap[tp.Name] = iface.TypeArgs[j]
+			}
+		}
 		for i, tp := range iface.TypeParams {
 			if i < len(iface.TypeArgs) && tp.Constraint != "" {
-				cStr := tp.Constraint
-				if selfTypeName != "" {
-					cStr = substituteTypeString(cStr, map[string]string{"Self": selfTypeName})
-				}
+				cStr := substituteTypeString(tp.Constraint, strMap)
 				argStr := iface.TypeArgs[i]
 				var inf *types.Inferencer
 				if env != nil && env.Inferencer != nil {
@@ -5708,6 +5742,11 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 				}
 				if argT != nil && cT != nil && !types.IsAssignableTo(argT, cT) {
 					return false
+				}
+				if (argT == nil || cT == nil) && argStr == selfTypeName {
+					if !checkValueMatchesType(val, cStr, env) {
+						return false
+					}
 				}
 			}
 		}

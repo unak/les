@@ -1720,14 +1720,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					}
 					defType = dType
 				}
-				if tpTypes[i].Constraint != nil && defType != nil {
-					if !ContainsSelfOrParam(tpTypes[i].Constraint) && !ContainsSelfOrParam(defType) {
-						if !IsAssignableTo(defType, tpTypes[i].Constraint) {
-							inf.scope = origScope
-							return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", defType, tpTypes[i].Constraint, tp.Name)
-						}
-					}
-				}
+				/* struct type param */
 				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 			}
 		}
@@ -2052,18 +2045,49 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
+		// Validate default type parameters against constraints now that methods and fields are registered
+		for _, tp := range st.TypeParams {
+			if tp.Constraint != nil && tp.Default != nil {
+				if !ContainsSelfOrParam(tp.Constraint) && !ContainsSelfOrParam(tp.Default) {
+					if !IsAssignableTo(tp.Default, tp.Constraint) {
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", tp.Default, tp.Constraint, tp.Name)
+					}
+				}
+			}
+		}
+
 		// Pass B: Infer method bodies using inferFuncBody
+		// If struct is generic, Self and self in method bodies must refer to Box[T1, T2] instead of bare Box.
+		passBSelfType := Type(st)
+		if len(st.TypeParams) > 0 {
+			tpArgs := make([]Type, len(st.TypeParams))
+			for i, tp := range st.TypeParams {
+				tpArgs[i] = &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
+			}
+			passBSelfType = InstantiateStruct(st, tpArgs)
+		}
+		prevPassBSelf := inf.selfType
+		inf.selfType = passBSelfType
+
 		for _, item := range methodItems {
 			m := item.methodDef
 			prevScope := inf.scope
 			inf.scope = item.methodScope
+			_ = item.methodScope.Declare("self", passBSelfType)
 			checkDeclaredRet := item.declaredRetType
+			if checkDeclaredRet != nil && checkDeclaredRet.Equals(st) {
+				checkDeclaredRet = passBSelfType
+			}
 			if m.Name == "init" {
 				checkDeclaredRet = TypeUnknown
 			}
 			err := inf.inferFuncBody(m.Body, item.methodType, checkDeclaredRet, m.Pos(), m.Name, true, s.Name)
 			inf.scope = prevScope
 			if err != nil {
+				inf.selfType = prevPassBSelf
 				if origScope != nil {
 					inf.scope = origScope
 				}
@@ -2073,6 +2097,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				item.methodType.Ret = st
 			}
 		}
+		inf.selfType = prevPassBSelf
 
 		// Rebuild overloaded operator method types (+ / -) now that method bodies have inferred Ret
 		for _, opName := range []string{"+", "-"} {
@@ -2151,14 +2176,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					}
 					defType = dType
 				}
-				if tpTypes[i].Constraint != nil && defType != nil {
-					if !ContainsSelfOrParam(tpTypes[i].Constraint) && !ContainsSelfOrParam(defType) {
-						if !IsAssignableTo(defType, tpTypes[i].Constraint) {
-							inf.scope = origScope
-							return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", defType, tpTypes[i].Constraint, tp.Name)
-						}
-					}
-				}
+				/* iface type param */
 				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 			}
 		}
@@ -2363,6 +2381,20 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 			}
 			iface.Methods[m.Name] = mSig
+		}
+
+		// Validate default type parameters against constraints now that interface methods are registered
+		for _, tp := range iface.TypeParams {
+			if tp.Constraint != nil && tp.Default != nil {
+				if !ContainsSelfOrParam(tp.Constraint) && !ContainsSelfOrParam(tp.Default) {
+					if !IsAssignableTo(tp.Default, tp.Constraint) {
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", tp.Default, tp.Constraint, tp.Name)
+					}
+				}
+			}
 		}
 
 		iface.ClearInstCache()
@@ -3853,6 +3885,18 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			return inf.selfType, nil
 		}
 		return nil, fmt.Errorf("'Self' type is only valid inside struct or interface definitions")
+	case "Error":
+		return BuiltinErrorIface, nil
+	case "Show":
+		return BuiltinShowIface, nil
+	case "Equatable":
+		return BuiltinEquatableIface, nil
+	case "Comparable":
+		return BuiltinComparableIface, nil
+	case "Numeric":
+		return BuiltinNumericIface, nil
+	case "Indexable":
+		return BuiltinIndexableIface, nil
 	}
 
 	// Tuple annotation or grouping: (...) or (Int, ...) or (Int, String) or ((Int) -> String)
@@ -4000,14 +4044,41 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 					return InstantiateStruct(origin, argTypes), nil
 				}
 				if iface, ok := baseType.(*InterfaceType); ok {
-					if err := ValidateTypeConstraints(iface.TypeParams, argTypes); err != nil {
+					origin := iface
+					if origin.GenericOrigin != nil {
+						origin = origin.GenericOrigin
+					}
+					if err := ValidateTypeConstraints(origin.TypeParams, argTypes); err != nil {
 						return nil, err
 					}
-					return InstantiateInterface(iface, argTypes), nil
+					return InstantiateInterface(origin, argTypes), nil
 				}
 				return nil, fmt.Errorf("type '%s' does not take type arguments", baseStr)
 			}
 		}
+	}
+
+	maybeInstantiateDefaultStruct := func(t Type) Type {
+		if st, isSt := t.(*StructType); isSt && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 && (inf == nil || inf.selfType == nil || st != inf.selfType) {
+			allHaveDefault := true
+			defaultArgs := make([]Type, len(st.TypeParams))
+			bindings := make(map[string]Type)
+			for i, tp := range st.TypeParams {
+				if tp.Default != nil && !ContainsSelfOrParam(tp.Default) {
+					defaultArgs[i] = Substitute(tp.Default, bindings)
+					bindings[tp.Name] = defaultArgs[i]
+				} else {
+					allHaveDefault = false
+					break
+				}
+			}
+			if allHaveDefault {
+				if err := ValidateTypeConstraints(st.TypeParams, defaultArgs); err == nil {
+					return InstantiateStruct(st, defaultArgs)
+				}
+			}
+		}
+		return t
 	}
 
 	if strings.Contains(annot, "::") {
@@ -4025,37 +4096,18 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			if mod != nil {
 				if mod.Types != nil {
 					if t, ok := mod.Types[typeName]; ok {
-						return t, nil
+						return maybeInstantiateDefaultStruct(t), nil
 					}
 				}
 				if t, ok := mod.Exports[typeName]; ok {
-					return t, nil
+					return maybeInstantiateDefaultStruct(t), nil
 				}
 			}
 		}
 	}
 	if inf != nil && inf.scope != nil {
 		if t, ok := inf.scope.Lookup(annot); ok {
-			if st, isSt := t.(*StructType); isSt && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 && (inf.selfType == nil || st != inf.selfType) {
-				allHaveDefault := true
-				defaultArgs := make([]Type, len(st.TypeParams))
-				bindings := make(map[string]Type)
-				for i, tp := range st.TypeParams {
-					if tp.Default != nil && !ContainsSelfOrParam(tp.Default) {
-						defaultArgs[i] = Substitute(tp.Default, bindings)
-						bindings[tp.Name] = defaultArgs[i]
-					} else {
-						allHaveDefault = false
-						break
-					}
-				}
-				if allHaveDefault {
-					if err := ValidateTypeConstraints(st.TypeParams, defaultArgs); err == nil {
-						return InstantiateStruct(st, defaultArgs), nil
-					}
-				}
-			}
-			return t, nil
+			return maybeInstantiateDefaultStruct(t), nil
 		}
 	}
 

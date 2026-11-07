@@ -6886,7 +6886,61 @@ p_is_partial = p is Pair[String]
 	assertString("r_match_diff", "other")
 	assertBool("p_is_pair", true)
 	assertBool("p_is_partial", true)
+
+	// Additional Pass 2 tests:
+	// A. Runtime interface constraint evaluation without Inferencer
+	codeRuntimeIface := `
+interface NumericAddable[T: Numeric = Self]:
+    +(other: T): Self
+
+r_str_num = "hello" is NumericAddable
+r_int_num = 10 is NumericAddable
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(codeRuntimeIface)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	vStr, _ := ev2.globalEnv.Get("r_str_num")
+	if Force(vStr).(BoolValue) != false {
+		t.Errorf("expected 'hello' is NumericAddable == false, got %v", vStr)
+	}
+	vInt, _ := ev2.globalEnv.Get("r_int_num")
+	if Force(vInt).(BoolValue) != true {
+		t.Errorf("expected 10 is NumericAddable == true, got %v", vInt)
+	}
+
+	// B. Method-level Box[Self] specialization and default closure specialization
+	codeMethodSelf := `
+struct Container[T]:
+    val: T
+
+struct Maker:
+    id: Int
+    def make_box() -> Container[Maker]:
+        Container[Self](self)
+
+def make_pair[A, B = Int](a: A, b: B) -> (A, B):
+    (a, b)
+
+pair_fn = make_pair[String]
+r_pair = pair_fn("test", 99)
+
+m = Maker(7)
+c = m.make_box()
+r_box_match = c is Container[Maker]
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(codeMethodSelf)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+	vBox, _ := ev3.globalEnv.Get("r_box_match")
+	if Force(vBox).(BoolValue) != true {
+		t.Errorf("expected r_box_match == true, got %v", vBox)
+	}
 }
+
 
 
 

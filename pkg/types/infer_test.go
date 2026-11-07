@@ -2604,6 +2604,62 @@ x: Int = b.val
 	if bValT, ok := inf4.scope.Lookup("x"); !ok || bValT != TypeInt {
 		t.Errorf("expected x to have type Int, got %v", bValT)
 	}
+
+	// 5. Generic struct with Self in TypeParams and == method
+	codeEquatableSelf := `
+interface Equatable[T = Self]:
+    ==(other: T): Bool
+
+struct EqBox[T: Equatable[Self] = Self]:
+    val: T
+    def ==(other: Self) -> Bool:
+        true
+
+x: EqBox | Nil = nil
+`
+	p5 := parser.NewParser(lexer.NewLexer(codeEquatableSelf)).ParseProgram()
+	inf5 := NewInferencer()
+	if err := inf5.InferProgram(p5); err != nil {
+		t.Fatalf("unexpected error for EqBox: %v", err)
+	}
+
+	// 6. Generic struct method returning wrong Self type must fail
+	codeWrongSelf := `
+struct Box[T]:
+    val: T
+    def bad() -> Self:
+        Box("wrong_type")
+`
+	p6 := parser.NewParser(lexer.NewLexer(codeWrongSelf)).ParseProgram()
+	inf6 := NewInferencer()
+	if err := inf6.InferProgram(p6); err == nil {
+		t.Errorf("expected error for Box[T].bad returning Box[String], got nil")
+	}
+
+	// 7. Module-qualified struct annotation with default type params
+	mod := &ModuleType{
+		Name: "testmod",
+		Types: map[string]Type{
+			"DefaultBox": &StructType{
+				Name: "DefaultBox",
+				TypeParams: []TypeParamDef{
+					{Name: "T", Default: TypeInt},
+				},
+				Fields: map[string]Type{
+					"val": &TypeParamType{Name: "T"},
+				},
+			},
+		},
+	}
+	inf7 := NewInferencer()
+	inf7.RegisterModule("testmod", mod)
+	tMod, err := inf7.ParseTypeAnnot("testmod::DefaultBox")
+	if err != nil {
+		t.Fatalf("unexpected error parsing testmod::DefaultBox: %v", err)
+	}
+	if st, ok := tMod.(*StructType); !ok || len(st.TypeArgs) != 1 || st.TypeArgs[0] != TypeInt {
+		t.Errorf("expected testmod::DefaultBox[Int], got %v", tMod)
+	}
 }
 
 
