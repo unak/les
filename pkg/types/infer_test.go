@@ -2878,4 +2878,80 @@ struct Point:
 	}
 }
 
+func TestSelfPseudoTypePass6(t *testing.T) {
+	// 1. Generic struct method calling self.clone() where clone() -> Self inside another method returning Self
+	codeGenericSelfMethodCall := `
+struct Box[T]:
+    val: T
+    def clone() -> Self:
+        self
+    def dup() -> Self:
+        self.clone()
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeGenericSelfMethodCall)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected generic struct calling self.clone() -> Self to succeed, got %v", err)
+	}
+
+	// 2. Generic struct recursive method with unannotated return type returning Self
+	codeGenericRecursiveSelf := `
+struct Countdown[T]:
+    val: T
+    count: Int
+    def step(n: Int):
+        if n <= 0:
+            self
+        else:
+            self.step(n - 1)
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeGenericRecursiveSelf)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected unannotated recursive method on generic struct returning Self to infer, got %v", err)
+	}
+
+	// 3. Overloaded operator + on generic struct returning Self
+	codeGenericOverloadedOp := `
+struct Number[T]:
+    val: T
+    def +() -> Self:
+        self
+    def +(other: Self) -> Self:
+        self
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeGenericOverloadedOp)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err != nil {
+		t.Fatalf("expected overloaded + on generic struct to succeed, got %v", err)
+	}
+
+	// 4. Struct with Self | Nil first field constructed positionally vs copy-update
+	codePositionalVsCopyUpdate := `
+struct Chain:
+    prev: Self | Nil
+
+def test_chain():
+    c1 = Chain(nil)
+    c2 = Chain(c1)
+    c2
+
+struct Node[T]:
+    next: Self | Nil
+    val: T
+
+def test_node():
+    n1 = Node(nil, 10)
+    n2 = Node(n1, 20)
+    n3 = Node(n2, val: 99)
+    (n2, n3)
+`
+	p4 := parser.NewParser(lexer.NewLexer(codePositionalVsCopyUpdate)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(p4); err != nil {
+		t.Fatalf("expected positional vs copy-update disambiguation to succeed, got %v", err)
+	}
+}
+
+
 

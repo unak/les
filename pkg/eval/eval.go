@@ -814,7 +814,11 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 	allFound := true
 	if inst.Def != nil && inst.Def.Name != "" {
 		if _, ok := bindings["Self"]; !ok {
-			bindings["Self"] = inst.Def.Name
+			selfName := inst.Def.Name
+			if len(inst.TypeArgs) > 0 {
+				selfName = fmt.Sprintf("%s[%s]", inst.Def.Name, strings.Join(inst.TypeArgs, ", "))
+			}
+			bindings["Self"] = selfName
 		}
 	}
 	for i, tp := range inst.Def.TypeParams {
@@ -880,7 +884,11 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		}
 		fullArgs := make([]string, len(v.TypeParams))
 		strBindings := make(map[string]string)
-		strBindings["Self"] = v.Name
+		selfName := v.Name
+		if len(typeArgs) > 0 {
+			selfName = fmt.Sprintf("%s[%s]", v.Name, strings.Join(typeArgs, ", "))
+		}
+		strBindings["Self"] = selfName
 		for i, tp := range v.TypeParams {
 			if i < len(typeArgs) {
 				fullArgs[i] = typeArgs[i]
@@ -2349,47 +2357,80 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	argStartIdx := 0
 
 	// Check if 1st argument is a copy-update base instance (e.g. Person(p, x: 30))
-	if len(args) > 0 {
+	if len(args) >= 2 {
 		if _, isNamed := args[0].(*ast.NamedArgExpr); !isNamed {
-			th0 := env.newThunk(args[0])
-			isPotentialBase := false
-			if th0.InferredType != nil {
-				if st, ok := th0.InferredType.(*types.StructType); ok && st.Name == sDef.Name {
-					isPotentialBase = true
+			hasNamedInRest := false
+			for _, a := range args[1:] {
+				if _, ok := a.(*ast.NamedArgExpr); ok {
+					hasNamedInRest = true
+					break
 				}
-			} else if ident, isIdent := args[0].(*ast.Identifier); isIdent {
-				if v, ok := env.Get(ident.Name); ok {
-					if evaluated, isEval := PeekEvaluated(v); isEval {
-						if si, ok := evaluated.(*StructInstance); ok && si.Def != nil {
-							siRoot := si.Def
-							if siRoot.Origin != nil {
-								siRoot = siRoot.Origin
+			}
+			canBeFirstPositional := false
+			if !hasNamedInRest {
+				if initDef, hasInit := sDef.Methods["init"]; hasInit && initDef != nil {
+					maxArity := len(initDef.Params)
+					if len(args) <= maxArity && len(initDef.Params) > 0 {
+						canBeFirstPositional = true
+					}
+				} else {
+					if len(args) <= len(sDef.FieldOrder) && len(sDef.FieldOrder) > 0 {
+						if st, ok := sDef.StructType.(*types.StructType); ok && st != nil {
+							if firstFieldT, exists := st.Fields[sDef.FieldOrder[0]]; exists && firstFieldT != nil {
+								tStr := firstFieldT.String()
+								if strings.Contains(tStr, sDef.Name) || strings.Contains(tStr, "Self") || tStr == "Any" {
+									canBeFirstPositional = true
+								}
+							} else {
+								canBeFirstPositional = true
 							}
-							sDefRoot := sDef
-							if sDefRoot.Origin != nil {
-								sDefRoot = sDefRoot.Origin
-							}
-							if siRoot == sDefRoot {
-								isPotentialBase = true
-							}
+						} else {
+							canBeFirstPositional = true
 						}
 					}
 				}
 			}
-			if isPotentialBase {
-				val := Force(th0)
-				if si, ok := val.(*StructInstance); ok && si.Def != nil {
-					siRoot := si.Def
-					if siRoot.Origin != nil {
-						siRoot = siRoot.Origin
+			if hasNamedInRest || !canBeFirstPositional {
+				th0 := env.newThunk(args[0])
+				isPotentialBase := false
+				if th0.InferredType != nil {
+					if st, ok := th0.InferredType.(*types.StructType); ok && st.Name == sDef.Name {
+						isPotentialBase = true
 					}
-					sDefRoot := sDef
-					if sDefRoot.Origin != nil {
-						sDefRoot = sDefRoot.Origin
+				} else if ident, isIdent := args[0].(*ast.Identifier); isIdent {
+					if v, ok := env.Get(ident.Name); ok {
+						if evaluated, isEval := PeekEvaluated(v); isEval {
+							if si, ok := evaluated.(*StructInstance); ok && si.Def != nil {
+								siRoot := si.Def
+								if siRoot.Origin != nil {
+									siRoot = siRoot.Origin
+								}
+								sDefRoot := sDef
+								if sDefRoot.Origin != nil {
+									sDefRoot = sDefRoot.Origin
+								}
+								if siRoot == sDefRoot {
+									isPotentialBase = true
+								}
+							}
+						}
 					}
-					if siRoot == sDefRoot {
-						baseInstance = si
-						argStartIdx = 1
+				}
+				if isPotentialBase {
+					val := Force(th0)
+					if si, ok := val.(*StructInstance); ok && si.Def != nil {
+						siRoot := si.Def
+						if siRoot.Origin != nil {
+							siRoot = siRoot.Origin
+						}
+						sDefRoot := sDef
+						if sDefRoot.Origin != nil {
+							sDefRoot = sDefRoot.Origin
+						}
+						if siRoot == sDefRoot {
+							baseInstance = si
+							argStartIdx = 1
+						}
 					}
 				}
 			}
@@ -2516,7 +2557,11 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			lookupName = base
 			embTypeArgs = make([]string, len(args))
 			substMap := make(map[string]string)
-			substMap["Self"] = sDef.Name
+			selfName := sDef.Name
+			if len(sDef.TypeArgs) > 0 {
+				selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(sDef.TypeArgs, ", "))
+			}
+			substMap["Self"] = selfName
 			for i, tp := range sDef.TypeParams {
 				if i < len(sDef.TypeArgs) {
 					substMap[tp.Name] = sDef.TypeArgs[i]
@@ -2632,7 +2677,11 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	// Re-specialize embedded generic structs if type args were inferred
 	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 		substMap := make(map[string]string)
-		substMap["Self"] = sDef.Name
+		selfName := sDef.Name
+		if len(inst.TypeArgs) > 0 {
+			selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(inst.TypeArgs, ", "))
+		}
+		substMap["Self"] = selfName
 		for i, tp := range sDef.TypeParams {
 			if i < len(inst.TypeArgs) {
 				substMap[tp.Name] = inst.TypeArgs[i]
@@ -2692,7 +2741,11 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			lookupName = base
 			embTypeArgs = make([]string, len(args))
 			substMap := make(map[string]string)
-			substMap["Self"] = sDef.Name
+			selfName := sDef.Name
+			if len(sDef.TypeArgs) > 0 {
+				selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(sDef.TypeArgs, ", "))
+			}
+			substMap["Self"] = selfName
 			for i, tp := range sDef.TypeParams {
 				if i < len(sDef.TypeArgs) {
 					substMap[tp.Name] = sDef.TypeArgs[i]
@@ -2900,7 +2953,11 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	// Re-specialize embedded generic structs if type args were inferred
 	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 		substMap := make(map[string]string)
-		substMap["Self"] = sDef.Name
+		selfName := sDef.Name
+		if len(inst.TypeArgs) > 0 {
+			selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(inst.TypeArgs, ", "))
+		}
+		substMap["Self"] = selfName
 		for i, tp := range sDef.TypeParams {
 			if i < len(inst.TypeArgs) {
 				substMap[tp.Name] = inst.TypeArgs[i]

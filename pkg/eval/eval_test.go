@@ -6969,6 +6969,99 @@ is_eq = w is Equatable
 	}
 }
 
+func TestSelfPseudoTypePass6Eval(t *testing.T) {
+	// 1. Recursive struct with Self | Nil first field constructed positionally vs copy-update
+	code1 := `
+struct Chain:
+    prev: Self | Nil
+    id: Int
+
+c1 = Chain(nil, 1)
+c2 = Chain(c1, 2)
+c2_has_prev = c2.prev != nil
+c2_prev_id = c2.prev.id
+
+struct Node[T]:
+    next: Self | Nil
+    val: T
+
+n1 = Node(nil, 10)
+n2 = Node(n1, 20)
+n2_has_next = n2.next != nil
+n2_next_val = n2.next.val
+n2_val = n2.val
+
+n3 = Node(n2, val: 99)
+n3_has_next = n3.next != nil
+n3_next_val = n3.next.val
+n3_val = n3.val
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if n, ok := Force(v).(IntValue); !ok || n != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+
+	assertBool(ev1, "c2_has_prev", true)
+	assertInt(ev1, "c2_prev_id", 1)
+	assertBool(ev1, "n2_has_next", true)
+	assertInt(ev1, "n2_next_val", 10)
+	assertInt(ev1, "n2_val", 20)
+	assertBool(ev1, "n3_has_next", true)
+	assertInt(ev1, "n3_next_val", 10)
+	assertInt(ev1, "n3_val", 99)
+
+	// 2. Generic struct embedding generic struct parameterized by Self
+	code2 := `
+struct Tag[T]:
+    name: String
+
+struct Container[T]:
+    Tag[Self]
+    item: T
+
+c = Container(Tag("box"), 42)
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	vC, ok := ev2.globalEnv.Get("c")
+	if !ok {
+		t.Fatalf("missing variable c")
+	}
+	siC, ok := Force(vC).(*StructInstance)
+	if !ok {
+		t.Fatalf("expected StructInstance for c, got %T", Force(vC))
+	}
+	embTag, ok := siC.Embedded["Tag"]
+	if !ok || embTag == nil {
+		t.Fatalf("missing embedded Tag in Container instance")
+	}
+	if len(embTag.TypeArgs) != 1 || embTag.TypeArgs[0] != "Container[Int]" {
+		t.Errorf("expected embedded Tag TypeArgs to be [Container[Int]], got %v", embTag.TypeArgs)
+	}
+}
+
 
 
 

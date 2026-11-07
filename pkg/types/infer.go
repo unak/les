@@ -370,9 +370,10 @@ func (w TypeWarning) String() string {
 }
 
 type funcReturnCtx struct {
-	fnType      *FuncType
-	returnTypes []Type
-	selfCalled  bool
+	fnType       *FuncType
+	mirrorFnType *FuncType
+	returnTypes  []Type
+	selfCalled   bool
 }
 
 type breakTargetCtx struct {
@@ -1037,7 +1038,7 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 				canFallthrough = false
 				currentValTypes = nil
 			} else if fnT, ok := isBareCallableAutoInvocation(s.Value, et); ok {
-				if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
+				if inf.funcCtx != nil && (inf.funcCtx.fnType == fnT || (inf.funcCtx.mirrorFnType != nil && inf.funcCtx.mirrorFnType == fnT)) {
 					inf.funcCtx.selfCalled = true
 				}
 				if canFallthrough {
@@ -1183,11 +1184,12 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 	return currentValTypes, canFallthrough, nil
 }
 
-func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declaredRetType Type, pos ast.Position, entityName string, isMethod bool, structName string) error {
+func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declaredRetType Type, pos ast.Position, entityName string, isMethod bool, structName string, mirrorFnType *FuncType) error {
 	savedWarnIdx := len(inf.warnings)
 
 	funcCtx := &funcReturnCtx{
-		fnType: fnType,
+		fnType:       fnType,
+		mirrorFnType: mirrorFnType,
 	}
 	prevFuncCtx := inf.funcCtx
 	inf.funcCtx = funcCtx
@@ -1235,6 +1237,13 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 		if len(knownTypes) > 0 {
 			tentativeRet := NewUnionType(knownTypes...)
 			fnType.Ret = tentativeRet
+			if funcCtx.mirrorFnType != nil {
+				origin := inf.selfType
+				if st, ok := inf.selfType.(*StructType); ok && st.GenericOrigin != nil {
+					origin = st.GenericOrigin
+				}
+				funcCtx.mirrorFnType.Ret = ReplaceType(tentativeRet, origin, inf.selfType)
+			}
 			inf.warnings = inf.warnings[:savedWarnIdx]
 
 			funcCtx.returnTypes = nil
@@ -1269,6 +1278,13 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 		}
 	} else if unifiedType != TypeUnknown {
 		fnType.Ret = unifiedType
+		if funcCtx.mirrorFnType != nil {
+			origin := inf.selfType
+			if st, ok := inf.selfType.(*StructType); ok && st.GenericOrigin != nil {
+				origin = st.GenericOrigin
+			}
+			funcCtx.mirrorFnType.Ret = ReplaceType(unifiedType, origin, inf.selfType)
+		}
 	} else {
 		if isMethod {
 			inf.addWarning(pos, "Unknown type of return value in method '%s' of struct '%s'", entityName, structName)
@@ -1580,7 +1596,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		prevScope := inf.scope
 		inf.scope = childScope
-		err := inf.inferFuncBody(s.Body, fnType, declaredRetType, s.Pos(), s.Name, false, "")
+		err := inf.inferFuncBody(s.Body, fnType, declaredRetType, s.Pos(), s.Name, false, "", nil)
 		inf.scope = prevScope
 		if origScope != nil {
 			inf.scope = origScope
@@ -2109,16 +2125,15 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		// Pass B: Infer method bodies using inferFuncBody
 		// If struct is generic, Self and self in method bodies must refer to Box[T1, T2] instead of bare Box.
 		passBSelfType := Type(st)
+		var pInst *StructType
 		if len(st.TypeParams) > 0 {
 			tpArgs := make([]Type, len(st.TypeParams))
 			for i, tp := range st.TypeParams {
 				tpArgs[i] = &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
 			}
 			passBSelfType = InstantiateStruct(st, tpArgs)
-			if pInst, ok := passBSelfType.(*StructType); ok {
-				for _, item := range methodItems {
-					pInst.Methods[item.methodDef.Name] = item.methodType
-				}
+			if p, ok := passBSelfType.(*StructType); ok {
+				pInst = p
 			}
 		}
 		prevPassBSelf := inf.selfType
@@ -2151,7 +2166,24 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if m.Name == "init" {
 				checkDeclaredRet = TypeUnknown
 			}
-			err := inf.inferFuncBody(m.Body, item.methodType, checkDeclaredRet, m.Pos(), m.Name, true, s.Name)
+
+			var mirrorFn *FuncType
+			if pInst != nil {
+				if pm, ok := pInst.Methods[m.Name]; ok && pm != nil {
+					if len(pm.Overloads) > 0 {
+						for _, ov := range pm.Overloads {
+							if ov.MinArity == item.methodType.MinArity && ov.MaxArity == item.methodType.MaxArity {
+								mirrorFn = ov
+								break
+							}
+						}
+					} else {
+						mirrorFn = pm
+					}
+				}
+			}
+
+			err := inf.inferFuncBody(m.Body, item.methodType, checkDeclaredRet, m.Pos(), m.Name, true, s.Name, mirrorFn)
 			inf.scope = prevScope
 			if err != nil {
 				inf.selfType = prevPassBSelf
@@ -2162,12 +2194,8 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 			if m.Name == "init" {
 				item.methodType.Ret = st
-			}
-			if passBSelfType != st {
-				if pInst, ok := passBSelfType.(*StructType); ok {
-					if existingM, exists := pInst.Methods[m.Name]; exists && existingM != nil {
-						existingM.Ret = item.methodType.Ret
-					}
+				if mirrorFn != nil {
+					mirrorFn.Ret = passBSelfType
 				}
 			}
 		}
@@ -2186,9 +2214,15 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				existing.OverloadUnion = fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String())
 				if passBSelfType != st {
 					if pInst, ok := passBSelfType.(*StructType); ok {
-						if pExisting, pOk := pInst.Methods[opName]; pOk && pExisting != nil {
-							pExisting.Ret = ret
-							pExisting.OverloadUnion = existing.OverloadUnion
+						if pExisting, pOk := pInst.Methods[opName]; pOk && pExisting != nil && len(pExisting.Overloads) == 2 {
+							pUnary := pExisting.Overloads[0]
+							pBinary := pExisting.Overloads[1]
+							pRet := pBinary.Ret
+							if !pUnary.Ret.Equals(pBinary.Ret) {
+								pRet = NewUnionType(pUnary.Ret, pBinary.Ret)
+							}
+							pExisting.Ret = pRet
+							pExisting.OverloadUnion = fmt.Sprintf("%s | %s", pUnary.String(), pBinary.String())
 						}
 					}
 				}
@@ -3111,14 +3145,44 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 {
 				bindings := make(map[string]Type)
 				argStartIdx := 0
-				if len(e.Args) > 0 {
+				if len(e.Args) >= 2 {
 					if _, isNamed := e.Args[0].(*ast.NamedArgExpr); !isNamed {
 						if firstT, err := inf.inferExpr(e.Args[0]); err == nil {
 							if firstSt, ok := firstT.(*StructType); ok && firstSt.Name == st.Name && len(firstSt.TypeArgs) == len(st.TypeParams) {
-								for i, tp := range st.TypeParams {
-									bindings[tp.Name] = firstSt.TypeArgs[i]
+								hasNamedInRest := false
+								for _, a := range e.Args[1:] {
+									if _, ok := a.(*ast.NamedArgExpr); ok {
+										hasNamedInRest = true
+										break
+									}
 								}
-								argStartIdx = 1
+								isCopy := hasNamedInRest
+								if !isCopy {
+									var firstExpectedT Type
+									maxPositional := 0
+									if initFn, hasInit := st.Methods["init"]; hasInit {
+										maxPositional = initFn.MaxArity
+										if tup, ok := initFn.Arg.(*TupleType); ok && len(tup.Elems) > 0 {
+											firstExpectedT = tup.Elems[0]
+										}
+									} else {
+										maxPositional = len(st.FieldOrder)
+										if len(st.FieldOrder) > 0 {
+											firstExpectedT = st.Fields[st.FieldOrder[0]]
+										}
+									}
+									if len(e.Args) > maxPositional {
+										isCopy = true
+									} else if firstExpectedT != nil && !IsAssignableTo(firstT, firstExpectedT) {
+										isCopy = true
+									}
+								}
+								if isCopy {
+									for i, tp := range st.TypeParams {
+										bindings[tp.Name] = firstSt.TypeArgs[i]
+									}
+									argStartIdx = 1
+								}
 							}
 						}
 					}
@@ -3176,10 +3240,38 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				calleeT = st
 			}
 			isCopyUpdate := false
-			if len(e.Args) > 0 {
+			if len(e.Args) >= 2 {
 				if _, isNamed := e.Args[0].(*ast.NamedArgExpr); !isNamed {
 					if firstT, err := inf.inferExpr(e.Args[0]); err == nil && firstT.Equals(st) {
-						isCopyUpdate = true
+						hasNamedInRest := false
+						for _, a := range e.Args[1:] {
+							if _, ok := a.(*ast.NamedArgExpr); ok {
+								hasNamedInRest = true
+								break
+							}
+						}
+						if hasNamedInRest {
+							isCopyUpdate = true
+						} else {
+							var firstExpectedT Type
+							maxPositional := 0
+							if initFn, hasInit := st.Methods["init"]; hasInit {
+								maxPositional = initFn.MaxArity
+								if tup, ok := initFn.Arg.(*TupleType); ok && len(tup.Elems) > 0 {
+									firstExpectedT = tup.Elems[0]
+								}
+							} else {
+								maxPositional = len(st.FieldOrder)
+								if len(st.FieldOrder) > 0 {
+									firstExpectedT = st.Fields[st.FieldOrder[0]]
+								}
+							}
+							if len(e.Args) > maxPositional {
+								isCopyUpdate = true
+							} else if firstExpectedT != nil && !IsAssignableTo(firstT, firstExpectedT) {
+								isCopyUpdate = true
+							}
+						}
 					}
 				}
 			}
@@ -3380,11 +3472,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				instFn.TypeArgs = typeArgs
 				fnT = instFn
 				calleeT = instFn
-				if inf.funcCtx != nil && (inf.funcCtx.fnType == origFnT || inf.funcCtx.fnType == fnT) {
+				if inf.funcCtx != nil && (inf.funcCtx.fnType == origFnT || inf.funcCtx.fnType == fnT || (inf.funcCtx.mirrorFnType != nil && (inf.funcCtx.mirrorFnType == origFnT || inf.funcCtx.mirrorFnType == fnT))) {
 					inf.funcCtx.selfCalled = true
 				}
 			}
-			if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
+			if inf.funcCtx != nil && (inf.funcCtx.fnType == fnT || (inf.funcCtx.mirrorFnType != nil && inf.funcCtx.mirrorFnType == fnT)) {
 				inf.funcCtx.selfCalled = true
 			}
 			args := e.Args
