@@ -2803,6 +2803,79 @@ struct GoodDefaults[A = Int, B: Numeric = A]:
 	if err := inf13p.InferProgram(p13p); err != nil {
 		t.Errorf("unexpected error for GoodDefaults: %v", err)
 	}
+
+	// 14. Bare struct annotation with sequential defaults
+	codeSeqBareAnnotation := `
+struct Pair[A = Int, B = A]:
+    a: A
+    b: B
+
+p: Pair = Pair(1, 2)
+`
+	p14 := parser.NewParser(lexer.NewLexer(codeSeqBareAnnotation)).ParseProgram()
+	inf14 := NewInferencer()
+	if err := inf14.InferProgram(p14); err != nil {
+		t.Errorf("unexpected error for bare Pair annotation: %v", err)
+	}
+
+	// 15. Recursive method in generic struct without return type annotation
+	codeGenericRecursion := `
+struct Counter[T]:
+    tag: T
+    def count(n: Int):
+        if n <= 0:
+            0
+        else:
+            self.count(n - 1) + 1
+`
+	p15 := parser.NewParser(lexer.NewLexer(codeGenericRecursion)).ParseProgram()
+	inf15 := NewInferencer()
+	if err := inf15.InferProgram(p15); err != nil {
+		t.Errorf("unexpected error for recursive generic method: %v", err)
+	}
+
+	// 16. Constructor call and copy-update validation inside struct methods
+	codeConstructorChecks := `
+struct Point:
+    x: Int
+    y: Int
+
+    def bad_cons():
+        Point("wrong", 2)
+`
+	p16 := parser.NewParser(lexer.NewLexer(codeConstructorChecks)).ParseProgram()
+	inf16 := NewInferencer()
+	if err := inf16.InferProgram(p16); err == nil {
+		t.Errorf("expected error for bad Point constructor call inside method, got nil")
+	}
+
+	codeCopyUpdateBadField := `
+struct Point:
+    x: Int
+    y: Int
+
+    def bad_update():
+        Point(self, z: 10)
+`
+	p16b := parser.NewParser(lexer.NewLexer(codeCopyUpdateBadField)).ParseProgram()
+	inf16b := NewInferencer()
+	if err := inf16b.InferProgram(p16b); err == nil {
+		t.Errorf("expected error for unknown field in copy-update, got nil")
+	}
+
+	codeCopyUpdateBadType := `
+struct Point:
+    x: Int
+    y: Int
+
+    def bad_update():
+        Point(self, x: "not_int")
+`
+	p16c := parser.NewParser(lexer.NewLexer(codeCopyUpdateBadType)).ParseProgram()
+	inf16c := NewInferencer()
+	if err := inf16c.InferProgram(p16c); err == nil {
+		t.Errorf("expected error for type mismatch in copy-update, got nil")
+	}
 }
 
 

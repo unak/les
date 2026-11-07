@@ -2063,6 +2063,28 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
+		if _, hasInit := st.Methods["init"]; !hasInit {
+			var initParamTypes []Type
+			minArity := 0
+			for _, f := range s.Fields {
+				if f.IsEmbedded {
+					continue
+				}
+				initParamTypes = append(initParamTypes, st.Fields[f.Name])
+				if f.DefaultValue == nil {
+					minArity++
+				}
+			}
+			st.Methods["init"] = &FuncType{
+				Arg: &TupleType{
+					Elems: initParamTypes,
+				},
+				MinArity: minArity,
+				MaxArity: len(initParamTypes),
+				Ret:      st,
+			}
+		}
+
 		// Validate default type parameters against constraints now that methods and fields are registered
 		defaultBindings := make(map[string]Type)
 		for _, tp := range st.TypeParams {
@@ -2093,6 +2115,11 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				tpArgs[i] = &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
 			}
 			passBSelfType = InstantiateStruct(st, tpArgs)
+			if pInst, ok := passBSelfType.(*StructType); ok {
+				for _, item := range methodItems {
+					pInst.Methods[item.methodDef.Name] = item.methodType
+				}
+			}
 		}
 		prevPassBSelf := inf.selfType
 		inf.selfType = passBSelfType
@@ -2165,28 +2192,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						}
 					}
 				}
-			}
-		}
-
-		if _, hasInit := st.Methods["init"]; !hasInit {
-			var initParamTypes []Type
-			minArity := 0
-			for _, f := range s.Fields {
-				if f.IsEmbedded {
-					continue
-				}
-				initParamTypes = append(initParamTypes, st.Fields[f.Name])
-				if f.DefaultValue == nil {
-					minArity++
-				}
-			}
-			st.Methods["init"] = &FuncType{
-				Arg: &TupleType{
-					Elems: initParamTypes,
-				},
-				MinArity: minArity,
-				MaxArity: len(initParamTypes),
-				Ret:      st,
 			}
 		}
 
@@ -3178,7 +3183,40 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					}
 				}
 			}
-			if !isCopyUpdate {
+			if isCopyUpdate {
+				posIdx := 0
+				for i := 1; i < len(e.Args); i++ {
+					arg := e.Args[i]
+					if named, isNamed := arg.(*ast.NamedArgExpr); isNamed {
+						if expectedFieldT, hasField := st.Fields[named.Name]; hasField {
+							valT, err := inf.inferExpr(named.Value)
+							if err != nil {
+								return nil, err
+							}
+							if !IsAssignableTo(valT, expectedFieldT) {
+								return nil, inf.nodeErr(named.Value, "type mismatch for field '%s' in struct '%s': expected %s, got %s", named.Name, st.Name, expectedFieldT, valT)
+							}
+						} else {
+							return nil, inf.nodeErr(named, "unknown field '%s' in struct '%s'", named.Name, st.Name)
+						}
+					} else {
+						if posIdx < len(st.FieldOrder) {
+							fName := st.FieldOrder[posIdx]
+							expectedFieldT := st.Fields[fName]
+							valT, err := inf.inferExpr(arg)
+							if err != nil {
+								return nil, err
+							}
+							if !IsAssignableTo(valT, expectedFieldT) {
+								return nil, inf.nodeErr(arg, "type mismatch for field '%s' in struct '%s': expected %s, got %s", fName, st.Name, expectedFieldT, valT)
+							}
+							posIdx++
+						} else {
+							return nil, inf.nodeErr(arg, "too many arguments for struct '%s' update", st.Name)
+						}
+					}
+				}
+			} else {
 				if initFn, hasInit := st.Methods["init"]; hasInit {
 					if argTuple, ok := initFn.Arg.(*TupleType); ok {
 						var posArgs []ast.Expr
@@ -4155,9 +4193,15 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			defaultArgs := make([]Type, len(st.TypeParams))
 			bindings := make(map[string]Type)
 			for i, tp := range st.TypeParams {
-				if tp.Default != nil && !ContainsSelfOrParam(tp.Default) {
-					defaultArgs[i] = Substitute(tp.Default, bindings)
-					bindings[tp.Name] = defaultArgs[i]
+				if tp.Default != nil {
+					defT := Substitute(tp.Default, bindings)
+					if !ContainsSelfOrParam(defT) {
+						defaultArgs[i] = defT
+						bindings[tp.Name] = defaultArgs[i]
+					} else {
+						allHaveDefault = false
+						break
+					}
 				} else {
 					allHaveDefault = false
 					break

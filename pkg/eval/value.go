@@ -934,9 +934,22 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 				closure.FuncType = mType
 				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
 					bindings := make(map[string]types.Type)
+					var inf *types.Inferencer
+					if si.Def.Env != nil && si.Def.Env.Inferencer != nil {
+						if i, ok := si.Def.Env.Inferencer.(*types.Inferencer); ok {
+							inf = i
+						}
+					}
 					for i, argStr := range si.TypeArgs {
 						if i < len(si.Def.TypeParams) {
-							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+							var t types.Type
+							if inf != nil {
+								t, _ = inf.ParseTypeAnnot(argStr)
+							}
+							if t == nil {
+								t, _ = types.ParseTypeAnnot(argStr)
+							}
+							if t != nil {
 								bindings[si.Def.TypeParams[i].Name] = t
 							}
 						}
@@ -987,9 +1000,22 @@ func (si *StructInstance) makeDispatcher(name string, methods []*ast.FuncDef) Va
 				bf.FuncType = mType
 				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
 					bindings := make(map[string]types.Type)
+					var inf *types.Inferencer
+					if si.Def.Env != nil && si.Def.Env.Inferencer != nil {
+						if i, ok := si.Def.Env.Inferencer.(*types.Inferencer); ok {
+							inf = i
+						}
+					}
 					for i, argStr := range si.TypeArgs {
 						if i < len(si.Def.TypeParams) {
-							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+							var t types.Type
+							if inf != nil {
+								t, _ = inf.ParseTypeAnnot(argStr)
+							}
+							if t == nil {
+								t, _ = types.ParseTypeAnnot(argStr)
+							}
+							if t != nil {
 								bindings[si.Def.TypeParams[i].Name] = t
 							}
 						}

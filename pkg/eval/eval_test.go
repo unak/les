@@ -6939,7 +6939,36 @@ r_box_match = c is Container[Maker]
 	if Force(vBox).(BoolValue) != true {
 		t.Errorf("expected r_box_match == true, got %v", vBox)
 	}
+
+	// 4. Runtime interface check with user-defined type argument in generic struct
+	codeUserTypeArgsIface := `
+interface Equatable[T = Self]:
+    ==(other: T): Bool
+
+struct Item:
+    val: Int
+    def ==(other: Item) -> Bool:
+        self.val == other.val
+
+struct GenWrapper[T]:
+    item: T
+    def ==(other: Self) -> Bool:
+        self.item == other.item
+
+w = GenWrapper(Item(42))
+is_eq = w is Equatable
+`
+	ev4 := NewEvaluator()
+	prog4 := parser.NewParser(lexer.NewLexer(codeUserTypeArgsIface)).ParseProgram()
+	if _, err := ev4.EvalProgram(prog4); err != nil {
+		t.Fatalf("unexpected eval error in prog4: %v", err)
+	}
+	vEq, _ := ev4.globalEnv.Get("is_eq")
+	if Force(vEq).(BoolValue) != true {
+		t.Errorf("expected is_eq == true, got %v", vEq)
+	}
 }
+
 
 
 
