@@ -2078,7 +2078,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			inf.scope = item.methodScope
 			_ = item.methodScope.Declare("self", passBSelfType)
 			checkDeclaredRet := item.declaredRetType
-			if checkDeclaredRet != nil && checkDeclaredRet.Equals(st) {
+			if passBSelfType != st {
+				checkDeclaredRet = ReplaceType(checkDeclaredRet, st, passBSelfType)
+				for name, bType := range item.methodScope.bindings {
+					if name != "self" {
+						subB := ReplaceType(bType, st, passBSelfType)
+						if subB != bType {
+							item.methodScope.bindings[name] = subB
+						}
+					}
+				}
+			} else if checkDeclaredRet != nil && checkDeclaredRet.Equals(st) {
 				checkDeclaredRet = passBSelfType
 			}
 			if m.Name == "init" {
@@ -3451,10 +3461,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			args[i] = t
 		}
 		if st, ok := targetT.(*StructType); ok {
-			if err := ValidateTypeConstraints(st.TypeParams, args); err != nil {
+			origin := st
+			if origin.GenericOrigin != nil {
+				origin = origin.GenericOrigin
+			}
+			if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
 				return nil, inf.nodeErr(e, "%s", err.Error())
 			}
-			return InstantiateStruct(st, args), nil
+			return InstantiateStruct(origin, args), nil
 		}
 		if fnT, ok := targetT.(*FuncType); ok {
 			if err := ValidateTypeConstraints(fnT.TypeParams, args); err != nil {
@@ -3478,10 +3492,14 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return instFn, nil
 		}
 		if iface, ok := targetT.(*InterfaceType); ok {
-			if err := ValidateTypeConstraints(iface.TypeParams, args); err != nil {
+			origin := iface
+			if origin.GenericOrigin != nil {
+				origin = origin.GenericOrigin
+			}
+			if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
 				return nil, inf.nodeErr(e, "%s", err.Error())
 			}
-			return InstantiateInterface(iface, args), nil
+			return InstantiateInterface(origin, args), nil
 		}
 		return nil, inf.nodeErr(e, "cannot instantiate type arguments on %s", targetT.String())
 
@@ -3491,13 +3509,19 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		if e.TypeArg != "" {
-			if st, ok := targetT.(*StructType); ok && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 {
-				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
-					args := []Type{argT}
-					if err := ValidateTypeConstraints(st.TypeParams, args); err != nil {
-						return nil, inf.nodeErr(e, "%s", err.Error())
+			if st, ok := targetT.(*StructType); ok {
+				origin := st
+				if origin.GenericOrigin != nil {
+					origin = origin.GenericOrigin
+				}
+				if len(origin.TypeParams) > 0 {
+					if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+						args := []Type{argT}
+						if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
+							return nil, inf.nodeErr(e, "%s", err.Error())
+						}
+						return InstantiateStruct(origin, args), nil
 					}
-					return InstantiateStruct(st, args), nil
 				}
 			}
 			if fnT, ok := targetT.(*FuncType); ok && len(fnT.TypeParams) > 0 && len(fnT.TypeArgs) == 0 {
@@ -3524,13 +3548,19 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					return instFn, nil
 				}
 			}
-			if iface, ok := targetT.(*InterfaceType); ok && len(iface.TypeParams) > 0 && len(iface.TypeArgs) == 0 {
-				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
-					args := []Type{argT}
-					if err := ValidateTypeConstraints(iface.TypeParams, args); err != nil {
-						return nil, inf.nodeErr(e, "%s", err.Error())
+			if iface, ok := targetT.(*InterfaceType); ok {
+				origin := iface
+				if origin.GenericOrigin != nil {
+					origin = origin.GenericOrigin
+				}
+				if len(origin.TypeParams) > 0 {
+					if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+						args := []Type{argT}
+						if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
+							return nil, inf.nodeErr(e, "%s", err.Error())
+						}
+						return InstantiateInterface(origin, args), nil
 					}
-					return InstantiateInterface(iface, args), nil
 				}
 			}
 		}

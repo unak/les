@@ -2660,6 +2660,99 @@ struct Box[T]:
 	if st, ok := tMod.(*StructType); !ok || len(st.TypeArgs) != 1 || st.TypeArgs[0] != TypeInt {
 		t.Errorf("expected testmod::DefaultBox[Int], got %v", tMod)
 	}
+
+	// 8. Composite return types with Self in generic struct methods
+	codeCompositeSelf := `
+struct Container[T]:
+    val: T
+    def get_pair() -> (Self, Int):
+        (Container("wrong"), 1)
+`
+	p8 := parser.NewParser(lexer.NewLexer(codeCompositeSelf)).ParseProgram()
+	inf8 := NewInferencer()
+	if err := inf8.InferProgram(p8); err == nil {
+		t.Errorf("expected error for Container[T].get_pair returning (Container[String], Int), got nil")
+	}
+
+	// 9. Sequential default type parameters in interface
+	ifacePair := &InterfaceType{
+		Name: "PairIface",
+		TypeParams: []TypeParamDef{
+			{Name: "A", Default: TypeInt},
+			{Name: "B", Default: &TypeParamType{Name: "A"}},
+		},
+		Methods: map[string]*FuncType{},
+	}
+	resolvedPair := ResolveInterfaceForReceiver(ifacePair, nil)
+	if len(resolvedPair.TypeArgs) != 2 || resolvedPair.TypeArgs[0] != TypeInt || resolvedPair.TypeArgs[1] != TypeInt {
+		t.Errorf("expected PairIface[Int, Int], got %v", resolvedPair)
+	}
+
+	// 10. ImplementsInterface constraint referencing Self
+	codeSelfConstraint := `
+interface SelfCmp[T: Equatable[Self] = Self]:
+    cmp(other: T): Bool
+
+struct IntWrapper:
+    val: Int
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: IntWrapper) -> Bool:
+        true
+
+struct StringWrapper:
+    val: String
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: StringWrapper) -> Bool:
+        true
+
+w1: SelfCmp[IntWrapper] = IntWrapper(1)
+`
+	p10 := parser.NewParser(lexer.NewLexer(codeSelfConstraint)).ParseProgram()
+	inf10 := NewInferencer()
+	if err := inf10.InferProgram(p10); err != nil {
+		t.Errorf("unexpected error for valid SelfCmp[IntWrapper] assignment: %v", err)
+	}
+
+	codeSelfConstraintFail := `
+interface SelfCmp[T: Equatable[Self] = Self]:
+    cmp(other: T): Bool
+
+struct IntWrapper:
+    val: Int
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: IntWrapper) -> Bool:
+        true
+
+struct StringWrapper:
+    val: String
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: StringWrapper) -> Bool:
+        true
+
+w2: SelfCmp[IntWrapper] = StringWrapper("hello")
+`
+	p10Fail := parser.NewParser(lexer.NewLexer(codeSelfConstraintFail)).ParseProgram()
+	inf10Fail := NewInferencer()
+	if err := inf10Fail.InferProgram(p10Fail); err == nil {
+		t.Errorf("expected error assigning StringWrapper to SelfCmp[IntWrapper] where IntWrapper is not Equatable[StringWrapper], got nil")
+	}
+
+	// 11. TypeInstExpr on Self inside generic struct
+	codeGenericOrigin := `
+struct Node[T]:
+    val: T
+    def make_other() -> Node[Int]:
+        Self[Int](42)
+`
+	p11 := parser.NewParser(lexer.NewLexer(codeGenericOrigin)).ParseProgram()
+	inf11 := NewInferencer()
+	if err := inf11.InferProgram(p11); err != nil {
+		t.Errorf("unexpected error for Self[Int] inside generic struct Node[T]: %v", err)
+	}
 }
 
 
