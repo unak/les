@@ -1415,15 +1415,24 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					}
 					defType = dType
 				}
-				if tpTypes[i].Constraint != nil && defType != nil {
-					if !ContainsSelfOrParam(tpTypes[i].Constraint) && !ContainsSelfOrParam(defType) {
-						if !IsAssignableTo(defType, tpTypes[i].Constraint) {
+				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
+			}
+			defaultBindings := make(map[string]Type)
+			for _, tp := range typeParamDefs {
+				curDefault := tp.Default
+				if curDefault != nil {
+					curDefault = Substitute(curDefault, defaultBindings)
+					defaultBindings[tp.Name] = curDefault
+				}
+				if tp.Constraint != nil && curDefault != nil {
+					curConstraint := Substitute(tp.Constraint, defaultBindings)
+					if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+						if !IsAssignableTo(curDefault, curConstraint) {
 							inf.scope = origScope
-							return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", defType, tpTypes[i].Constraint, tp.Name)
+							return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", curDefault, curConstraint, tp.Name)
 						}
 					}
 				}
-				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 			}
 		}
 
@@ -1829,20 +1838,29 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						}
 						defType = dType
 					}
-					if tpTypes[i].Constraint != nil && defType != nil {
-						if !ContainsSelfOrParam(tpTypes[i].Constraint) && !ContainsSelfOrParam(defType) {
-							if !IsAssignableTo(defType, tpTypes[i].Constraint) {
+					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
+				}
+				defaultBindings := make(map[string]Type)
+				for _, tp := range mTypeParams {
+					curDefault := tp.Default
+					if curDefault != nil {
+						curDefault = Substitute(curDefault, defaultBindings)
+						defaultBindings[tp.Name] = curDefault
+					}
+					if tp.Constraint != nil && curDefault != nil {
+						curConstraint := Substitute(tp.Constraint, defaultBindings)
+						if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+							if !IsAssignableTo(curDefault, curConstraint) {
 								if len(m.TypeParams) > 0 {
 									inf.scope = prevInfScope
 								}
 								if origScope != nil {
 									inf.scope = origScope
 								}
-								return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s in method '%s'", defType, tpTypes[i].Constraint, tp.Name, m.Name)
+								return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s in method '%s'", curDefault, curConstraint, tp.Name, m.Name)
 							}
 						}
 					}
-					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 				}
 				methodScope = mScope
 			}
@@ -2046,14 +2064,21 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		// Validate default type parameters against constraints now that methods and fields are registered
+		defaultBindings := make(map[string]Type)
 		for _, tp := range st.TypeParams {
-			if tp.Constraint != nil && tp.Default != nil {
-				if !ContainsSelfOrParam(tp.Constraint) && !ContainsSelfOrParam(tp.Default) {
-					if !IsAssignableTo(tp.Default, tp.Constraint) {
+			curDefault := tp.Default
+			if curDefault != nil {
+				curDefault = Substitute(curDefault, defaultBindings)
+				defaultBindings[tp.Name] = curDefault
+			}
+			if tp.Constraint != nil && curDefault != nil {
+				curConstraint := Substitute(tp.Constraint, defaultBindings)
+				if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+					if !IsAssignableTo(curDefault, curConstraint) {
 						if origScope != nil {
 							inf.scope = origScope
 						}
-						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", tp.Default, tp.Constraint, tp.Name)
+						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", curDefault, curConstraint, tp.Name)
 					}
 				}
 			}
@@ -2076,21 +2101,26 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			m := item.methodDef
 			prevScope := inf.scope
 			inf.scope = item.methodScope
-			_ = item.methodScope.Declare("self", passBSelfType)
 			checkDeclaredRet := item.declaredRetType
 			if passBSelfType != st {
 				checkDeclaredRet = ReplaceType(checkDeclaredRet, st, passBSelfType)
-				for name, bType := range item.methodScope.bindings {
-					if name != "self" {
-						subB := ReplaceType(bType, st, passBSelfType)
-						if subB != bType {
-							item.methodScope.bindings[name] = subB
+				for sc := item.methodScope; sc != nil && sc != origScope && sc != prevScope; sc = sc.parent {
+					if _, hasSelf := sc.bindings["self"]; hasSelf {
+						sc.bindings["self"] = passBSelfType
+					}
+					for name, bType := range sc.bindings {
+						if name != "self" {
+							subB := ReplaceType(bType, st, passBSelfType)
+							if subB != bType {
+								sc.bindings[name] = subB
+							}
 						}
 					}
 				}
 			} else if checkDeclaredRet != nil && checkDeclaredRet.Equals(st) {
 				checkDeclaredRet = passBSelfType
 			}
+			_ = item.methodScope.Declare("self", passBSelfType)
 			if m.Name == "init" {
 				checkDeclaredRet = TypeUnknown
 			}
@@ -2106,6 +2136,13 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			if m.Name == "init" {
 				item.methodType.Ret = st
 			}
+			if passBSelfType != st {
+				if pInst, ok := passBSelfType.(*StructType); ok {
+					if existingM, exists := pInst.Methods[m.Name]; exists && existingM != nil {
+						existingM.Ret = item.methodType.Ret
+					}
+				}
+			}
 		}
 		inf.selfType = prevPassBSelf
 
@@ -2120,6 +2157,14 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 				existing.Ret = ret
 				existing.OverloadUnion = fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String())
+				if passBSelfType != st {
+					if pInst, ok := passBSelfType.(*StructType); ok {
+						if pExisting, pOk := pInst.Methods[opName]; pOk && pExisting != nil {
+							pExisting.Ret = ret
+							pExisting.OverloadUnion = existing.OverloadUnion
+						}
+					}
+				}
 			}
 		}
 
@@ -2278,20 +2323,29 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						}
 						defType = dType
 					}
-					if tpTypes[i].Constraint != nil && defType != nil {
-						if !ContainsSelfOrParam(tpTypes[i].Constraint) && !ContainsSelfOrParam(defType) {
-							if !IsAssignableTo(defType, tpTypes[i].Constraint) {
+					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
+				}
+				defaultBindings := make(map[string]Type)
+				for _, tp := range mTypeParams {
+					curDefault := tp.Default
+					if curDefault != nil {
+						curDefault = Substitute(curDefault, defaultBindings)
+						defaultBindings[tp.Name] = curDefault
+					}
+					if tp.Constraint != nil && curDefault != nil {
+						curConstraint := Substitute(tp.Constraint, defaultBindings)
+						if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+							if !IsAssignableTo(curDefault, curConstraint) {
 								if len(m.TypeParams) > 0 {
 									inf.scope = prevInfScope
 								}
 								if origScope != nil {
 									inf.scope = origScope
 								}
-								return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s in method '%s'", defType, tpTypes[i].Constraint, tp.Name, m.Name)
+								return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s in method '%s'", curDefault, curConstraint, tp.Name, m.Name)
 							}
 						}
 					}
-					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 				}
 			}
 
@@ -2394,14 +2448,21 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 
 		// Validate default type parameters against constraints now that interface methods are registered
+		defaultBindings := make(map[string]Type)
 		for _, tp := range iface.TypeParams {
-			if tp.Constraint != nil && tp.Default != nil {
-				if !ContainsSelfOrParam(tp.Constraint) && !ContainsSelfOrParam(tp.Default) {
-					if !IsAssignableTo(tp.Default, tp.Constraint) {
+			curDefault := tp.Default
+			if curDefault != nil {
+				curDefault = Substitute(curDefault, defaultBindings)
+				defaultBindings[tp.Name] = curDefault
+			}
+			if tp.Constraint != nil && curDefault != nil {
+				curConstraint := Substitute(tp.Constraint, defaultBindings)
+				if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+					if !IsAssignableTo(curDefault, curConstraint) {
 						if origScope != nil {
 							inf.scope = origScope
 						}
-						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", tp.Default, tp.Constraint, tp.Name)
+						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", curDefault, curConstraint, tp.Name)
 					}
 				}
 			}

@@ -2753,6 +2753,56 @@ struct Node[T]:
 	if err := inf11.InferProgram(p11); err != nil {
 		t.Errorf("unexpected error for Self[Int] inside generic struct Node[T]: %v", err)
 	}
+
+	// 12. Pass B method inference in generic struct: calling unannotated method via self
+	codePassBSelfCall := `
+struct GenBox[T]:
+    val: T
+    def get_val():
+        self.val
+    def proxy():
+        self.get_val()
+    def generic_m[U](extra: U):
+        (self.get_val(), extra)
+`
+	p12 := parser.NewParser(lexer.NewLexer(codePassBSelfCall)).ParseProgram()
+	inf12 := NewInferencer()
+	if err := inf12.InferProgram(p12); err != nil {
+		t.Errorf("unexpected error for GenBox method inference: %v", err)
+	}
+
+	// 13. Sequential default type parameter validation
+	codeSeqDefaultFail := `
+struct BadDefaults[A = String, B: Numeric = A]:
+    a: A
+    b: B
+`
+	p13 := parser.NewParser(lexer.NewLexer(codeSeqDefaultFail)).ParseProgram()
+	inf13 := NewInferencer()
+	if err := inf13.InferProgram(p13); err == nil {
+		t.Errorf("expected error for BadDefaults where B: Numeric has default A = String, got nil")
+	}
+
+	codeSeqDefaultFuncFail := `
+def bad_func[A = String, B: Numeric = A]():
+    nil
+`
+	p13f := parser.NewParser(lexer.NewLexer(codeSeqDefaultFuncFail)).ParseProgram()
+	inf13f := NewInferencer()
+	if err := inf13f.InferProgram(p13f); err == nil {
+		t.Errorf("expected error for bad_func where B: Numeric has default A = String, got nil")
+	}
+
+	codeSeqDefaultPass := `
+struct GoodDefaults[A = Int, B: Numeric = A]:
+    a: A
+    b: B
+`
+	p13p := parser.NewParser(lexer.NewLexer(codeSeqDefaultPass)).ParseProgram()
+	inf13p := NewInferencer()
+	if err := inf13p.InferProgram(p13p); err != nil {
+		t.Errorf("unexpected error for GoodDefaults: %v", err)
+	}
 }
 
 
