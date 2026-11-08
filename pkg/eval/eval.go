@@ -662,42 +662,85 @@ func typeNameWithDepth(val Value, depth int) string {
 	}
 }
 
+func parseTypeAnnotInEnv(annot string, env *Environment) (types.Type, error) {
+	annot = strings.TrimSpace(annot)
+	if annot == "" {
+		return types.TypeUnknown, nil
+	}
+	var inf *types.Inferencer
+	if env != nil && env.Inferencer != nil {
+		if i, ok := env.Inferencer.(*types.Inferencer); ok {
+			inf = i
+		}
+	}
+	if inf != nil {
+		if t, err := inf.ParseTypeAnnot(annot); err == nil {
+			return t, nil
+		}
+	} else {
+		if t, err := types.ParseTypeAnnot(annot); err == nil {
+			return t, nil
+		}
+	}
+	if env != nil {
+		extraTypes := make(map[string]types.Type)
+		for cur := env; cur != nil; cur = cur.parent {
+			for name, val := range cur.store {
+				if _, exists := extraTypes[name]; exists {
+					continue
+				}
+				v := val
+				if evaluated, isEval := PeekEvaluated(val); isEval {
+					v = evaluated
+				}
+				if sDef, ok := v.(*StructDefValue); ok {
+					if sDef.StructType != nil {
+						if st, ok := sDef.StructType.(types.Type); ok {
+							extraTypes[name] = st
+							continue
+						}
+					}
+					extraTypes[name] = &types.StructType{Name: sDef.Name}
+				} else if iDef, ok := v.(*InterfaceDefValue); ok {
+					extraTypes[name] = &types.InterfaceType{Name: iDef.Name}
+				}
+			}
+		}
+		if len(extraTypes) > 0 {
+			return types.ParseTypeAnnotWithEnv(annot, inf, extraTypes)
+		}
+	}
+	if inf != nil {
+		return inf.ParseTypeAnnot(annot)
+	}
+	return types.ParseTypeAnnot(annot)
+}
+
 func resolveTypeParamFromEnv(t types.Type, env *Environment, inf *types.Inferencer) types.Type {
 	if t == nil || !types.ContainsSelfOrParam(t) || env == nil {
 		return t
 	}
 	if selfVal, found := env.Get("self"); found && selfVal != nil {
-		forcedSelf := Force(selfVal)
-		if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 && si.Def != nil {
+		selfToUse := selfVal
+		if evaluated, isEval := PeekEvaluated(selfVal); isEval {
+			selfToUse = evaluated
+		}
+		if si, ok := selfToUse.(*StructInstance); ok && len(si.TypeArgs) > 0 && si.Def != nil {
 			bindings := make(map[string]types.Type)
 			for i, tp := range si.Def.TypeParams {
 				if i < len(si.TypeArgs) {
-					var argT types.Type
-					if inf != nil {
-						argT, _ = inf.ParseTypeAnnot(si.TypeArgs[i])
-					}
-					if argT == nil {
-						argT, _ = types.ParseTypeAnnot(si.TypeArgs[i])
-					}
-					if argT != nil {
+					if argT, err := parseTypeAnnotInEnv(si.TypeArgs[i], env); err == nil && argT != nil {
 						bindings[tp.Name] = argT
 					}
 				}
 			}
 			selfTypeName := fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
-			var selfT types.Type
-			if inf != nil {
-				selfT, _ = inf.ParseTypeAnnot(selfTypeName)
-			}
-			if selfT == nil {
-				selfT, _ = types.ParseTypeAnnot(selfTypeName)
-			}
-			if selfT != nil {
+			if selfT, err := parseTypeAnnotInEnv(selfTypeName, env); err == nil && selfT != nil {
 				bindings["Self"] = selfT
 			}
 			if len(bindings) > 0 {
 				subT := types.Substitute(t, bindings)
-				if selfT != nil {
+				if selfT, ok := bindings["Self"]; ok {
 					subT = types.SubstituteSelf(subT, selfT)
 				}
 				return subT
@@ -708,6 +751,13 @@ func resolveTypeParamFromEnv(t types.Type, env *Environment, inf *types.Inferenc
 }
 
 func safeFieldTypeName(val Value) string {
+	return safeFieldTypeNameWithDepth(val, 0)
+}
+
+func safeFieldTypeNameWithDepth(val Value, depth int) string {
+	if depth > 16 {
+		return ""
+	}
 	if evaluated, ok := PeekEvaluated(val); ok {
 		return typeNameWithDepth(evaluated, 0)
 	}
@@ -734,7 +784,7 @@ func safeFieldTypeName(val Value) string {
 			}
 			if id, ok := thunk.Expr.(*ast.Identifier); ok && thunk.Env != nil {
 				if v, found := thunk.Env.Get(id.Name); found && v != nil && v != val {
-					if tName := safeFieldTypeName(v); tName != "" && tName != "Unknown" {
+					if tName := safeFieldTypeNameWithDepth(v, depth+1); tName != "" && tName != "Unknown" {
 						return tName
 					}
 				}
@@ -742,11 +792,12 @@ func safeFieldTypeName(val Value) string {
 			if mem, ok := thunk.Expr.(*ast.MemberAccessExpr); ok && thunk.Env != nil {
 				if id, ok := mem.Target.(*ast.Identifier); ok {
 					if objVal, found := thunk.Env.Get(id.Name); found && objVal != nil {
-						forcedObj := Force(objVal)
-						if si, ok := forcedObj.(*StructInstance); ok {
-							if fv, ok := si.Fields[mem.Member]; ok {
-								if tName := safeFieldTypeName(fv); tName != "" && tName != "Unknown" {
-									return tName
+						if evaluated, ok := PeekEvaluated(objVal); ok {
+							if si, ok := evaluated.(*StructInstance); ok {
+								if fv, ok := si.Fields[mem.Member]; ok {
+									if tName := safeFieldTypeNameWithDepth(fv, depth+1); tName != "" && tName != "Unknown" {
+										return tName
+									}
 								}
 							}
 						}
@@ -924,20 +975,8 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 }
 
 func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Value, error) {
-	var inf *types.Inferencer
-	if env != nil && env.Inferencer != nil {
-		if i, ok := env.Inferencer.(*types.Inferencer); ok {
-			inf = i
-		}
-	}
-
 	parseArgType := func(s string) types.Type {
-		if inf != nil {
-			if t, err := inf.ParseTypeAnnot(s); err == nil {
-				return t
-			}
-		}
-		if t, err := types.ParseTypeAnnot(s); err == nil {
+		if t, err := parseTypeAnnotInEnv(s, env); err == nil && t != nil {
 			return t
 		}
 		return types.TypeUnknown
@@ -970,11 +1009,7 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		}
 		fullArgs := make([]string, len(v.TypeParams))
 		strBindings := make(map[string]string)
-		selfName := v.Name
-		if len(typeArgs) > 0 {
-			selfName = fmt.Sprintf("%s[%s]", v.Name, strings.Join(typeArgs, ", "))
-		}
-		strBindings["Self"] = selfName
+		strBindings["Self"] = v.Name
 		for i, tp := range v.TypeParams {
 			if i < len(typeArgs) {
 				fullArgs[i] = typeArgs[i]
@@ -5655,6 +5690,9 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					if len(targetTypeArgs) < len(si.Def.TypeParams) {
 						paddedArgs := make([]string, len(si.Def.TypeParams))
 						strBindings := make(map[string]string)
+						if si.Def != nil && si.Def.Name != "" {
+							strBindings["Self"] = si.Def.Name
+						}
 						allPadded := true
 						for i, tp := range si.Def.TypeParams {
 							if i < len(targetTypeArgs) {
@@ -5673,25 +5711,12 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					}
 					if len(si.TypeArgs) == len(targetTypeArgs) {
 						allMatch := true
-						var sInf *types.Inferencer
-						if sEnv != nil && sEnv.Inferencer != nil {
-							if inf, ok := sEnv.Inferencer.(*types.Inferencer); ok {
-								sInf = inf
-							}
-						}
 						for i, ta := range targetTypeArgs {
 							if si.TypeArgs[i] == ta {
 								continue
 							}
-							var actualT, targetT types.Type
-							var err1, err2 error
-							if sInf != nil {
-								actualT, err1 = sInf.ParseTypeAnnot(si.TypeArgs[i])
-								targetT, err2 = sInf.ParseTypeAnnot(ta)
-							} else {
-								actualT, err1 = types.ParseTypeAnnot(si.TypeArgs[i])
-								targetT, err2 = types.ParseTypeAnnot(ta)
-							}
+							actualT, err1 := parseTypeAnnotInEnv(si.TypeArgs[i], sEnv)
+							targetT, err2 := parseTypeAnnotInEnv(ta, sEnv)
 							if err1 == nil && err2 == nil && types.IsAssignableTo(actualT, targetT) {
 								continue
 							}

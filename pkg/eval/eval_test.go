@@ -7381,6 +7381,102 @@ p2_y = p2.y
 	}
 }
 
+func TestSelfPseudoTypePass10Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Box[T, U = Self] specialized with Box[Int] and tested with "is Box[Int]"
+	code1 := `
+struct Box[T, U = Self]:
+    val: T
+
+b1 = Box(10)
+b2 = Box[Int](10)
+
+b1_type = b1.Type()
+b2_type = b2.Type()
+
+is_b1_box_int = b1 is Box[Int]
+is_b2_box_int = b2 is Box[Int]
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "b1_type", "Box[Int, Box]")
+	assertString(ev1, "b2_type", "Box[Int, Box]")
+	assertBool(ev1, "is_b1_box_int", true)
+	assertBool(ev1, "is_b2_box_int", true)
+
+	// 2. Function-local struct used as type argument inside function
+	code2 := `
+def test_local_struct():
+    struct LocalPoint:
+        x: Int
+
+    struct LocalBox[T]:
+        item: T
+        def clone() -> Self:
+            LocalBox(self.item)
+
+    b = LocalBox(LocalPoint(42))
+    c = b.clone()
+    m_type = b.clone.Type()
+    c_type = c.Type()
+    is_box_point = c is LocalBox[LocalPoint]
+    (m_type, c_type, is_box_point)
+
+res = test_local_struct()
+res_m = res[0]
+res_c = res[1]
+res_is = res[2]
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertString(ev2, "res_m", "() -> LocalBox[LocalPoint]")
+	assertString(ev2, "res_c", "LocalBox[LocalPoint]")
+	assertBool(ev2, "res_is", true)
+
+	// 3. Lazy member access in argument should not be eagerly forced
+	code3 := `
+struct Holder:
+    x: Int
+
+struct Consumer:
+    h: Holder
+
+# unevaluated thunk that would panic if forced
+lazy_bad = (1 > 2) ? Holder(1) : nil
+# Passing lazy_bad.x should not panic if laziness is preserved
+c = Consumer(lazy_bad)
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+}
+
 
 
 

@@ -3988,6 +3988,27 @@ func ParseTypeAnnotWithParams(annot string, typeParams []ast.TypeParam, selfType
 	return inf.parseTypeAnnot(annot)
 }
 
+// ParseTypeAnnotWithEnv parses a type annotation string using baseInf (or new Inferencer) with additional known types.
+func ParseTypeAnnotWithEnv(annot string, baseInf *Inferencer, extraTypes map[string]Type, selfType ...Type) (Type, error) {
+	var parentScope *Scope
+	var modules map[string]*ModuleType
+	if baseInf != nil {
+		parentScope = baseInf.scope
+		modules = baseInf.modules
+	}
+	inf := &Inferencer{
+		scope:   NewScope(parentScope),
+		modules: modules,
+	}
+	for name, typ := range extraTypes {
+		_ = inf.scope.Declare(name, typ)
+	}
+	if len(selfType) > 0 && selfType[0] != nil {
+		inf.selfType = selfType[0]
+	}
+	return inf.parseTypeAnnot(annot)
+}
+
 func (inf *Inferencer) ParseTypeAnnot(annot string) (Type, error) {
 	return inf.parseTypeAnnot(annot)
 }
