@@ -7661,6 +7661,66 @@ is_tr = b.check_transformer()
 	assertBool(ev2, "is_tr", true)
 }
 
+func TestSelfPseudoTypePass13Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Copy-update preserves unupdated / phantom type parameters instead of falling back to default
+	code1 := `
+struct Data[T = Int, U = String]:
+    val: T
+    name: String
+
+d1 = Data[Float, Bool](3.14, "first")
+d2 = Data(d1, name: "second")
+d1_type = d1.Type()
+d2_type = d2.Type()
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "d1_type", "Data[Float, Bool]")
+	assertString(ev1, "d2_type", "Data[Float, Bool]")
+
+	// 2. Direct Self binding in interface default resolution
+	code2 := `
+interface Chain[T = Self]:
+    step(): T
+
+struct Tracker:
+    count: Int
+    def step() -> Self:
+        return Tracker(self.count + 1)
+
+t = Tracker(0)
+is_chain = t is Chain
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertBool(ev2, "is_chain", true)
+}
+
 
 
 

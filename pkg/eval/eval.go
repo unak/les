@@ -2720,11 +2720,11 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			Fields:   fields,
 			Embedded: embedded,
 		}
+		if len(inst.TypeArgs) == 0 && baseInstance != nil && len(baseInstance.TypeArgs) > 0 {
+			inst.TypeArgs = append([]string(nil), baseInstance.TypeArgs...)
+		}
 		if len(inst.TypeArgs) == 0 && len(sDef.TypeParams) > 0 {
 			inferStructInstanceTypeArgs(inst)
-			if len(inst.TypeArgs) == 0 && len(baseInstance.TypeArgs) > 0 {
-				inst.TypeArgs = append([]string(nil), baseInstance.TypeArgs...)
-			}
 		}
 		if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 			substMap := make(map[string]string)
@@ -5978,6 +5978,7 @@ func splitTopLevelCommas(s string) []string {
 }
 
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
+	selfTypeName := typeNameOf(Force(val))
 	if len(iface.TypeArgs) == 0 && len(iface.TypeParams) > 0 {
 		allHaveDefault := true
 		for _, tp := range iface.TypeParams {
@@ -5987,10 +5988,13 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 			}
 		}
 		if allHaveDefault {
-			iface = substituteInterfaceDef(iface, nil)
+			var initMap map[string]string
+			if selfTypeName != "" && selfTypeName != "Unknown" {
+				initMap = map[string]string{"Self": selfTypeName}
+			}
+			iface = substituteInterfaceDef(iface, nil, initMap)
 		}
 	}
-	selfTypeName := typeNameOf(Force(val))
 	if selfTypeName != "" && selfTypeName != "Unknown" {
 		selfMap := map[string]string{"Self": selfTypeName}
 		var newEmbedded []string
