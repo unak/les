@@ -2445,3 +2445,710 @@ func TestModuleAccessPrivateAndEmptyStaticCheck(t *testing.T) {
 		t.Fatalf("expected empty member error, got: %v", err)
 	}
 }
+
+func TestSelfPseudoTypeAndDefaultTypeParamInference(t *testing.T) {
+	code := `
+interface Cloneable:
+    Clone(): Self
+
+interface Addable[T = Self]:
+    +(other: T): Self
+
+struct Vec2:
+    x: Int
+    y: Int
+    def Clone() -> Self:
+        Vec2(@x, @y)
+    def +(other: Self) -> Self:
+        Vec2(@x + other.x, @y + other.y)
+
+struct ScaledVec2:
+    x: Int
+    y: Int
+    def +(scalar: Int) -> Self:
+        ScaledVec2(@x + scalar, @y + scalar)
+
+v1 = Vec2(1, 2)
+v2 = v1.Clone()
+c: Cloneable = v1
+a_self: Addable = v1
+a_int: Addable[Int] = ScaledVec2(1, 2)
+
+def sum[N: Numeric](a: N, b: N) -> N:
+    a + b
+
+def abs_diff[N: Numeric](a: N, b: N) -> N:
+    (a - b).Abs()
+
+s_int = sum(10, 20)
+s_flt = sum(1.5, 2.5)
+d_int = abs_diff(10, 25)
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type inference error: %v", err)
+	}
+
+	if v2T, ok := inf.scope.Lookup("v2"); !ok || v2T.String() != "Vec2" {
+		t.Errorf("expected v2 to have type Vec2, got %v", v2T)
+	}
+	if sIntT, ok := inf.scope.Lookup("s_int"); !ok || sIntT != TypeInt {
+		t.Errorf("expected s_int to be Int, got %v", sIntT)
+	}
+	if sFltT, ok := inf.scope.Lookup("s_flt"); !ok || sFltT != TypeFloat {
+		t.Errorf("expected s_flt to be Float, got %v", sFltT)
+	}
+	if dIntT, ok := inf.scope.Lookup("d_int"); !ok || dIntT != TypeInt {
+		t.Errorf("expected d_int to be Int, got %v", dIntT)
+	}
+
+	// Using Self outside struct or interface must fail
+	invalidSelfCodes := []string{
+		"def foo(x: Self) -> Self: x",
+		"x: Self = 42",
+	}
+	for _, bad := range invalidSelfCodes {
+		bProg := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		bInf := NewInferencer()
+		err := bInf.InferProgram(bProg)
+		if err == nil || !strings.Contains(err.Error(), "'Self' type is only valid inside struct or interface definitions") {
+			t.Errorf("expected 'Self' outside struct/interface error for %q, got %v", bad, err)
+		}
+	}
+
+	// Wrong Addable specialization must fail
+	badSpec := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+struct Vec2:
+    x: Int
+    y: Int
+    def +(other: Self) -> Self:
+        Vec2(@x + other.x, @y + other.y)
+
+a_str: Addable[String] = Vec2(1, 2)
+`
+	bsProg := parser.NewParser(lexer.NewLexer(badSpec)).ParseProgram()
+	bsInf := NewInferencer()
+	if err := bsInf.InferProgram(bsProg); err == nil {
+		t.Errorf("expected type mismatch for Addable[String] = Vec2(1, 2), got nil")
+	}
+}
+
+func TestSelfPseudoTypeReviewBugFixes(t *testing.T) {
+	codeStructSelfTP := `
+struct Node[T = Self]:
+    val: T
+    next: Self | Nil
+
+n = Node(1, nil)
+`
+	prog1 := parser.NewParser(lexer.NewLexer(codeStructSelfTP)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(prog1); err != nil {
+		t.Fatalf("unexpected error for struct with Self in TypeParams: %v", err)
+	}
+
+	// Also check that struct methods with generic TypeParams work
+	codeGenericMethod := `
+struct Item:
+    def clone[U = Self](x: U) -> U:
+        x
+`
+	pGM := parser.NewParser(lexer.NewLexer(codeGenericMethod)).ParseProgram()
+	if err := NewInferencer().InferProgram(pGM); err != nil {
+		t.Fatalf("unexpected error for generic method with [U = Self]: %v", err)
+	}
+
+	// 2. Validate default type against constraint at definition time
+	badDefTime := []string{
+		"struct Bad1[T: Numeric = String]:\n    x: T\n",
+		"def bad2[T: Numeric = String](x: T) -> T: x\n",
+	}
+	for _, bad := range badDefTime {
+		p := parser.NewParser(lexer.NewLexer(bad)).ParseProgram()
+		inf := NewInferencer()
+		if err := inf.InferProgram(p); err == nil {
+			t.Errorf("expected constraint error at definition time for %q, got nil", bad)
+		}
+	}
+
+	// 3. ImplementsInterface constraint check on defaulted [T = Self]
+	codeConstrainedSelfIface := `
+interface NumericAddable[T: Numeric = Self]:
+    +(other: T): Self
+
+x: NumericAddable = "hello"
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeConstrainedSelfIface)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err == nil {
+		t.Errorf("expected 'hello' to NOT satisfy NumericAddable, got success")
+	}
+
+	// 4. Default type arguments for unspecialized struct annotation and field access
+	codeDefaultBox := `
+struct DefaultBox[T = Int]:
+    val: T
+
+b: DefaultBox = DefaultBox(10)
+x: Int = b.val
+`
+	p4 := parser.NewParser(lexer.NewLexer(codeDefaultBox)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(p4); err != nil {
+		t.Fatalf("unexpected error for unspecialized DefaultBox annotation: %v", err)
+	}
+	if bValT, ok := inf4.scope.Lookup("x"); !ok || bValT != TypeInt {
+		t.Errorf("expected x to have type Int, got %v", bValT)
+	}
+
+	// 5. Generic struct with Self in TypeParams and == method
+	codeEquatableSelf := `
+interface Equatable[T = Self]:
+    ==(other: T): Bool
+
+struct EqBox[T: Equatable[Self] = Self]:
+    val: T
+    def ==(other: Self) -> Bool:
+        true
+
+x: EqBox | Nil = nil
+`
+	p5 := parser.NewParser(lexer.NewLexer(codeEquatableSelf)).ParseProgram()
+	inf5 := NewInferencer()
+	if err := inf5.InferProgram(p5); err != nil {
+		t.Fatalf("unexpected error for EqBox: %v", err)
+	}
+
+	// 6. Generic struct method returning wrong Self type must fail
+	codeWrongSelf := `
+struct Box[T]:
+    val: T
+    def bad() -> Self:
+        Box("wrong_type")
+`
+	p6 := parser.NewParser(lexer.NewLexer(codeWrongSelf)).ParseProgram()
+	inf6 := NewInferencer()
+	if err := inf6.InferProgram(p6); err == nil {
+		t.Errorf("expected error for Box[T].bad returning Box[String], got nil")
+	}
+
+	// 7. Module-qualified struct annotation with default type params
+	mod := &ModuleType{
+		Name: "testmod",
+		Types: map[string]Type{
+			"DefaultBox": &StructType{
+				Name: "DefaultBox",
+				TypeParams: []TypeParamDef{
+					{Name: "T", Default: TypeInt},
+				},
+				Fields: map[string]Type{
+					"val": &TypeParamType{Name: "T"},
+				},
+			},
+		},
+	}
+	inf7 := NewInferencer()
+	inf7.RegisterModule("testmod", mod)
+	tMod, err := inf7.ParseTypeAnnot("testmod::DefaultBox")
+	if err != nil {
+		t.Fatalf("unexpected error parsing testmod::DefaultBox: %v", err)
+	}
+	if st, ok := tMod.(*StructType); !ok || len(st.TypeArgs) != 1 || st.TypeArgs[0] != TypeInt {
+		t.Errorf("expected testmod::DefaultBox[Int], got %v", tMod)
+	}
+
+	// 8. Composite return types with Self in generic struct methods
+	codeCompositeSelf := `
+struct Container[T]:
+    val: T
+    def get_pair() -> (Self, Int):
+        (Container("wrong"), 1)
+`
+	p8 := parser.NewParser(lexer.NewLexer(codeCompositeSelf)).ParseProgram()
+	inf8 := NewInferencer()
+	if err := inf8.InferProgram(p8); err == nil {
+		t.Errorf("expected error for Container[T].get_pair returning (Container[String], Int), got nil")
+	}
+
+	// 9. Sequential default type parameters in interface
+	ifacePair := &InterfaceType{
+		Name: "PairIface",
+		TypeParams: []TypeParamDef{
+			{Name: "A", Default: TypeInt},
+			{Name: "B", Default: &TypeParamType{Name: "A"}},
+		},
+		Methods: map[string]*FuncType{},
+	}
+	resolvedPair := ResolveInterfaceForReceiver(ifacePair, nil)
+	if len(resolvedPair.TypeArgs) != 2 || resolvedPair.TypeArgs[0] != TypeInt || resolvedPair.TypeArgs[1] != TypeInt {
+		t.Errorf("expected PairIface[Int, Int], got %v", resolvedPair)
+	}
+
+	// 10. ImplementsInterface constraint referencing Self
+	codeSelfConstraint := `
+interface SelfCmp[T: Equatable[Self] = Self]:
+    cmp(other: T): Bool
+
+struct IntWrapper:
+    val: Int
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: IntWrapper) -> Bool:
+        true
+
+struct StringWrapper:
+    val: String
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: StringWrapper) -> Bool:
+        true
+
+w1: SelfCmp[IntWrapper] = IntWrapper(1)
+`
+	p10 := parser.NewParser(lexer.NewLexer(codeSelfConstraint)).ParseProgram()
+	inf10 := NewInferencer()
+	if err := inf10.InferProgram(p10); err != nil {
+		t.Errorf("unexpected error for valid SelfCmp[IntWrapper] assignment: %v", err)
+	}
+
+	codeSelfConstraintFail := `
+interface SelfCmp[T: Equatable[Self] = Self]:
+    cmp(other: T): Bool
+
+struct IntWrapper:
+    val: Int
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: IntWrapper) -> Bool:
+        true
+
+struct StringWrapper:
+    val: String
+    def cmp(other: IntWrapper) -> Bool:
+        true
+    def ==(other: StringWrapper) -> Bool:
+        true
+
+w2: SelfCmp[IntWrapper] = StringWrapper("hello")
+`
+	p10Fail := parser.NewParser(lexer.NewLexer(codeSelfConstraintFail)).ParseProgram()
+	inf10Fail := NewInferencer()
+	if err := inf10Fail.InferProgram(p10Fail); err == nil {
+		t.Errorf("expected error assigning StringWrapper to SelfCmp[IntWrapper] where IntWrapper is not Equatable[StringWrapper], got nil")
+	}
+
+	// 11. TypeInstExpr on Self inside generic struct
+	codeGenericOrigin := `
+struct Node[T]:
+    val: T
+    def make_other() -> Node[Int]:
+        Self[Int](42)
+`
+	p11 := parser.NewParser(lexer.NewLexer(codeGenericOrigin)).ParseProgram()
+	inf11 := NewInferencer()
+	if err := inf11.InferProgram(p11); err != nil {
+		t.Errorf("unexpected error for Self[Int] inside generic struct Node[T]: %v", err)
+	}
+
+	// 12. Pass B method inference in generic struct: calling unannotated method via self
+	codePassBSelfCall := `
+struct GenBox[T]:
+    val: T
+    def get_val():
+        self.val
+    def proxy():
+        self.get_val()
+    def generic_m[U](extra: U):
+        (self.get_val(), extra)
+`
+	p12 := parser.NewParser(lexer.NewLexer(codePassBSelfCall)).ParseProgram()
+	inf12 := NewInferencer()
+	if err := inf12.InferProgram(p12); err != nil {
+		t.Errorf("unexpected error for GenBox method inference: %v", err)
+	}
+
+	// 13. Sequential default type parameter validation
+	codeSeqDefaultFail := `
+struct BadDefaults[A = String, B: Numeric = A]:
+    a: A
+    b: B
+`
+	p13 := parser.NewParser(lexer.NewLexer(codeSeqDefaultFail)).ParseProgram()
+	inf13 := NewInferencer()
+	if err := inf13.InferProgram(p13); err == nil {
+		t.Errorf("expected error for BadDefaults where B: Numeric has default A = String, got nil")
+	}
+
+	codeSeqDefaultFuncFail := `
+def bad_func[A = String, B: Numeric = A]():
+    nil
+`
+	p13f := parser.NewParser(lexer.NewLexer(codeSeqDefaultFuncFail)).ParseProgram()
+	inf13f := NewInferencer()
+	if err := inf13f.InferProgram(p13f); err == nil {
+		t.Errorf("expected error for bad_func where B: Numeric has default A = String, got nil")
+	}
+
+	codeSeqDefaultPass := `
+struct GoodDefaults[A = Int, B: Numeric = A]:
+    a: A
+    b: B
+`
+	p13p := parser.NewParser(lexer.NewLexer(codeSeqDefaultPass)).ParseProgram()
+	inf13p := NewInferencer()
+	if err := inf13p.InferProgram(p13p); err != nil {
+		t.Errorf("unexpected error for GoodDefaults: %v", err)
+	}
+
+	// 14. Bare struct annotation with sequential defaults
+	codeSeqBareAnnotation := `
+struct Pair[A = Int, B = A]:
+    a: A
+    b: B
+
+p: Pair = Pair(1, 2)
+`
+	p14 := parser.NewParser(lexer.NewLexer(codeSeqBareAnnotation)).ParseProgram()
+	inf14 := NewInferencer()
+	if err := inf14.InferProgram(p14); err != nil {
+		t.Errorf("unexpected error for bare Pair annotation: %v", err)
+	}
+
+	// 15. Recursive method in generic struct without return type annotation
+	codeGenericRecursion := `
+struct Counter[T]:
+    tag: T
+    def count(n: Int):
+        if n <= 0:
+            0
+        else:
+            self.count(n - 1) + 1
+`
+	p15 := parser.NewParser(lexer.NewLexer(codeGenericRecursion)).ParseProgram()
+	inf15 := NewInferencer()
+	if err := inf15.InferProgram(p15); err != nil {
+		t.Errorf("unexpected error for recursive generic method: %v", err)
+	}
+
+	// 16. Constructor call and copy-update validation inside struct methods
+	codeConstructorChecks := `
+struct Point:
+    x: Int
+    y: Int
+
+    def bad_cons():
+        Point("wrong", 2)
+`
+	p16 := parser.NewParser(lexer.NewLexer(codeConstructorChecks)).ParseProgram()
+	inf16 := NewInferencer()
+	if err := inf16.InferProgram(p16); err == nil {
+		t.Errorf("expected error for bad Point constructor call inside method, got nil")
+	}
+
+	codeCopyUpdateBadField := `
+struct Point:
+    x: Int
+    y: Int
+
+    def bad_update():
+        Point(self, z: 10)
+`
+	p16b := parser.NewParser(lexer.NewLexer(codeCopyUpdateBadField)).ParseProgram()
+	inf16b := NewInferencer()
+	if err := inf16b.InferProgram(p16b); err == nil {
+		t.Errorf("expected error for unknown field in copy-update, got nil")
+	}
+
+	codeCopyUpdateBadType := `
+struct Point:
+    x: Int
+    y: Int
+
+    def bad_update():
+        Point(self, x: "not_int")
+`
+	p16c := parser.NewParser(lexer.NewLexer(codeCopyUpdateBadType)).ParseProgram()
+	inf16c := NewInferencer()
+	if err := inf16c.InferProgram(p16c); err == nil {
+		t.Errorf("expected error for type mismatch in copy-update, got nil")
+	}
+}
+
+func TestSelfPseudoTypePass6(t *testing.T) {
+	// 1. Generic struct method calling self.clone() where clone() -> Self inside another method returning Self
+	codeGenericSelfMethodCall := `
+struct Box[T]:
+    val: T
+    def clone() -> Self:
+        self
+    def dup() -> Self:
+        self.clone()
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeGenericSelfMethodCall)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected generic struct calling self.clone() -> Self to succeed, got %v", err)
+	}
+
+	// 2. Generic struct recursive method with unannotated return type returning Self
+	codeGenericRecursiveSelf := `
+struct Countdown[T]:
+    val: T
+    count: Int
+    def step(n: Int):
+        if n <= 0:
+            self
+        else:
+            self.step(n - 1)
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeGenericRecursiveSelf)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected unannotated recursive method on generic struct returning Self to infer, got %v", err)
+	}
+
+	// 3. Overloaded operator + on generic struct returning Self
+	codeGenericOverloadedOp := `
+struct Number[T]:
+    val: T
+    def +() -> Self:
+        self
+    def +(other: Self) -> Self:
+        self
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeGenericOverloadedOp)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err != nil {
+		t.Fatalf("expected overloaded + on generic struct to succeed, got %v", err)
+	}
+
+	// 4. Struct with Self | Nil first field constructed positionally vs copy-update
+	codePositionalVsCopyUpdate := `
+struct Chain:
+    prev: Self | Nil
+
+def test_chain():
+    c1 = Chain(nil)
+    c2 = Chain(c1)
+    c2
+
+struct Node[T]:
+    next: Self | Nil
+    val: T
+
+def test_node():
+    n1 = Node(nil, 10)
+    n2 = Node(n1, 20)
+    n3 = Node(n2, val: 99)
+    (n2, n3)
+`
+	p4 := parser.NewParser(lexer.NewLexer(codePositionalVsCopyUpdate)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(p4); err != nil {
+		t.Fatalf("expected positional vs copy-update disambiguation to succeed, got %v", err)
+	}
+}
+
+func TestSelfPseudoTypePass7(t *testing.T) {
+	// 1. Nested generic struct positional construction (first field has type parameter T)
+	codeNestedGenericPositional := `
+struct Box[T]:
+    first: T
+    second: Int
+
+def test_nested():
+    b1 = Box(10, 20)
+    b2 = Box(b1, 30)
+    b2
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeNestedGenericPositional)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected nested generic struct positional construction to succeed, got %v", err)
+	}
+
+	// 2. Method parameter default values referencing self, fields, and constructor
+	codeMethodParamDefaults := `
+struct ValueBox[T]:
+    val: T
+    def duplicate(other: Self = self) -> Self:
+        other
+    def make_same(other: Self = ValueBox(self.val)) -> Self:
+        other
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeMethodParamDefaults)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected method parameter default values referencing self and fields to succeed, got %v", err)
+	}
+}
+
+func TestSelfPseudoTypePass8(t *testing.T) {
+	// 1. Variadic init with Self element type called positionally with struct instances
+	codeVariadicInit := `
+struct Node:
+    id: Int
+    def init(*nodes: Self):
+        self.id = 1
+
+def test_variadic():
+    n1 = Node()
+    n2 = Node(n1, n1)
+    n2
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeVariadicInit)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected variadic init taking Self to succeed, got %v", err)
+	}
+
+	// 2. Generic struct with variadic init taking T
+	codeGenericVariadicInit := `
+struct Group[T]:
+    items: (T, ...)
+    def init(*items: T):
+        self.items = items
+
+def test_group():
+    g1 = Group(1, 2)
+    g2 = Group(g1, g1)
+    g2
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeGenericVariadicInit)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected generic struct with variadic init to succeed, got %v", err)
+	}
+}
+
+func TestSelfPseudoTypePass11(t *testing.T) {
+	// 1. Interface embedding generic interface with default type arguments
+	codeEmbeddedDefaults := `
+interface Base[T = String]:
+    get(): T
+
+interface Derived:
+    Base
+
+struct Foo:
+    def get() -> String:
+        return "hello"
+
+def test_derived(d: Derived) -> String:
+    return d.get()
+
+f = Foo()
+res = test_derived(f)
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeEmbeddedDefaults)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected interface embedding with default type arguments to succeed, got %v", err)
+	}
+
+	// 2. Interface embedding generic interface with T = Self
+	codeEmbeddedSelf := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+interface Advanced:
+    Addable
+
+struct Number:
+    val: Int
+    def +(other: Self) -> Self:
+        return Number(self.val + other.val)
+
+def add_advanced[T: Advanced](a: T, b: T) -> T:
+    return a + b
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeEmbeddedSelf)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected interface embedding with Self default to succeed, got %v", err)
+	}
+
+	// 3. Bare interface type annotation with default type parameters
+	codeBareInterfaceDefault := `
+interface Printable[T = String]:
+    print_val(x: T): Nil
+
+struct Printer:
+    def print_val(x: String) -> Nil:
+        nil
+
+def log_msg(p: Printable, s: String) -> Nil:
+    p.print_val(s)
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeBareInterfaceDefault)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err != nil {
+		t.Fatalf("expected bare interface type annotation with default to succeed, got %v", err)
+	}
+}
+
+func TestTopLevelIfNarrowing(t *testing.T) {
+	// 1. Top-level != nil narrowing
+	codeNilNarrow := `
+x: Int | Nil = 10
+if x != nil:
+    v: Int = x
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeNilNarrow)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected top-level != nil narrowing to succeed, got %v", err)
+	}
+
+	// 2. Top-level == nil else narrowing
+	codeElseNarrow := `
+x: Int | Nil = 10
+if x == nil:
+    pass
+else:
+    v: Int = x
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeElseNarrow)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected top-level == nil else narrowing to succeed, got %v", err)
+	}
+
+	// 3. Top-level is pattern narrowing
+	codeIsNarrow := `
+x: Int | String = 10
+if x is Int:
+    v: Int = x
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeIsNarrow)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err != nil {
+		t.Fatalf("expected top-level is pattern narrowing to succeed, got %v", err)
+	}
+
+	// 4. Generic self-referential struct traversed at top level
+	codeSelfRef := `
+struct Node[T]:
+    val: T
+    next: Self | Nil
+
+n = Node[Int](10, nil)
+nxt = n.next
+if nxt != nil:
+    v: Int = nxt.val
+`
+	p4 := parser.NewParser(lexer.NewLexer(codeSelfRef)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(p4); err != nil {
+		t.Fatalf("expected top-level self-referential struct traversal to succeed, got %v", err)
+	}
+}
+
+
+
+
+

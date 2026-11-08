@@ -13,6 +13,7 @@ import (
 	"les/pkg/ast"
 	"les/pkg/lexer"
 	"les/pkg/parser"
+	"les/pkg/types"
 )
 
 func runLesCode(code string) (string, error) {
@@ -6737,4 +6738,1128 @@ nVal = c.nextVal()
 		t.Fatalf("expected nVal == 99, got %v", v)
 	}
 }
+
+func TestEvalSelfPseudoTypeAndDefaultTypeParams(t *testing.T) {
+	code := `
+interface Cloneable:
+    Clone(): Self
+
+interface Addable[T = Self]:
+    +(other: T): Self
+
+struct Vec2:
+    x: Int
+    y: Int
+    def Clone() -> Self:
+        Vec2(@x, @y)
+    def +(other: Self) -> Self:
+        Vec2(@x + other.x, @y + other.y)
+
+struct ScaledVec2:
+    x: Int
+    y: Int
+    def +(scalar: Int) -> Self:
+        ScaledVec2(@x + scalar, @y + scalar)
+
+struct FakeClone:
+    x: Int
+    def Clone() -> Int:
+        @x
+
+v = Vec2(3, 4)
+sv = ScaledVec2(3, 4)
+fc = FakeClone(5)
+
+r1 = v is Cloneable
+r2 = fc is Cloneable
+r3 = v is Addable
+r4 = v is Addable[Vec2]
+r5 = v is Addable[Int]
+r6 = sv is Addable
+r7 = sv is Addable[Int]
+
+r8 = 42 is Numeric
+r9 = 3.14 is Numeric
+r10 = 42 is Numeric[Int]
+r11 = 3.14 is Numeric[Int]
+r12 = 3.14 is Numeric[Float]
+
+def sum[N: Numeric](a: N, b: N) -> N:
+    a + b
+
+s1 = sum(10, 20)
+s2 = sum(1.25, 2.75)
+`
+	ev := NewEvaluator()
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	expectedBools := map[string]bool{
+		"r1":  true,
+		"r2":  false,
+		"r3":  true,
+		"r4":  true,
+		"r5":  false,
+		"r6":  false,
+		"r7":  true,
+		"r8":  true,
+		"r9":  true,
+		"r10": true,
+		"r11": false,
+		"r12": true,
+	}
+	for name, exp := range expectedBools {
+		val, ok := ev.globalEnv.Get(name)
+		if !ok {
+			t.Fatalf("missing variable %s", name)
+		}
+		if b, isBool := Force(val).(BoolValue); !isBool || bool(b) != exp {
+			t.Errorf("expected %s == %v, got %v", name, exp, val)
+		}
+	}
+
+	if v, _ := ev.globalEnv.Get("s1"); Force(v).(IntValue) != NewIntValue(30) {
+		t.Errorf("expected s1 == 30, got %v", v)
+	}
+	if v, _ := ev.globalEnv.Get("s2"); Force(v).(FloatValue) != FloatValue(4.0) {
+		t.Errorf("expected s2 == 4.0, got %v", v)
+	}
+}
+
+func TestSelfPseudoTypeReviewBugFixesEval(t *testing.T) {
+	code := `
+struct Item:
+    id: Int
+    def same_type(other: Unknown) -> Bool:
+        other is Self
+    def match_self(other: Unknown) -> String:
+        match other:
+            case Self:
+                "self_match"
+            case _:
+                "other"
+
+struct Pair[T, U = Int]:
+    first: T
+    second: U
+
+i1 = Item(1)
+i2 = Item(2)
+r_is_same = i1.same_type(i2)
+r_is_diff = i1.same_type("not_item")
+r_match_same = i1.match_self(i2)
+r_match_diff = i1.match_self(42)
+
+p = Pair[String]("hello", 123)
+p_is_pair = p is Pair[String, Int]
+p_is_partial = p is Pair[String]
+`
+	ev := NewEvaluator()
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertBool := func(varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if s, ok := Force(v).(StringValue); !ok || string(s) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	assertBool("r_is_same", true)
+	assertBool("r_is_diff", false)
+	assertString("r_match_same", "self_match")
+	assertString("r_match_diff", "other")
+	assertBool("p_is_pair", true)
+	assertBool("p_is_partial", true)
+
+	// Additional Pass 2 tests:
+	// A. Runtime interface constraint evaluation without Inferencer
+	codeRuntimeIface := `
+interface NumericAddable[T: Numeric = Self]:
+    +(other: T): Self
+
+r_str_num = "hello" is NumericAddable
+r_int_num = 10 is NumericAddable
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(codeRuntimeIface)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	vStr, _ := ev2.globalEnv.Get("r_str_num")
+	if Force(vStr).(BoolValue) != false {
+		t.Errorf("expected 'hello' is NumericAddable == false, got %v", vStr)
+	}
+	vInt, _ := ev2.globalEnv.Get("r_int_num")
+	if Force(vInt).(BoolValue) != true {
+		t.Errorf("expected 10 is NumericAddable == true, got %v", vInt)
+	}
+
+	// B. Method-level Box[Self] specialization and default closure specialization
+	codeMethodSelf := `
+struct Container[T]:
+    val: T
+
+struct Maker:
+    id: Int
+    def make_box() -> Container[Maker]:
+        Container[Self](self)
+
+def make_pair[A, B = Int](a: A, b: B) -> (A, B):
+    (a, b)
+
+pair_fn = make_pair[String]
+r_pair = pair_fn("test", 99)
+
+m = Maker(7)
+c = m.make_box()
+r_box_match = c is Container[Maker]
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(codeMethodSelf)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+	vBox, _ := ev3.globalEnv.Get("r_box_match")
+	if Force(vBox).(BoolValue) != true {
+		t.Errorf("expected r_box_match == true, got %v", vBox)
+	}
+
+	// 4. Runtime interface check with user-defined type argument in generic struct
+	codeUserTypeArgsIface := `
+interface Equatable[T = Self]:
+    ==(other: T): Bool
+
+struct Item:
+    val: Int
+    def ==(other: Item) -> Bool:
+        self.val == other.val
+
+struct GenWrapper[T]:
+    item: T
+    def ==(other: Self) -> Bool:
+        self.item == other.item
+
+w = GenWrapper(Item(42))
+is_eq = w is Equatable
+`
+	ev4 := NewEvaluator()
+	prog4 := parser.NewParser(lexer.NewLexer(codeUserTypeArgsIface)).ParseProgram()
+	if _, err := ev4.EvalProgram(prog4); err != nil {
+		t.Fatalf("unexpected eval error in prog4: %v", err)
+	}
+	vEq, _ := ev4.globalEnv.Get("is_eq")
+	if Force(vEq).(BoolValue) != true {
+		t.Errorf("expected is_eq == true, got %v", vEq)
+	}
+}
+
+func TestSelfPseudoTypePass6Eval(t *testing.T) {
+	// 1. Recursive struct with Self | Nil first field constructed positionally vs copy-update
+	code1 := `
+struct Chain:
+    prev: Self | Nil
+    id: Int
+
+c1 = Chain(nil, 1)
+c2 = Chain(c1, 2)
+c2_has_prev = c2.prev != nil
+c2_prev_id = c2.prev.id
+
+struct Node[T]:
+    next: Self | Nil
+    val: T
+
+n1 = Node(nil, 10)
+n2 = Node(n1, 20)
+n2_has_next = n2.next != nil
+n2_next_val = n2.next.val
+n2_val = n2.val
+
+n3 = Node(n2, val: 99)
+n3_has_next = n3.next != nil
+n3_next_val = n3.next.val
+n3_val = n3.val
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if n, ok := Force(v).(IntValue); !ok || n != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+
+	assertBool(ev1, "c2_has_prev", true)
+	assertInt(ev1, "c2_prev_id", 1)
+	assertBool(ev1, "n2_has_next", true)
+	assertInt(ev1, "n2_next_val", 10)
+	assertInt(ev1, "n2_val", 20)
+	assertBool(ev1, "n3_has_next", true)
+	assertInt(ev1, "n3_next_val", 10)
+	assertInt(ev1, "n3_val", 99)
+
+	// 2. Generic struct embedding generic struct parameterized by Self
+	code2 := `
+struct Tag[T]:
+    name: String
+
+struct Container[T]:
+    Tag[Self]
+    item: T
+
+c = Container(Tag("box"), 42)
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	vC, ok := ev2.globalEnv.Get("c")
+	if !ok {
+		t.Fatalf("missing variable c")
+	}
+	siC, ok := Force(vC).(*StructInstance)
+	if !ok {
+		t.Fatalf("expected StructInstance for c, got %T", Force(vC))
+	}
+	embTag, ok := siC.Embedded["Tag"]
+	if !ok || embTag == nil {
+		t.Fatalf("missing embedded Tag in Container instance")
+	}
+	if len(embTag.TypeArgs) != 1 || embTag.TypeArgs[0] != "Container[Int]" {
+		t.Errorf("expected embedded Tag TypeArgs to be [Container[Int]], got %v", embTag.TypeArgs)
+	}
+}
+
+func TestSelfPseudoTypePass7Eval(t *testing.T) {
+	// 1. Nested generic struct positional construction
+	code1 := `
+struct Box[T]:
+    first: T
+    second: Int
+
+b1 = Box(10, 20)
+b2 = Box(b1, 30)
+b2_first_first = b2.first.first
+b2_first_second = b2.first.second
+b2_second = b2.second
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if n, ok := Force(v).(IntValue); !ok || n != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertInt(ev1, "b2_first_first", 10)
+	assertInt(ev1, "b2_first_second", 20)
+	assertInt(ev1, "b2_second", 30)
+
+	// 2. Method parameter default values referencing self
+	code2 := `
+struct Cell[T]:
+    val: T
+    def dup(other: Self = self) -> Self:
+        other
+    def make_same(other: Self = Cell(self.val)) -> Self:
+        other
+
+c1 = Cell(42)
+c2 = c1.dup()
+c3 = c1.make_same()
+c2_val = c2.val
+c3_val = c3.val
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertInt(ev2, "c2_val", 42)
+	assertInt(ev2, "c3_val", 42)
+
+	// 3. Overloaded operator method runtime interface matching with Self
+	code3 := `
+interface Negatable:
+    -(): Self
+
+interface Sub[T = Self]:
+    -(other: T): T
+
+struct MyNum:
+    val: Int
+    def -() -> Self:
+        MyNum(-self.val)
+    def -(other: Self) -> Self:
+        MyNum(self.val - other.val)
+
+n = MyNum(100)
+is_neg = n is Negatable
+is_sub = n is Sub
+is_sub_mynum = n is Sub[MyNum]
+is_sub_str = n is Sub[String]
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertBool(ev3, "is_neg", true)
+	assertBool(ev3, "is_sub", true)
+	assertBool(ev3, "is_sub_mynum", true)
+	assertBool(ev3, "is_sub_str", false)
+}
+
+func TestSelfPseudoTypePass8Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Variadic init taking Self/T called positionally with struct instances
+	code1 := `
+struct Node:
+    items: ()
+    def init(*nodes: Self):
+        self.items = nodes
+
+n1 = Node()
+n2 = Node(n1, n1)
+len_items = n2.items.Len()
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertInt(ev1, "len_items", 2)
+
+	// 2. Raw Evaluator (sDef.StructType == nil) inferring type params and copy-update
+	code2 := `
+struct Box[T, U = Self]:
+    val: T
+
+struct Point:
+    x: Int
+    y: Int
+
+b = Box(10)
+b_type = b.Type()
+
+p1 = Point(1, 2)
+p2 = Point(p1, y: 100)
+p2_x = p2.x
+p2_y = p2.y
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertString(ev2, "b_type", "Box[Int, Box]")
+	assertInt(ev2, "p2_x", 1)
+	assertInt(ev2, "p2_y", 100)
+
+	// 3. Copy-update of a struct embedding generic struct
+	code3 := `
+struct Meta[T = Self]:
+    tag: String = "default"
+
+struct Wrapper[T]:
+    Meta[Self]
+    val: T
+
+w1 = Wrapper(42)
+w2 = Wrapper(w1, val: 99)
+w2_tag = w2.tag
+w2_val = w2.val
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+	assertString(ev3, "w2_tag", "default")
+	assertInt(ev3, "w2_val", 99)
+
+	// 4. Generic struct instance matching interface with Self
+	code4 := `
+interface Tagged[T, U = Self]:
+    val(): T
+    clone(): U
+
+struct Item[T]:
+    v: T
+    def val() -> T:
+        self.v
+    def clone() -> Self:
+        Item(self.v)
+
+it = Item("apple")
+is_tagged_str = it is Tagged[String]
+is_tagged_int = it is Tagged[Int]
+`
+	ev4 := NewEvaluator()
+	prog4 := parser.NewParser(lexer.NewLexer(code4)).ParseProgram()
+	if _, err := ev4.EvalProgram(prog4); err != nil {
+		t.Fatalf("unexpected eval error in prog4: %v", err)
+	}
+	assertBool(ev4, "is_tagged_str", true)
+	assertBool(ev4, "is_tagged_int", false)
+}
+
+func TestSelfPseudoTypePass9Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Generic method constructing instance of generic struct with self.v
+	code1 := `
+struct Item[T]:
+    v: T
+    def clone() -> Self:
+        Item(self.v)
+
+def wrap[U](x: U):
+    Item(x)
+
+it = Item("apple")
+c = it.clone()
+c_type = c.Type()
+is_item_str = c is Item[String]
+
+w = wrap(42)
+w_type = w.Type()
+is_item_int = w is Item[Int]
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "c_type", "Item[String]")
+	assertBool(ev1, "is_item_str", true)
+	assertString(ev1, "w_type", "Item[Int]")
+	assertBool(ev1, "is_item_int", true)
+
+	// 2. Positional copy-update on Point(p1, 100) where first field is Int
+	code2 := `
+struct Point:
+    x: Int
+    y: Int
+
+p1 = Point(1, 2)
+p2 = Point(p1, 100)
+p2_x = p2.x
+p2_y = p2.y
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertInt(ev2, "p2_x", 100)
+	assertInt(ev2, "p2_y", 2)
+
+	// 3. Raw Evaluator (sDef.StructType == nil) inferring type parameters via ParseTypeAnnotWithParams
+	sDef := &StructDefValue{
+		Name: "Pair",
+		TypeParams: []ast.TypeParam{
+			{Name: "T"},
+			{Name: "U"},
+		},
+		FieldOrder: []string{"first", "second"},
+		FieldTypes: map[string]string{
+			"first":  "T",
+			"second": "U",
+		},
+	}
+	inst := &StructInstance{
+		Def: sDef,
+		Fields: map[string]Value{
+			"first":  NewIntValue(123),
+			"second": StringValue("hello"),
+		},
+	}
+	inferStructInstanceTypeArgs(inst)
+	if len(inst.TypeArgs) != 2 || inst.TypeArgs[0] != "Int" || inst.TypeArgs[1] != "String" {
+		t.Errorf("expected TypeArgs [Int, String], got %v", inst.TypeArgs)
+	}
+}
+
+func TestSelfPseudoTypePass10Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Box[T, U = Self] specialized with Box[Int] and tested with "is Box[Int]"
+	code1 := `
+struct Box[T, U = Self]:
+    val: T
+
+b1 = Box(10)
+b2 = Box[Int](10)
+
+b1_type = b1.Type()
+b2_type = b2.Type()
+
+is_b1_box_int = b1 is Box[Int]
+is_b2_box_int = b2 is Box[Int]
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "b1_type", "Box[Int, Box]")
+	assertString(ev1, "b2_type", "Box[Int, Box]")
+	assertBool(ev1, "is_b1_box_int", true)
+	assertBool(ev1, "is_b2_box_int", true)
+
+	// 2. Function-local struct used as type argument inside function
+	code2 := `
+def test_local_struct():
+    struct LocalPoint:
+        x: Int
+
+    struct LocalBox[T]:
+        item: T
+        def clone() -> Self:
+            LocalBox(self.item)
+
+    b = LocalBox(LocalPoint(42))
+    c = b.clone()
+    m_type = b.clone.Type()
+    c_type = c.Type()
+    is_box_point = c is LocalBox[LocalPoint]
+    (m_type, c_type, is_box_point)
+
+res = test_local_struct()
+res_m = res[0]
+res_c = res[1]
+res_is = res[2]
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertString(ev2, "res_m", "() -> LocalBox[LocalPoint]")
+	assertString(ev2, "res_c", "LocalBox[LocalPoint]")
+	assertBool(ev2, "res_is", true)
+
+	// 3. Lazy member access in argument should not be eagerly forced
+	code3 := `
+struct Holder:
+    x: Int
+
+struct Consumer:
+    h: Holder
+
+# unevaluated thunk that would panic if forced
+lazy_bad = (1 > 2) ? Holder(1) : nil
+# Passing lazy_bad.x should not panic if laziness is preserved
+c = Consumer(lazy_bad)
+`
+	ev3 := NewEvaluator()
+	prog3 := parser.NewParser(lexer.NewLexer(code3)).ParseProgram()
+	if _, err := ev3.EvalProgram(prog3); err != nil {
+		t.Fatalf("unexpected eval error in prog3: %v", err)
+	}
+}
+
+func TestSelfPseudoTypePass11Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Runtime dispatch and typecheck on interface embedding with default type arguments
+	code1 := `
+interface Base[T = String]:
+    get(): T
+
+interface Derived:
+    Base
+
+struct Foo:
+    def get() -> String:
+        return "hello"
+
+def test_derived(d: Derived) -> String:
+    return d.get()
+
+f = Foo()
+res_msg = test_derived(f)
+res_is = f is Derived
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "res_msg", "hello")
+	assertBool(ev1, "res_is", true)
+
+	// 2. Runtime dispatch on interface embedding generic interface with T = Self
+	code2 := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+interface Advanced:
+    Addable
+
+struct Number:
+    val: Int
+    def +(other: Self) -> Self:
+        return Number(self.val + other.val)
+
+n1 = Number(10)
+n2 = Number(20)
+n3 = n1 + n2
+res_val = n3.val
+res_is_adv = n3 is Advanced
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertInt(ev2, "res_val", 30)
+	assertBool(ev2, "res_is_adv", true)
+}
+
+func TestSelfPseudoTypePass12Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Generic method closure specialization with Self default (pair[A, B = Self])
+	code1 := `
+struct Node[T]:
+    val: T
+    def pair[A, B = Self](a: A, b: B):
+        return (a, b)
+
+n = Node(10)
+m = n.pair[Int]
+m_type = m.Type()
+p = m(42, n)
+p_a = p[0]
+p_b_val = p[1].val
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "m_type", "(Int, Node[Int]) -> (Int, Node[Int])")
+	assertInt(ev1, "p_a", 42)
+	assertInt(ev1, "p_b_val", 10)
+
+	// Check that m's FuncType.TypeArgs is properly populated (not nils)
+	mV, _ := ev1.globalEnv.Get("m")
+	cl, ok := Force(mV).(*Closure)
+	if !ok {
+		t.Fatalf("expected m to be *Closure, got %T", Force(mV))
+	}
+	ft, ok := cl.FuncType.(*types.FuncType)
+	if !ok || ft == nil {
+		t.Fatalf("expected cl.FuncType to be *types.FuncType, got %T", cl.FuncType)
+	}
+	if len(ft.TypeArgs) != 2 {
+		t.Fatalf("expected 2 TypeArgs, got %d", len(ft.TypeArgs))
+	}
+	if ft.TypeArgs[0] == nil || ft.TypeArgs[1] == nil {
+		t.Fatalf("expected non-nil TypeArgs in cl.FuncType, got %v", ft.TypeArgs)
+	}
+	if ft.TypeArgs[0].String() != "Int" {
+		t.Errorf("expected TypeArgs[0] == Int, got %s", ft.TypeArgs[0].String())
+	}
+	if ft.TypeArgs[1].String() != "Node[Int]" {
+		t.Errorf("expected TypeArgs[1] == Node[Int], got %s", ft.TypeArgs[1].String())
+	}
+
+	// 2. Interface specialization with Self when instantiated inside method
+	code2 := `
+interface Transformer[T = Self]:
+    transform(x: T): Self
+
+struct Box[T]:
+    val: T
+    def transform(x: Self) -> Self:
+        return x
+
+    def check_transformer():
+        return self is Transformer
+
+b = Box(100)
+is_tr = b.check_transformer()
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertBool(ev2, "is_tr", true)
+}
+
+func TestSelfPseudoTypePass13Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Copy-update preserves unupdated / phantom type parameters instead of falling back to default
+	code1 := `
+struct Data[T = Int, U = String]:
+    val: T
+    name: String
+
+d1 = Data[Float, Bool](3.14, "first")
+d2 = Data(d1, name: "second")
+d1_type = d1.Type()
+d2_type = d2.Type()
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "d1_type", "Data[Float, Bool]")
+	assertString(ev1, "d2_type", "Data[Float, Bool]")
+
+	// 2. Direct Self binding in interface default resolution
+	code2 := `
+interface Chain[T = Self]:
+    step(): T
+
+struct Tracker:
+    count: Int
+    def step() -> Self:
+        return Tracker(self.count + 1)
+
+t = Tracker(0)
+is_chain = t is Chain
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertBool(ev2, "is_chain", true)
+}
+
+func TestModuleExportedStructTypeMatch(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+
+	tempDir, err := os.MkdirTemp("", "les_eval_mod_type_match_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	boxCode := `
+struct Box[T = Self]:
+    val: T
+`
+	boxPath := filepath.Join(tempDir, "boxmod.les")
+	if err := os.WriteFile(boxPath, []byte(boxCode), 0644); err != nil {
+		t.Fatalf("failed to write boxmod.les: %v", err)
+	}
+
+	fml := NewFileModuleLoader(tempDir)
+	ev := NewEvaluator()
+	ev.SetModuleLoader(fml.Load)
+
+	mainCode := `
+import boxmod
+
+b1 = boxmod::Box(10)
+m1 = b1 is boxmod::Box
+m2 = b1 is boxmod::Box[Int]
+
+b2 = boxmod::Box(val: "hello")
+m3 = b2 is boxmod::Box
+m4 = b2 is boxmod::Box[String]
+m5 = b2 is boxmod::Box[Int]
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertBool(ev, "m1", true)
+	assertBool(ev, "m2", true)
+	assertBool(ev, "m3", true)
+	assertBool(ev, "m4", true)
+	assertBool(ev, "m5", false)
+}
+
+func TestIndexExprBuiltinFuncSpecialization(t *testing.T) {
+	code := `
+struct Container[T = Self]:
+    val: T
+
+spec = Container[Int]
+c = spec(42)
+is_container = c is Container
+is_container_int = c is Container[Int]
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	ev := NewEvaluator()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertBool := func(varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertBool("is_container", true)
+	assertBool("is_container_int", true)
+}
+
+func TestTrailingBlockSelfInterfaceMethod(t *testing.T) {
+	code := `
+interface BlockTransformable:
+    def transform(&f: (Self) -> Self): Self
+
+struct Box:
+    val: Int
+    def transform(&f: (Box) -> Box): Box:
+        return f(self)
+
+b = Box(10)
+res = b.transform() do |x|:
+    Box(x.val * 2)
+
+res_val = res.val
+is_bt = b is BlockTransformable
+is_res_bt = res is BlockTransformable
+`
+	p := parser.NewParser(lexer.NewLexer(code))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	ev := NewEvaluator()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertInt := func(varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertBool := func(varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+
+	assertInt("res_val", 20)
+	assertBool("is_bt", true)
+	assertBool("is_res_bt", true)
+}
+
+
+
+
+
+
+
 

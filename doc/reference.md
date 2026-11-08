@@ -334,44 +334,47 @@ interface Indexable[K, V]:
   - `Bytes` satisfies `Indexable[Int, Int]`
 - **Unspecialized Form**: `val is Indexable` matches any indexable collection without type argument specialization.
 
-### `interface Equatable[T]`
+### `interface Equatable[T = Self]`
 Declares the contract for types supporting equality comparison (`==`):
 ```python
-interface Equatable[T]:
+interface Equatable[T = Self]:
     def ==(other: T) -> Bool
 ```
-- **Implicit Satisfaction**: All primitive types (`Int`, `Float`, `String`, `Bytes`, `Bool`, `Nil`, `Regex`, `Match`, `Tuple`, `Dict`) and user-defined structs implementing `def ==(other)` implicitly satisfy `Equatable[T]`.
-- **Unspecialized Form**: `val is Equatable` matches any equatable value without type argument specialization.
+- **Implicit Satisfaction**: All primitive types (`Int`, `Float`, `String`, `Bytes`, `Bool`, `Nil`, `Regex`, `Match`, `Tuple`, `Dict`) and user-defined structs implementing `def ==(other)` implicitly satisfy `Equatable[T = Self]`.
+- **Unspecialized Form**: `val is Equatable` defaults `T` to `Self` (matching any value that supports `==(other: Self): Bool`). Explicit specialization `val is Equatable[Int]` checks whether `val` can be compared with `Int`.
 
-### `interface Comparable[T]`
+### `interface Comparable[T = Self]`
 Declares the contract for types supporting relational ordering (`<`) and equality (`==`):
 ```python
-interface Comparable[T]:
+interface Comparable[T = Self]:
     Equatable[T]
     def ==(other: T) -> Bool
     def <(other: T) -> Bool
 ```
-- **Implicit Satisfaction**: Naturally ordered types (`Int`, `Float`, `String`, `Bytes`) and user-defined structs implementing `<` and `==` satisfy `Comparable[T]`.
-- **Unspecialized Form**: `val is Comparable` matches any comparable value without type argument specialization.
+- **Implicit Satisfaction**: Naturally ordered types (`Int`, `Float`, `String`, `Bytes`) and user-defined structs implementing `<` and `==` satisfy `Comparable[T = Self]`.
+- **Unspecialized Form**: `val is Comparable` defaults `T` to `Self`.
 
-### `interface Numeric[T]`
+### `interface Numeric[T = Self]`
 Declares the contract for numeric types supporting conversion to `Int` and `Float`, absolute value inspection, and arithmetic operators:
 ```python
-interface Numeric[T]:
+interface Numeric[T = Self]:
     Comparable[T]
     def Int() -> Int
     def Float() -> Float
-    def Abs() -> T
-    def +(other: T) -> T
-    def -(other: T) -> T
-    def *(other: T) -> T
-    def /(other: T) -> T
+    def Abs() -> Self
+    def +(other: T) -> Self
+    def -(other: T) -> Self
+    def *(other: T) -> Self
+    def /(other: T) -> Self
 ```
 - **Implicit Satisfaction**:
-  - `Int` satisfies `Numeric[Int]` and unspecialized `Numeric`.
-  - `Float` satisfies `Numeric[Float]` and unspecialized `Numeric`.
-  - User-defined structs implementing `.Int()`, `.Float()`, `.Abs()`, `+`, `-`, `*`, `/`, and comparison methods satisfy `Numeric[T]`.
-- **Unspecialized Form**: `val is Numeric` matches any numeric type.
+  - `Int` satisfies `Numeric[Int]` and unspecialized `Numeric` (where `T` defaults to `Self` = `Int`).
+  - `Float` satisfies `Numeric[Float]` and unspecialized `Numeric` (where `T` defaults to `Self` = `Float`).
+  - User-defined structs implementing `.Int()`, `.Float()`, `.Abs()`, `+`, `-`, `*`, `/`, and comparison methods satisfy `Numeric[T = Self]`.
+- **Unspecialized vs Specialized Form**:
+  - `42 is Numeric` and `3.14 is Numeric` both evaluate to `true` (`T` defaults to `Self`).
+  - `42 is Numeric[Int]` evaluates to `true`, while `3.14 is Numeric[Int]` evaluates to `false`.
+  - Generic constraints like `def sum[N: Numeric](a: N, b: N) -> N: a + b` work cleanly without repeating `N: Numeric[N]`.
 
 ---
 

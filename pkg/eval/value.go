@@ -790,6 +790,7 @@ type StructDefValue struct {
 	TypeArgs        []string
 	FieldOrder      []string
 	FieldDefaults   map[string]ast.Expr
+	FieldTypes      map[string]string
 	EmbeddedNames   []string
 	DirectFields    map[string]bool
 	AmbiguousFields map[string]bool
@@ -931,12 +932,23 @@ func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	if si.Def != nil && si.Def.StructType != nil {
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[m.Name]; ok {
+				if len(mType.Overloads) > 0 {
+					for _, ov := range mType.Overloads {
+						if ov.MinArity == len(params) && ov.MaxArity == len(params) {
+							mType = ov
+							break
+						}
+					}
+				}
 				closure.FuncType = mType
+				if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
+					inferStructInstanceTypeArgs(si)
+				}
 				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
 					bindings := make(map[string]types.Type)
 					for i, argStr := range si.TypeArgs {
 						if i < len(si.Def.TypeParams) {
-							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+							if t, err := parseTypeAnnotInEnv(argStr, si.Def.Env); err == nil && t != nil {
 								bindings[si.Def.TypeParams[i].Name] = t
 							}
 						}
@@ -985,11 +997,14 @@ func (si *StructInstance) makeDispatcher(name string, methods []*ast.FuncDef) Va
 		if st, ok := si.Def.StructType.(*types.StructType); ok {
 			if mType, ok := st.Methods[name]; ok {
 				bf.FuncType = mType
+				if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
+					inferStructInstanceTypeArgs(si)
+				}
 				if len(si.TypeArgs) > 0 && len(si.Def.TypeParams) > 0 {
 					bindings := make(map[string]types.Type)
 					for i, argStr := range si.TypeArgs {
 						if i < len(si.Def.TypeParams) {
-							if t, err := types.ParseTypeAnnot(argStr); err == nil {
+							if t, err := parseTypeAnnotInEnv(argStr, si.Def.Env); err == nil && t != nil {
 								bindings[si.Def.TypeParams[i].Name] = t
 							}
 						}

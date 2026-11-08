@@ -35,10 +35,22 @@ func (p PrimType) Equals(other Type) bool {
 	return ok && p == op
 }
 
-// TypeParamDef defines a type parameter with its name and optional constraint.
+// SelfType represents the receiver type in interface and struct method signatures.
+type SelfType struct{}
+
+var TypeSelf Type = &SelfType{}
+
+func (s *SelfType) String() string { return "Self" }
+func (s *SelfType) Equals(other Type) bool {
+	_, ok := other.(*SelfType)
+	return ok
+}
+
+// TypeParamDef defines a type parameter with its name, optional constraint, and optional default type.
 type TypeParamDef struct {
 	Name       string
 	Constraint Type // nil if unconstrained
+	Default    Type // nil if no default
 }
 
 // TypeParamType represents a type parameter inside a generic body or constraint.
@@ -363,6 +375,14 @@ func IsAssignableTo(src, target Type) bool {
 				return true
 			}
 		}
+		if uSrc, ok := src.(*UnionType); ok {
+			for _, sm := range uSrc.Members {
+				if !IsAssignableTo(sm, target) {
+					return false
+				}
+			}
+			return true
+		}
 		return ImplementsInterface(src, ifaceTarget)
 	}
 
@@ -566,17 +586,77 @@ func (i *InterfaceType) LookupMethod(name string) (*FuncType, bool) {
 	return nil, false
 }
 
+// ResolveInterfaceForReceiver applies default type arguments (if unspecialized) and substitutes Self with selfType.
+func ResolveInterfaceForReceiver(target *InterfaceType, selfType Type) *InterfaceType {
+	if target == nil {
+		return nil
+	}
+	resolved := target
+	if len(resolved.TypeArgs) == 0 && len(resolved.TypeParams) > 0 {
+		defaultArgs := make([]Type, len(resolved.TypeParams))
+		bindings := make(map[string]Type)
+		allHaveDefault := true
+		for i, tp := range resolved.TypeParams {
+			if tp.Default != nil {
+				defaultArgs[i] = Substitute(tp.Default, bindings)
+				bindings[tp.Name] = defaultArgs[i]
+			} else {
+				allHaveDefault = false
+				break
+			}
+		}
+		if allHaveDefault {
+			resolved = InstantiateInterface(resolved, defaultArgs)
+		}
+	}
+	if selfType != nil {
+		if sub, ok := SubstituteSelf(resolved, selfType).(*InterfaceType); ok {
+			resolved = sub
+		}
+	}
+	return resolved
+}
+
 // ImplementsInterface checks if src type satisfies target interface.
 func ImplementsInterface(src Type, target *InterfaceType) bool {
 	if tpSrc, ok := src.(*TypeParamType); ok {
 		if tpSrc.Constraint != nil {
-			return ImplementsInterface(tpSrc.Constraint, target)
+			resolvedConstraint := tpSrc.Constraint
+			if cIface, ok := resolvedConstraint.(*InterfaceType); ok {
+				resolvedConstraint = ResolveInterfaceForReceiver(cIface, tpSrc)
+			}
+			resolvedTarget := ResolveInterfaceForReceiver(target, tpSrc)
+			return ImplementsInterface(resolvedConstraint, resolvedTarget)
 		}
 		return false
 	}
 
+	origTarget := target
+	target = ResolveInterfaceForReceiver(target, src)
+	if len(target.TypeArgs) > 0 && len(origTarget.TypeParams) > 0 {
+		checkTPs := make([]TypeParamDef, len(origTarget.TypeParams))
+		for i, tp := range origTarget.TypeParams {
+			checkTPs[i] = TypeParamDef{
+				Name:       tp.Name,
+				Constraint: SubstituteSelf(tp.Constraint, src),
+				Default:    SubstituteSelf(tp.Default, src),
+			}
+		}
+		if err := ValidateTypeConstraints(checkTPs, target.TypeArgs); err != nil {
+			return false
+		}
+	}
+
 	// If src is itself an interface, check if it contains all required methods
 	if srcIface, ok := src.(*InterfaceType); ok {
+		if origTarget.Name == srcIface.Name && len(origTarget.TypeArgs) == 0 {
+			return true
+		}
+		for _, emb := range srcIface.Embedded {
+			if ImplementsInterface(emb, origTarget) {
+				return true
+			}
+		}
 		if target.Name == srcIface.Name {
 			if len(target.TypeArgs) == 0 {
 				return true
@@ -652,7 +732,7 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 					continue
 				}
 			}
-			if !targetSig.Equals(srcSig) {
+			if !targetSig.Equals(srcSig) && !IsAssignableTo(srcSig, targetSig) {
 				return false
 			}
 		}
@@ -698,67 +778,10 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 					continue
 				}
 			}
-			if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
-				if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
-					return false
-				}
-				if !IsAssignableTo(fnT.Ret, TypeBool) {
-					return false
-				}
-				if len(target.TypeArgs) == 1 {
-					tup, ok := fnT.Arg.(*TupleType)
-					if ok && len(tup.Elems) == 1 {
-						if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
-							return false
-						}
-					}
-				}
-				continue
-			}
-			if target.Name == "Numeric" {
-				if mName == "Int" {
-					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeInt) {
-						return false
-					}
-					continue
-				}
-				if mName == "Float" {
-					if fnT.MinArgs() > 0 || !IsAssignableTo(fnT.Ret, TypeFloat) {
-						return false
-					}
-					continue
-				}
-				if mName == "Abs" {
-					if fnT.MinArgs() > 0 {
-						return false
-					}
-					if len(target.TypeArgs) == 1 && !IsAssignableTo(fnT.Ret, target.TypeArgs[0]) {
-						return false
-					}
-					continue
-				}
-				if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
-					if fnT.MinArgs() > 1 || (fnT.MaxArgs() >= 0 && fnT.MaxArgs() < 1) {
-						return false
-					}
-					if len(target.TypeArgs) == 1 {
-						expectedT := target.TypeArgs[0]
-						if !IsAssignableTo(fnT.Ret, expectedT) {
-							return false
-						}
-						if tup, ok := fnT.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
-							if !IsAssignableTo(expectedT, tup.Elems[0]) {
-								return false
-							}
-						}
-					}
-					continue
-				}
-			}
-			matched := targetSig.Equals(fnT)
+			matched := targetSig.Equals(fnT) || IsAssignableTo(fnT, targetSig)
 			if !matched && len(fnT.Overloads) > 0 {
 				for _, ov := range fnT.Overloads {
-					if targetSig.Equals(ov) {
+					if targetSig.Equals(ov) || IsAssignableTo(ov, targetSig) {
 						matched = true
 						break
 					}
@@ -791,59 +814,6 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 		if !ok {
 			return false
 		}
-		if (target.Name == "Equatable" || target.Name == "Comparable" || target.Name == "Numeric") && (mName == "==" || mName == "<") {
-			// For Equatable/Comparable/Numeric, builtin method must accept 1 argument and return Bool
-			if srcSig.Ret != TypeBool {
-				return false
-			}
-			tup, ok := srcSig.Arg.(*TupleType)
-			if !ok || len(tup.Elems) != 1 {
-				return false
-			}
-			if len(target.TypeArgs) == 1 {
-				if !IsAssignableTo(target.TypeArgs[0], tup.Elems[0]) {
-					return false
-				}
-			}
-			continue
-		}
-		if target.Name == "Numeric" {
-			if mName == "Int" {
-				if srcSig.Ret != TypeInt || srcSig.MinArgs() > 0 {
-					return false
-				}
-				continue
-			}
-			if mName == "Float" {
-				if srcSig.Ret != TypeFloat || srcSig.MinArgs() > 0 {
-					return false
-				}
-				continue
-			}
-			if mName == "Abs" {
-				if srcSig.MinArgs() > 0 {
-					return false
-				}
-				if len(target.TypeArgs) == 1 && !IsAssignableTo(srcSig.Ret, target.TypeArgs[0]) {
-					return false
-				}
-				continue
-			}
-			if mName == "+" || mName == "-" || mName == "*" || mName == "/" {
-				if len(target.TypeArgs) == 1 {
-					expectedT := target.TypeArgs[0]
-					if !IsAssignableTo(srcSig.Ret, expectedT) {
-						return false
-					}
-					if tup, ok := srcSig.Arg.(*TupleType); ok && len(tup.Elems) == 1 {
-						if !IsAssignableTo(expectedT, tup.Elems[0]) {
-							return false
-						}
-					}
-				}
-				continue
-			}
-		}
 		if target.Name == "Indexable" {
 			if mName == "Len" {
 				if !IsAssignableTo(srcSig.Ret, TypeInt) {
@@ -870,10 +840,10 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 				continue
 			}
 		}
-		matched := targetSig.Equals(srcSig)
+		matched := targetSig.Equals(srcSig) || IsAssignableTo(srcSig, targetSig)
 		if !matched && len(srcSig.Overloads) > 0 {
 			for _, ov := range srcSig.Overloads {
-				if targetSig.Equals(ov) {
+				if targetSig.Equals(ov) || IsAssignableTo(ov, targetSig) {
 					matched = true
 					break
 				}
@@ -883,11 +853,11 @@ func ImplementsInterface(src Type, target *InterfaceType) bool {
 			if targetTup, ok := targetSig.Arg.(*TupleType); ok {
 				targetCount := len(targetTup.Elems)
 				if targetCount >= srcSig.MinArgs() && (srcSig.MaxArgs() < 0 || targetCount <= srcSig.MaxArgs()) {
-					if targetSig.Ret == TypeUnknown || srcSig.Ret == TypeUnknown || targetSig.Ret.Equals(srcSig.Ret) {
+					if targetSig.Ret == TypeUnknown || srcSig.Ret == TypeUnknown || targetSig.Ret.Equals(srcSig.Ret) || IsAssignableTo(srcSig.Ret, targetSig.Ret) {
 						argsMatch := true
 						if srcTup, ok := srcSig.Arg.(*TupleType); ok {
 							for i := 0; i < targetCount && i < len(srcTup.Elems); i++ {
-								if targetTup.Elems[i] != TypeUnknown && srcTup.Elems[i] != TypeUnknown && !targetTup.Elems[i].Equals(srcTup.Elems[i]) {
+								if targetTup.Elems[i] != TypeUnknown && srcTup.Elems[i] != TypeUnknown && !targetTup.Elems[i].Equals(srcTup.Elems[i]) && !IsAssignableTo(targetTup.Elems[i], srcTup.Elems[i]) {
 									argsMatch = false
 									break
 								}
@@ -917,7 +887,8 @@ func LookupBuiltinTypeMethod(t Type, mName string) (*FuncType, bool) {
 	if tp, ok := t.(*TypeParamType); ok {
 		if tp.Constraint != nil {
 			if iface, ok := tp.Constraint.(*InterfaceType); ok {
-				return iface.LookupMethod(mName)
+				resolvedIface := ResolveInterfaceForReceiver(iface, tp)
+				return resolvedIface.LookupMethod(mName)
 			}
 			if st, ok := tp.Constraint.(*StructType); ok {
 				if m, err := st.LookupMember(mName); err == nil {
@@ -1559,8 +1530,28 @@ func Substitute(t Type, bindings map[string]Type) Type {
 			Value: Substitute(typ.Value, bindings),
 		}
 	case *FuncType:
+		var newTPs []TypeParamDef
+		if len(typ.TypeParams) > 0 {
+			newTPs = make([]TypeParamDef, len(typ.TypeParams))
+			for i, tp := range typ.TypeParams {
+				innerBindings := bindings
+				if _, shadowed := bindings[tp.Name]; shadowed {
+					innerBindings = make(map[string]Type)
+					for k, v := range bindings {
+						if k != tp.Name {
+							innerBindings[k] = v
+						}
+					}
+				}
+				newTPs[i] = TypeParamDef{
+					Name:       tp.Name,
+					Constraint: Substitute(tp.Constraint, innerBindings),
+					Default:    Substitute(tp.Default, innerBindings),
+				}
+			}
+		}
 		newF := &FuncType{
-			TypeParams:    typ.TypeParams,
+			TypeParams:    newTPs,
 			TypeArgs:      typ.TypeArgs,
 			Arg:           Substitute(typ.Arg, bindings),
 			OverloadUnion: typ.OverloadUnion,
@@ -1647,6 +1638,333 @@ func Substitute(t Type, bindings map[string]Type) Type {
 	}
 }
 
+// SubstituteSelf replaces all SelfType occurrences in t with selfType.
+func SubstituteSelf(t Type, selfType Type) Type {
+	if t == nil || selfType == nil {
+		return t
+	}
+	switch typ := t.(type) {
+	case *SelfType:
+		return selfType
+	case *TupleType:
+		changed := false
+		newElems := make([]Type, len(typ.Elems))
+		for i, el := range typ.Elems {
+			subEl := SubstituteSelf(el, selfType)
+			if subEl != el {
+				changed = true
+			}
+			newElems[i] = subEl
+		}
+		if !changed {
+			return typ
+		}
+		return &TupleType{Elems: newElems, IsVariadic: typ.IsVariadic}
+	case *DictType:
+		subKey := SubstituteSelf(typ.Key, selfType)
+		subVal := SubstituteSelf(typ.Value, selfType)
+		if subKey == typ.Key && subVal == typ.Value {
+			return typ
+		}
+		return &DictType{Key: subKey, Value: subVal}
+	case *FuncType:
+		subArg := SubstituteSelf(typ.Arg, selfType)
+		subBlock := SubstituteSelf(typ.BlockParam, selfType)
+		subRet := SubstituteSelf(typ.Ret, selfType)
+		changed := subArg != typ.Arg || subBlock != typ.BlockParam || subRet != typ.Ret
+		var newTPs []TypeParamDef
+		if len(typ.TypeParams) > 0 {
+			newTPs = make([]TypeParamDef, len(typ.TypeParams))
+			for i, tp := range typ.TypeParams {
+				subC := SubstituteSelf(tp.Constraint, selfType)
+				subD := SubstituteSelf(tp.Default, selfType)
+				if subC != tp.Constraint || subD != tp.Default {
+					changed = true
+				}
+				newTPs[i] = TypeParamDef{
+					Name:       tp.Name,
+					Constraint: subC,
+					Default:    subD,
+				}
+			}
+		}
+		var newOverloads []*FuncType
+		if len(typ.Overloads) > 0 {
+			newOverloads = make([]*FuncType, len(typ.Overloads))
+			for i, ov := range typ.Overloads {
+				subOv := SubstituteSelf(ov, selfType).(*FuncType)
+				if subOv != ov {
+					changed = true
+				}
+				newOverloads[i] = subOv
+			}
+		}
+		if !changed {
+			return typ
+		}
+		newF := &FuncType{
+			TypeParams:    newTPs,
+			TypeArgs:      typ.TypeArgs,
+			Arg:           subArg,
+			OverloadUnion: typ.OverloadUnion,
+			Overloads:     newOverloads,
+			MinArity:      typ.MinArity,
+			MaxArity:      typ.MaxArity,
+			BlockParam:    subBlock,
+			BlockOpt:      typ.BlockOpt,
+			Ret:           subRet,
+		}
+		if len(newF.Overloads) == 2 && typ.OverloadUnion != "" {
+			newF.OverloadUnion = fmt.Sprintf("%s | %s", newF.Overloads[0].String(), newF.Overloads[1].String())
+		}
+		return newF
+	case *UnionType:
+		changed := false
+		newMembers := make([]Type, len(typ.Members))
+		for i, m := range typ.Members {
+			subM := SubstituteSelf(m, selfType)
+			if subM != m {
+				changed = true
+			}
+			newMembers[i] = subM
+		}
+		if !changed {
+			return typ
+		}
+		return NewUnionType(newMembers...)
+	case *StructType:
+		if len(typ.TypeArgs) > 0 {
+			changed := false
+			newArgs := make([]Type, len(typ.TypeArgs))
+			for i, a := range typ.TypeArgs {
+				subA := SubstituteSelf(a, selfType)
+				if subA != a {
+					changed = true
+				}
+				newArgs[i] = subA
+			}
+			if !changed {
+				return typ
+			}
+			origin := typ.GenericOrigin
+			if origin == nil {
+				origin = typ
+			}
+			return InstantiateStruct(origin, newArgs)
+		}
+		return typ
+	case *InterfaceType:
+		var newArgs []Type
+		changed := false
+		if len(typ.TypeArgs) > 0 {
+			newArgs = make([]Type, len(typ.TypeArgs))
+			for i, a := range typ.TypeArgs {
+				subA := SubstituteSelf(a, selfType)
+				if subA != a {
+					changed = true
+				}
+				newArgs[i] = subA
+			}
+		}
+		newMethods := make(map[string]*FuncType, len(typ.Methods))
+		for mName, mSig := range typ.Methods {
+			subSig := SubstituteSelf(mSig, selfType).(*FuncType)
+			if subSig != mSig {
+				changed = true
+			}
+			newMethods[mName] = subSig
+		}
+		var newEmbedded []*InterfaceType
+		if len(typ.Embedded) > 0 {
+			newEmbedded = make([]*InterfaceType, len(typ.Embedded))
+			for i, emb := range typ.Embedded {
+				subEmb := SubstituteSelf(emb, selfType).(*InterfaceType)
+				if subEmb != emb {
+					changed = true
+				}
+				newEmbedded[i] = subEmb
+			}
+		}
+		if !changed {
+			return typ
+		}
+		return &InterfaceType{
+			Name:          typ.Name,
+			TypeParams:    typ.TypeParams,
+			TypeArgs:      newArgs,
+			GenericOrigin: typ.GenericOrigin,
+			Methods:       newMethods,
+			Embedded:      newEmbedded,
+		}
+	default:
+		return t
+	}
+}
+
+// ReplaceType recursively replaces all occurrences of target type with replacement in t.
+func ReplaceType(t Type, target Type, replacement Type) Type {
+	if t == nil || target == nil || replacement == nil {
+		return t
+	}
+	if t.Equals(target) {
+		return replacement
+	}
+	switch typ := t.(type) {
+	case *TupleType:
+		changed := false
+		newElems := make([]Type, len(typ.Elems))
+		for i, el := range typ.Elems {
+			subEl := ReplaceType(el, target, replacement)
+			if subEl != el {
+				changed = true
+			}
+			newElems[i] = subEl
+		}
+		if !changed {
+			return typ
+		}
+		return &TupleType{Elems: newElems, IsVariadic: typ.IsVariadic}
+	case *DictType:
+		subKey := ReplaceType(typ.Key, target, replacement)
+		subVal := ReplaceType(typ.Value, target, replacement)
+		if subKey == typ.Key && subVal == typ.Value {
+			return typ
+		}
+		return &DictType{Key: subKey, Value: subVal}
+	case *FuncType:
+		subArg := ReplaceType(typ.Arg, target, replacement)
+		subBlock := ReplaceType(typ.BlockParam, target, replacement)
+		subRet := ReplaceType(typ.Ret, target, replacement)
+		changed := subArg != typ.Arg || subBlock != typ.BlockParam || subRet != typ.Ret
+		var newTPs []TypeParamDef
+		if len(typ.TypeParams) > 0 {
+			newTPs = make([]TypeParamDef, len(typ.TypeParams))
+			for i, tp := range typ.TypeParams {
+				subC := ReplaceType(tp.Constraint, target, replacement)
+				subD := ReplaceType(tp.Default, target, replacement)
+				if subC != tp.Constraint || subD != tp.Default {
+					changed = true
+				}
+				newTPs[i] = TypeParamDef{
+					Name:       tp.Name,
+					Constraint: subC,
+					Default:    subD,
+				}
+			}
+		}
+		var newOverloads []*FuncType
+		if len(typ.Overloads) > 0 {
+			newOverloads = make([]*FuncType, len(typ.Overloads))
+			for i, ov := range typ.Overloads {
+				subOv := ReplaceType(ov, target, replacement).(*FuncType)
+				if subOv != ov {
+					changed = true
+				}
+				newOverloads[i] = subOv
+			}
+		}
+		if !changed {
+			return typ
+		}
+		newF := &FuncType{
+			TypeParams:    newTPs,
+			TypeArgs:      typ.TypeArgs,
+			Arg:           subArg,
+			OverloadUnion: typ.OverloadUnion,
+			Overloads:     newOverloads,
+			MinArity:      typ.MinArity,
+			MaxArity:      typ.MaxArity,
+			BlockParam:    subBlock,
+			BlockOpt:      typ.BlockOpt,
+			Ret:           subRet,
+		}
+		if len(newF.Overloads) == 2 && typ.OverloadUnion != "" {
+			newF.OverloadUnion = fmt.Sprintf("%s | %s", newF.Overloads[0].String(), newF.Overloads[1].String())
+		}
+		return newF
+	case *UnionType:
+		changed := false
+		newMembers := make([]Type, len(typ.Members))
+		for i, m := range typ.Members {
+			subM := ReplaceType(m, target, replacement)
+			if subM != m {
+				changed = true
+			}
+			newMembers[i] = subM
+		}
+		if !changed {
+			return typ
+		}
+		return NewUnionType(newMembers...)
+	case *StructType:
+		if len(typ.TypeArgs) > 0 {
+			changed := false
+			newArgs := make([]Type, len(typ.TypeArgs))
+			for i, a := range typ.TypeArgs {
+				subA := ReplaceType(a, target, replacement)
+				if subA != a {
+					changed = true
+				}
+				newArgs[i] = subA
+			}
+			if !changed {
+				return typ
+			}
+			origin := typ.GenericOrigin
+			if origin == nil {
+				origin = typ
+			}
+			return InstantiateStruct(origin, newArgs)
+		}
+		return typ
+	case *InterfaceType:
+		var newArgs []Type
+		changed := false
+		if len(typ.TypeArgs) > 0 {
+			newArgs = make([]Type, len(typ.TypeArgs))
+			for i, a := range typ.TypeArgs {
+				subA := ReplaceType(a, target, replacement)
+				if subA != a {
+					changed = true
+				}
+				newArgs[i] = subA
+			}
+		}
+		newMethods := make(map[string]*FuncType, len(typ.Methods))
+		for mName, mSig := range typ.Methods {
+			subSig := ReplaceType(mSig, target, replacement).(*FuncType)
+			if subSig != mSig {
+				changed = true
+			}
+			newMethods[mName] = subSig
+		}
+		var newEmbedded []*InterfaceType
+		if len(typ.Embedded) > 0 {
+			newEmbedded = make([]*InterfaceType, len(typ.Embedded))
+			for i, emb := range typ.Embedded {
+				subEmb := ReplaceType(emb, target, replacement).(*InterfaceType)
+				if subEmb != emb {
+					changed = true
+				}
+				newEmbedded[i] = subEmb
+			}
+		}
+		if !changed {
+			return typ
+		}
+		return &InterfaceType{
+			Name:          typ.Name,
+			TypeParams:    typ.TypeParams,
+			TypeArgs:      newArgs,
+			GenericOrigin: typ.GenericOrigin,
+			Methods:       newMethods,
+			Embedded:      newEmbedded,
+		}
+	default:
+		return t
+	}
+}
+
 // InstantiateStruct specializes a generic StructType with concrete type arguments.
 func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
 	if s == nil || len(typeArgs) == 0 {
@@ -1655,6 +1973,23 @@ func InstantiateStruct(s *StructType, typeArgs []Type) *StructType {
 	origin := s.GenericOrigin
 	if origin == nil {
 		origin = s
+	}
+	if len(typeArgs) < len(origin.TypeParams) {
+		fullArgs := make([]Type, len(origin.TypeParams))
+		copy(fullArgs, typeArgs)
+		bindings := make(map[string]Type)
+		for i := 0; i < len(typeArgs); i++ {
+			bindings[origin.TypeParams[i].Name] = typeArgs[i]
+		}
+		for i := len(typeArgs); i < len(origin.TypeParams); i++ {
+			if origin.TypeParams[i].Default != nil {
+				fullArgs[i] = Substitute(origin.TypeParams[i].Default, bindings)
+			} else {
+				fullArgs[i] = TypeUnknown
+			}
+			bindings[origin.TypeParams[i].Name] = fullArgs[i]
+		}
+		typeArgs = fullArgs
 	}
 	var argStrs []string
 	for _, a := range typeArgs {
@@ -1712,6 +2047,23 @@ func InstantiateInterface(i *InterfaceType, typeArgs []Type) *InterfaceType {
 	if origin == nil {
 		origin = i
 	}
+	if len(typeArgs) < len(origin.TypeParams) {
+		fullArgs := make([]Type, len(origin.TypeParams))
+		copy(fullArgs, typeArgs)
+		bindings := make(map[string]Type)
+		for idx := 0; idx < len(typeArgs); idx++ {
+			bindings[origin.TypeParams[idx].Name] = typeArgs[idx]
+		}
+		for idx := len(typeArgs); idx < len(origin.TypeParams); idx++ {
+			if origin.TypeParams[idx].Default != nil {
+				fullArgs[idx] = Substitute(origin.TypeParams[idx].Default, bindings)
+			} else {
+				fullArgs[idx] = TypeUnknown
+			}
+			bindings[origin.TypeParams[idx].Name] = fullArgs[idx]
+		}
+		typeArgs = fullArgs
+	}
 	var argStrs []string
 	for _, a := range typeArgs {
 		argStrs = append(argStrs, a.String())
@@ -1754,18 +2106,33 @@ func InstantiateInterface(i *InterfaceType, typeArgs []Type) *InterfaceType {
 
 // ValidateTypeConstraints validates type arguments against type parameter constraints.
 func ValidateTypeConstraints(typeParams []TypeParamDef, typeArgs []Type) error {
-	if len(typeParams) != len(typeArgs) {
-		return fmt.Errorf("expected %d type arguments, got %d", len(typeParams), len(typeArgs))
+	if len(typeArgs) > len(typeParams) {
+		return fmt.Errorf("expected at most %d type arguments, got %d", len(typeParams), len(typeArgs))
+	}
+	if len(typeArgs) < len(typeParams) {
+		for i := len(typeArgs); i < len(typeParams); i++ {
+			if typeParams[i].Default == nil {
+				return fmt.Errorf("expected %d type arguments, got %d", len(typeParams), len(typeArgs))
+			}
+		}
 	}
 	bindings := make(map[string]Type)
+	fullArgs := make([]Type, len(typeParams))
 	for i, tp := range typeParams {
-		bindings[tp.Name] = typeArgs[i]
+		if i < len(typeArgs) {
+			fullArgs[i] = typeArgs[i]
+		} else {
+			fullArgs[i] = Substitute(tp.Default, bindings)
+		}
+		bindings[tp.Name] = fullArgs[i]
 	}
 	for i, tp := range typeParams {
 		if tp.Constraint != nil {
 			subConstraint := Substitute(tp.Constraint, bindings)
-			if !IsAssignableTo(typeArgs[i], subConstraint) {
-				return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", typeArgs[i].String(), subConstraint.String(), tp.Name)
+			if !ContainsSelfOrParam(fullArgs[i]) && !ContainsSelfOrParam(subConstraint) {
+				if !IsAssignableTo(fullArgs[i], subConstraint) {
+					return fmt.Errorf("type %s does not satisfy constraint %s for type parameter %s", fullArgs[i].String(), subConstraint.String(), tp.Name)
+				}
 			}
 		}
 	}
@@ -1935,4 +2302,62 @@ func TypesCanOverlap(t1, t2 Type) bool {
 		return false
 	}
 	return false
+}
+
+// ContainsSelfOrParam returns true if t contains SelfType or TypeParamType.
+func ContainsSelfOrParam(t Type) bool {
+	if t == nil {
+		return false
+	}
+	switch typ := t.(type) {
+	case *SelfType, *TypeParamType:
+		return true
+	case *TupleType:
+		for _, el := range typ.Elems {
+			if ContainsSelfOrParam(el) {
+				return true
+			}
+		}
+		return false
+	case *DictType:
+		return ContainsSelfOrParam(typ.Key) || ContainsSelfOrParam(typ.Value)
+	case *FuncType:
+		if ContainsSelfOrParam(typ.Arg) || ContainsSelfOrParam(typ.BlockParam) || ContainsSelfOrParam(typ.Ret) {
+			return true
+		}
+		for _, ov := range typ.Overloads {
+			if ContainsSelfOrParam(ov) {
+				return true
+			}
+		}
+		for _, tp := range typ.TypeParams {
+			if ContainsSelfOrParam(tp.Constraint) || ContainsSelfOrParam(tp.Default) {
+				return true
+			}
+		}
+		return false
+	case *UnionType:
+		for _, m := range typ.Members {
+			if ContainsSelfOrParam(m) {
+				return true
+			}
+		}
+		return false
+	case *StructType:
+		for _, a := range typ.TypeArgs {
+			if ContainsSelfOrParam(a) {
+				return true
+			}
+		}
+		return false
+	case *InterfaceType:
+		for _, a := range typ.TypeArgs {
+			if ContainsSelfOrParam(a) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }

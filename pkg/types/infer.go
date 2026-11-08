@@ -370,9 +370,10 @@ func (w TypeWarning) String() string {
 }
 
 type funcReturnCtx struct {
-	fnType      *FuncType
-	returnTypes []Type
-	selfCalled  bool
+	fnType       *FuncType
+	mirrorFnType *FuncType
+	returnTypes  []Type
+	selfCalled   bool
 }
 
 type breakTargetCtx struct {
@@ -394,6 +395,7 @@ type Inferencer struct {
 	warnings     []TypeWarning
 	funcCtx      *funcReturnCtx
 	breakCtx     *breakTargetCtx
+	selfType     Type
 }
 
 var BuiltinBytesFuncType = &FuncType{
@@ -437,7 +439,7 @@ var BuiltinRegexFuncType = &FuncType{
 var BuiltinEquatableIface = &InterfaceType{
 	Name: "Equatable",
 	TypeParams: []TypeParamDef{
-		{Name: "T"},
+		{Name: "T", Default: TypeSelf},
 	},
 	Methods: map[string]*FuncType{
 		"==": {
@@ -453,7 +455,7 @@ var BuiltinEquatableIface = &InterfaceType{
 var BuiltinComparableIface = &InterfaceType{
 	Name: "Comparable",
 	TypeParams: []TypeParamDef{
-		{Name: "T"},
+		{Name: "T", Default: TypeSelf},
 	},
 	Methods: map[string]*FuncType{
 		"==": {
@@ -475,7 +477,7 @@ var BuiltinComparableIface = &InterfaceType{
 var BuiltinNumericIface = &InterfaceType{
 	Name: "Numeric",
 	TypeParams: []TypeParamDef{
-		{Name: "T"},
+		{Name: "T", Default: TypeSelf},
 	},
 	Methods: map[string]*FuncType{
 		"==": {
@@ -500,31 +502,31 @@ var BuiltinNumericIface = &InterfaceType{
 		},
 		"Abs": {
 			Arg: &TupleType{Elems: []Type{}},
-			Ret: &TypeParamType{Name: "T"},
+			Ret: TypeSelf,
 		},
 		"+": {
 			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
-			Ret:      &TypeParamType{Name: "T"},
+			Ret:      TypeSelf,
 		},
 		"-": {
 			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
-			Ret:      &TypeParamType{Name: "T"},
+			Ret:      TypeSelf,
 		},
 		"*": {
 			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
-			Ret:      &TypeParamType{Name: "T"},
+			Ret:      TypeSelf,
 		},
 		"/": {
 			Arg:      &TupleType{Elems: []Type{&TypeParamType{Name: "T"}}},
 			MinArity: 1,
 			MaxArity: 1,
-			Ret:      &TypeParamType{Name: "T"},
+			Ret:      TypeSelf,
 		},
 	},
 	Embedded: []*InterfaceType{BuiltinComparableIface},
@@ -962,6 +964,52 @@ func isExitCall(expr ast.Expr) bool {
 	return false
 }
 
+func (inf *Inferencer) setupIfScopes(cond ast.Expr) (thenScope, elseScope *Scope) {
+	thenScope = NewScope(inf.scope)
+	elseScope = NewScope(inf.scope)
+	if cond != nil {
+		if bin, ok := cond.(*ast.BinaryExpr); ok {
+			if bin.Op == "!=" {
+				if id, ok := bin.Left.(*ast.Identifier); ok {
+					if _, isNil := bin.Right.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				} else if id, ok := bin.Right.(*ast.Identifier); ok {
+					if _, isNil := bin.Left.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				}
+			} else if bin.Op == "==" {
+				if id, ok := bin.Left.(*ast.Identifier); ok {
+					if _, isNil := bin.Right.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				} else if id, ok := bin.Right.(*ast.Identifier); ok {
+					if _, isNil := bin.Left.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				}
+			}
+		} else if isExpr, ok := cond.(*ast.IsExpr); ok {
+			if id, ok := isExpr.Expr.(*ast.Identifier); ok {
+				if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
+					origT, _ := inf.scope.Lookup(id.Name)
+					_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
+				}
+			}
+		}
+	}
+	return thenScope, elseScope
+}
+
 func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, canFallthrough bool, err error) {
 	emptyTuple := &TupleType{Elems: []Type{}}
 	if len(stmts) == 0 {
@@ -1036,7 +1084,7 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 				canFallthrough = false
 				currentValTypes = nil
 			} else if fnT, ok := isBareCallableAutoInvocation(s.Value, et); ok {
-				if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
+				if inf.funcCtx != nil && (inf.funcCtx.fnType == fnT || (inf.funcCtx.mirrorFnType != nil && inf.funcCtx.mirrorFnType == fnT)) {
 					inf.funcCtx.selfCalled = true
 				}
 				if canFallthrough {
@@ -1054,48 +1102,7 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 					return nil, false, err
 				}
 			}
-			thenScope := NewScope(inf.scope)
-			elseScope := NewScope(inf.scope)
-			if s.Cond != nil {
-				if bin, ok := s.Cond.(*ast.BinaryExpr); ok {
-					if bin.Op == "!=" {
-						if id, ok := bin.Left.(*ast.Identifier); ok {
-							if _, isNil := bin.Right.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						} else if id, ok := bin.Right.(*ast.Identifier); ok {
-							if _, isNil := bin.Left.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						}
-					} else if bin.Op == "==" {
-						if id, ok := bin.Left.(*ast.Identifier); ok {
-							if _, isNil := bin.Right.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						} else if id, ok := bin.Right.(*ast.Identifier); ok {
-							if _, isNil := bin.Left.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						}
-					}
-				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
-					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
-						if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
-							origT, _ := inf.scope.Lookup(id.Name)
-							_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
-						}
-					}
-				}
-			}
+			thenScope, elseScope := inf.setupIfScopes(s.Cond)
 			prevScope := inf.scope
 			inf.scope = thenScope
 			thenFT, thenCanFT, err := inf.inferBlock(s.ThenBody)
@@ -1182,11 +1189,12 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 	return currentValTypes, canFallthrough, nil
 }
 
-func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declaredRetType Type, pos ast.Position, entityName string, isMethod bool, structName string) error {
+func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declaredRetType Type, pos ast.Position, entityName string, isMethod bool, structName string, mirrorFnType *FuncType) error {
 	savedWarnIdx := len(inf.warnings)
 
 	funcCtx := &funcReturnCtx{
-		fnType: fnType,
+		fnType:       fnType,
+		mirrorFnType: mirrorFnType,
 	}
 	prevFuncCtx := inf.funcCtx
 	inf.funcCtx = funcCtx
@@ -1234,6 +1242,13 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 		if len(knownTypes) > 0 {
 			tentativeRet := NewUnionType(knownTypes...)
 			fnType.Ret = tentativeRet
+			if funcCtx.mirrorFnType != nil {
+				origin := inf.selfType
+				if st, ok := inf.selfType.(*StructType); ok && st.GenericOrigin != nil {
+					origin = st.GenericOrigin
+				}
+				funcCtx.mirrorFnType.Ret = ReplaceType(tentativeRet, origin, inf.selfType)
+			}
 			inf.warnings = inf.warnings[:savedWarnIdx]
 
 			funcCtx.returnTypes = nil
@@ -1268,6 +1283,13 @@ func (inf *Inferencer) inferFuncBody(body []ast.Stmt, fnType *FuncType, declared
 		}
 	} else if unifiedType != TypeUnknown {
 		fnType.Ret = unifiedType
+		if funcCtx.mirrorFnType != nil {
+			origin := inf.selfType
+			if st, ok := inf.selfType.(*StructType); ok && st.GenericOrigin != nil {
+				origin = st.GenericOrigin
+			}
+			funcCtx.mirrorFnType.Ret = ReplaceType(unifiedType, origin, inf.selfType)
+		}
 	} else {
 		if isMethod {
 			inf.addWarning(pos, "Unknown type of return value in method '%s' of struct '%s'", entityName, structName)
@@ -1405,7 +1427,33 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					}
 					tpTypes[i].Constraint = cType
 				}
-				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint}
+				var defType Type
+				if tp.Default != "" {
+					dType, err := inf.parseTypeAnnot(tp.Default)
+					if err != nil {
+						inf.scope = origScope
+						return err
+					}
+					defType = dType
+				}
+				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
+			}
+			defaultBindings := make(map[string]Type)
+			for _, tp := range typeParamDefs {
+				curDefault := tp.Default
+				if curDefault != nil {
+					curDefault = Substitute(curDefault, defaultBindings)
+					defaultBindings[tp.Name] = curDefault
+				}
+				if tp.Constraint != nil && curDefault != nil {
+					curConstraint := Substitute(tp.Constraint, defaultBindings)
+					if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+						if !IsAssignableTo(curDefault, curConstraint) {
+							inf.scope = origScope
+							return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", curDefault, curConstraint, tp.Name)
+						}
+					}
+				}
 			}
 		}
 
@@ -1553,7 +1601,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 		prevScope := inf.scope
 		inf.scope = childScope
-		err := inf.inferFuncBody(s.Body, fnType, declaredRetType, s.Pos(), s.Name, false, "")
+		err := inf.inferFuncBody(s.Body, fnType, declaredRetType, s.Pos(), s.Name, false, "", nil)
 		inf.scope = prevScope
 		if origScope != nil {
 			inf.scope = origScope
@@ -1604,7 +1652,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				return err
 			}
 		}
-		thenScope := NewScope(inf.scope)
+		thenScope, elseScope := inf.setupIfScopes(s.Cond)
 		prevScope := inf.scope
 		inf.scope = thenScope
 		for _, bStmt := range s.ThenBody {
@@ -1615,7 +1663,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		inf.scope = prevScope
 		if len(s.ElseBody) > 0 {
-			elseScope := NewScope(inf.scope)
 			inf.scope = elseScope
 			for _, bStmt := range s.ElseBody {
 				if err := inf.inferStmt(bStmt); err != nil {
@@ -1655,6 +1702,23 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 	case *ast.StructDef:
 		var origScope *Scope
+		prevSelfType := inf.selfType
+		defer func() { inf.selfType = prevSelfType }()
+
+		st := &StructType{
+			Name:            s.Name,
+			Fields:          make(map[string]Type),
+			FieldOrder:      make([]string, 0),
+			Embedded:        make([]*StructType, 0),
+			DirectFields:    make(map[string]bool),
+			AmbiguousFields: make(map[string]bool),
+			Methods:         make(map[string]*FuncType),
+		}
+		inf.selfType = st
+		if inf.StmtTypes != nil {
+			inf.StmtTypes[s] = st
+		}
+
 		var typeParamDefs []TypeParamDef
 		if len(s.TypeParams) > 0 {
 			origScope = inf.scope
@@ -1676,23 +1740,20 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					}
 					tpTypes[i].Constraint = cType
 				}
-				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint}
+				var defType Type
+				if tp.Default != "" {
+					dType, err := inf.parseTypeAnnot(tp.Default)
+					if err != nil {
+						inf.scope = origScope
+						return err
+					}
+					defType = dType
+				}
+				/* struct type param */
+				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 			}
 		}
-
-		st := &StructType{
-			Name:            s.Name,
-			TypeParams:      typeParamDefs,
-			Fields:          make(map[string]Type),
-			FieldOrder:      make([]string, 0),
-			Embedded:        make([]*StructType, 0),
-			DirectFields:    make(map[string]bool),
-			AmbiguousFields: make(map[string]bool),
-			Methods:         make(map[string]*FuncType),
-		}
-		if inf.StmtTypes != nil {
-			inf.StmtTypes[s] = st
-		}
+		st.TypeParams = typeParamDefs
 
 		// Declare struct type in enclosing scope so methods/self can reference it
 		declScope := inf.scope
@@ -1785,7 +1846,41 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						}
 						tpTypes[i].Constraint = cType
 					}
-					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint}
+					var defType Type
+					if tp.Default != "" {
+						dType, err := inf.parseTypeAnnot(tp.Default)
+						if err != nil {
+							inf.scope = prevInfScope
+							if origScope != nil {
+								inf.scope = origScope
+							}
+							return err
+						}
+						defType = dType
+					}
+					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
+				}
+				defaultBindings := make(map[string]Type)
+				for _, tp := range mTypeParams {
+					curDefault := tp.Default
+					if curDefault != nil {
+						curDefault = Substitute(curDefault, defaultBindings)
+						defaultBindings[tp.Name] = curDefault
+					}
+					if tp.Constraint != nil && curDefault != nil {
+						curConstraint := Substitute(tp.Constraint, defaultBindings)
+						if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+							if !IsAssignableTo(curDefault, curConstraint) {
+								if len(m.TypeParams) > 0 {
+									inf.scope = prevInfScope
+								}
+								if origScope != nil {
+									inf.scope = origScope
+								}
+								return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s in method '%s'", curDefault, curConstraint, tp.Name, m.Name)
+							}
+						}
+					}
 				}
 				methodScope = mScope
 			}
@@ -1824,28 +1919,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 				if pType == TypeUnknown {
 					inf.addWarning(p.Pos(), "Unknown type of parameter '%s' in method '%s' of struct '%s'", p.Name, m.Name, s.Name)
-				}
-
-				if p.DefaultValue != nil {
-					defT, err := inf.inferExpr(p.DefaultValue)
-					if err != nil {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return err
-					}
-					if pType != TypeUnknown && !IsAssignableTo(defT, pType) {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, pType, defT)
-					}
 				}
 
 				if p.IsVariadic {
@@ -1893,27 +1966,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					inf.addWarning(m.BlockParam.Pos(), "Unknown type of block parameter '&%s' in method '%s' of struct '%s'", m.BlockParam.Name, m.Name, s.Name)
 				}
 				blockOpt = (m.BlockParam.DefaultValue != nil)
-				if m.BlockParam.DefaultValue != nil {
-					defT, err := inf.inferExpr(m.BlockParam.DefaultValue)
-					if err != nil {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return err
-					}
-					if blockT != TypeUnknown && !IsAssignableTo(defT, blockT) {
-						if len(m.TypeParams) > 0 {
-							inf.scope = prevInfScope
-						}
-						if origScope != nil {
-							inf.scope = origScope
-						}
-						return inf.nodeErr(m.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", m.BlockParam.Name, blockT, defT)
-					}
-				}
 				_ = methodScope.Declare(m.BlockParam.Name, blockT)
 			}
 
@@ -1988,42 +2040,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
-		// Pass B: Infer method bodies using inferFuncBody
-		for _, item := range methodItems {
-			m := item.methodDef
-			prevScope := inf.scope
-			inf.scope = item.methodScope
-			checkDeclaredRet := item.declaredRetType
-			if m.Name == "init" {
-				checkDeclaredRet = TypeUnknown
-			}
-			err := inf.inferFuncBody(m.Body, item.methodType, checkDeclaredRet, m.Pos(), m.Name, true, s.Name)
-			inf.scope = prevScope
-			if err != nil {
-				if origScope != nil {
-					inf.scope = origScope
-				}
-				return err
-			}
-			if m.Name == "init" {
-				item.methodType.Ret = st
-			}
-		}
-
-		// Rebuild overloaded operator method types (+ / -) now that method bodies have inferred Ret
-		for _, opName := range []string{"+", "-"} {
-			if existing, ok := st.Methods[opName]; ok && len(existing.Overloads) == 2 {
-				unaryFT := existing.Overloads[0]
-				binaryFT := existing.Overloads[1]
-				ret := binaryFT.Ret
-				if !unaryFT.Ret.Equals(binaryFT.Ret) {
-					ret = NewUnionType(unaryFT.Ret, binaryFT.Ret)
-				}
-				existing.Ret = ret
-				existing.OverloadUnion = fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String())
-			}
-		}
-
 		if _, hasInit := st.Methods["init"]; !hasInit {
 			var initParamTypes []Type
 			minArity := 0
@@ -2046,6 +2062,192 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
+		// Validate default type parameters against constraints now that methods and fields are registered
+		defaultBindings := make(map[string]Type)
+		for _, tp := range st.TypeParams {
+			curDefault := tp.Default
+			if curDefault != nil {
+				curDefault = Substitute(curDefault, defaultBindings)
+				defaultBindings[tp.Name] = curDefault
+			}
+			if tp.Constraint != nil && curDefault != nil {
+				curConstraint := Substitute(tp.Constraint, defaultBindings)
+				if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+					if !IsAssignableTo(curDefault, curConstraint) {
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", curDefault, curConstraint, tp.Name)
+					}
+				}
+			}
+		}
+
+		// Pass B: Infer method bodies using inferFuncBody
+		// If struct is generic, Self and self in method bodies must refer to Box[T1, T2] instead of bare Box.
+		passBSelfType := Type(st)
+		var pInst *StructType
+		if len(st.TypeParams) > 0 {
+			tpArgs := make([]Type, len(st.TypeParams))
+			for i, tp := range st.TypeParams {
+				tpArgs[i] = &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
+			}
+			passBSelfType = InstantiateStruct(st, tpArgs)
+			if p, ok := passBSelfType.(*StructType); ok {
+				pInst = p
+			}
+		}
+		prevPassBSelf := inf.selfType
+		inf.selfType = passBSelfType
+
+		for _, item := range methodItems {
+			m := item.methodDef
+			prevScope := inf.scope
+			inf.scope = item.methodScope
+			checkDeclaredRet := item.declaredRetType
+			if passBSelfType != st {
+				checkDeclaredRet = ReplaceType(checkDeclaredRet, st, passBSelfType)
+				for sc := item.methodScope; sc != nil && sc != origScope && sc != prevScope; sc = sc.parent {
+					if _, hasSelf := sc.bindings["self"]; hasSelf {
+						sc.bindings["self"] = passBSelfType
+					}
+					for name, bType := range sc.bindings {
+						if name != "self" {
+							subB := ReplaceType(bType, st, passBSelfType)
+							if subB != bType {
+								sc.bindings[name] = subB
+							}
+						}
+					}
+				}
+			} else if checkDeclaredRet != nil && checkDeclaredRet.Equals(st) {
+				checkDeclaredRet = passBSelfType
+			}
+			_ = item.methodScope.Declare("self", passBSelfType)
+			if m.Name == "init" {
+				checkDeclaredRet = TypeUnknown
+			}
+
+			var mirrorFn *FuncType
+			if pInst != nil {
+				if pm, ok := pInst.Methods[m.Name]; ok && pm != nil {
+					if len(pm.Overloads) > 0 {
+						for _, ov := range pm.Overloads {
+							if ov.MinArity == item.methodType.MinArity && ov.MaxArity == item.methodType.MaxArity {
+								mirrorFn = ov
+								break
+							}
+						}
+					} else {
+						mirrorFn = pm
+					}
+				}
+			}
+
+			paramIdx := 0
+			for _, p := range m.Params {
+				if p.Name == "self" {
+					continue
+				}
+				if p.DefaultValue != nil {
+					defT, err := inf.inferExpr(p.DefaultValue)
+					if err != nil {
+						inf.selfType = prevPassBSelf
+						inf.scope = prevScope
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return err
+					}
+					var pExpected Type = TypeUnknown
+					if tup, ok := item.methodType.Arg.(*TupleType); ok && paramIdx < len(tup.Elems) {
+						pExpected = tup.Elems[paramIdx]
+						if passBSelfType != st {
+							pExpected = ReplaceType(pExpected, st, passBSelfType)
+						}
+					}
+					if pExpected != TypeUnknown && !IsAssignableTo(defT, pExpected) {
+						inf.selfType = prevPassBSelf
+						inf.scope = prevScope
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return inf.nodeErr(p.DefaultValue, "type mismatch in default value for parameter '%s': expected %s, got %s", p.Name, pExpected, defT)
+					}
+				}
+				paramIdx++
+			}
+
+			if m.BlockParam != nil && m.BlockParam.DefaultValue != nil {
+				defT, err := inf.inferExpr(m.BlockParam.DefaultValue)
+				if err != nil {
+					inf.selfType = prevPassBSelf
+					inf.scope = prevScope
+					if origScope != nil {
+						inf.scope = origScope
+					}
+					return err
+				}
+				bExpected := item.methodType.BlockParam
+				if passBSelfType != st && bExpected != nil {
+					bExpected = ReplaceType(bExpected, st, passBSelfType)
+				}
+				if bExpected != nil && bExpected != TypeUnknown && !IsAssignableTo(defT, bExpected) {
+					inf.selfType = prevPassBSelf
+					inf.scope = prevScope
+					if origScope != nil {
+						inf.scope = origScope
+					}
+					return inf.nodeErr(m.BlockParam.DefaultValue, "type mismatch in default value for block parameter '&%s': expected %s, got %s", m.BlockParam.Name, bExpected, defT)
+				}
+			}
+
+			err := inf.inferFuncBody(m.Body, item.methodType, checkDeclaredRet, m.Pos(), m.Name, true, s.Name, mirrorFn)
+			inf.scope = prevScope
+			if err != nil {
+				inf.selfType = prevPassBSelf
+				if origScope != nil {
+					inf.scope = origScope
+				}
+				return err
+			}
+			if m.Name == "init" {
+				item.methodType.Ret = st
+				if mirrorFn != nil {
+					mirrorFn.Ret = passBSelfType
+				}
+			}
+		}
+		inf.selfType = prevPassBSelf
+
+		// Rebuild overloaded operator method types (+ / -) now that method bodies have inferred Ret
+		for _, opName := range []string{"+", "-"} {
+			if existing, ok := st.Methods[opName]; ok && len(existing.Overloads) == 2 {
+				unaryFT := existing.Overloads[0]
+				binaryFT := existing.Overloads[1]
+				ret := binaryFT.Ret
+				if !unaryFT.Ret.Equals(binaryFT.Ret) {
+					ret = NewUnionType(unaryFT.Ret, binaryFT.Ret)
+				}
+				existing.Ret = ret
+				existing.OverloadUnion = fmt.Sprintf("%s | %s", unaryFT.String(), binaryFT.String())
+				if passBSelfType != st {
+					if pInst, ok := passBSelfType.(*StructType); ok {
+						if pExisting, pOk := pInst.Methods[opName]; pOk && pExisting != nil && len(pExisting.Overloads) == 2 {
+							pUnary := pExisting.Overloads[0]
+							pBinary := pExisting.Overloads[1]
+							pRet := pBinary.Ret
+							if !pUnary.Ret.Equals(pBinary.Ret) {
+								pRet = NewUnionType(pUnary.Ret, pBinary.Ret)
+							}
+							pExisting.Ret = pRet
+							pExisting.OverloadUnion = fmt.Sprintf("%s | %s", pUnary.String(), pBinary.String())
+						}
+					}
+				}
+			}
+		}
+
 		st.ClearInstCache()
 		if origScope != nil {
 			inf.scope = origScope
@@ -2054,6 +2256,9 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 
 	case *ast.InterfaceDef:
 		var origScope *Scope
+		prevSelfType := inf.selfType
+		inf.selfType = TypeSelf
+		defer func() { inf.selfType = prevSelfType }()
 		var typeParamDefs []TypeParamDef
 		if len(s.TypeParams) > 0 {
 			origScope = inf.scope
@@ -2075,7 +2280,17 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 					}
 					tpTypes[i].Constraint = cType
 				}
-				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint}
+				var defType Type
+				if tp.Default != "" {
+					dType, err := inf.parseTypeAnnot(tp.Default)
+					if err != nil {
+						inf.scope = origScope
+						return err
+					}
+					defType = dType
+				}
+				/* iface type param */
+				typeParamDefs[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
 			}
 		}
 
@@ -2102,9 +2317,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 				return inf.nodeErr(s, "cannot embed non-interface type '%s' in interface '%s'", embName, s.Name)
 			}
-			iface.Embedded = append(iface.Embedded, embIface)
+			resolvedEmb := ResolveInterfaceForReceiver(embIface, TypeSelf)
+			iface.Embedded = append(iface.Embedded, resolvedEmb)
 
-			for mName, mSig := range embIface.Methods {
+			for mName, mSig := range resolvedEmb.Methods {
 				if existingSig, exists := iface.Methods[mName]; exists {
 					if !existingSig.Equals(mSig) {
 						if origScope != nil {
@@ -2154,7 +2370,41 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 						}
 						tpTypes[i].Constraint = cType
 					}
-					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint}
+					var defType Type
+					if tp.Default != "" {
+						dType, err := inf.parseTypeAnnot(tp.Default)
+						if err != nil {
+							inf.scope = prevInfScope
+							if origScope != nil {
+								inf.scope = origScope
+							}
+							return err
+						}
+						defType = dType
+					}
+					mTypeParams[i] = TypeParamDef{Name: tp.Name, Constraint: tpTypes[i].Constraint, Default: defType}
+				}
+				defaultBindings := make(map[string]Type)
+				for _, tp := range mTypeParams {
+					curDefault := tp.Default
+					if curDefault != nil {
+						curDefault = Substitute(curDefault, defaultBindings)
+						defaultBindings[tp.Name] = curDefault
+					}
+					if tp.Constraint != nil && curDefault != nil {
+						curConstraint := Substitute(tp.Constraint, defaultBindings)
+						if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+							if !IsAssignableTo(curDefault, curConstraint) {
+								if len(m.TypeParams) > 0 {
+									inf.scope = prevInfScope
+								}
+								if origScope != nil {
+									inf.scope = origScope
+								}
+								return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s in method '%s'", curDefault, curConstraint, tp.Name, m.Name)
+							}
+						}
+					}
 				}
 			}
 
@@ -2254,6 +2504,27 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 			}
 			iface.Methods[m.Name] = mSig
+		}
+
+		// Validate default type parameters against constraints now that interface methods are registered
+		defaultBindings := make(map[string]Type)
+		for _, tp := range iface.TypeParams {
+			curDefault := tp.Default
+			if curDefault != nil {
+				curDefault = Substitute(curDefault, defaultBindings)
+				defaultBindings[tp.Name] = curDefault
+			}
+			if tp.Constraint != nil && curDefault != nil {
+				curConstraint := Substitute(tp.Constraint, defaultBindings)
+				if !ContainsSelfOrParam(curConstraint) && !ContainsSelfOrParam(curDefault) {
+					if !IsAssignableTo(curDefault, curConstraint) {
+						if origScope != nil {
+							inf.scope = origScope
+						}
+						return inf.nodeErr(s, "default type %s does not satisfy constraint %s for type parameter %s", curDefault, curConstraint, tp.Name)
+					}
+				}
+			}
 		}
 
 		iface.ClearInstCache()
@@ -2448,7 +2719,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 		}
 		if it, ok := effT.(*InterfaceType); ok {
-			if m, ok := it.LookupMethod(e.Op); ok {
+			resolvedIt := ResolveInterfaceForReceiver(it, t)
+			if m, ok := resolvedIt.LookupMethod(e.Op); ok {
 				if m.MinArity > 0 {
 					return nil, inf.nodeErr(e, "operator %s requires 0 arguments, got %d", e.Op, m.MinArity)
 				}
@@ -2516,11 +2788,23 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 			}
 			if it, ok := leftT.(*InterfaceType); ok {
-				if m, ok := it.LookupMethod("=="); ok {
+				resolvedIt := ResolveInterfaceForReceiver(it, it)
+				if m, ok := resolvedIt.LookupMethod("=="); ok {
 					if pT, ok := getFirstParamType(m); ok && !IsAssignableTo(rightT, pT) {
 						return nil, inf.nodeErr(e.Right, "type mismatch in operator '!=': expected %s, got %s", pT, rightT)
 					}
 					return m.Ret, nil
+				}
+			}
+			if tp, ok := leftT.(*TypeParamType); ok && tp.Constraint != nil {
+				if it, ok := tp.Constraint.(*InterfaceType); ok {
+					resolvedIt := ResolveInterfaceForReceiver(it, tp)
+					if m, ok := resolvedIt.LookupMethod("=="); ok {
+						if pT, ok := getFirstParamType(m); ok && !IsAssignableTo(rightT, pT) {
+							return nil, inf.nodeErr(e.Right, "type mismatch in operator '!=': expected %s, got %s", pT, rightT)
+						}
+						return m.Ret, nil
+					}
 				}
 			}
 			return TypeBool, nil
@@ -2560,7 +2844,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 		}
 		if it, ok := leftT.(*InterfaceType); ok {
-			if m, ok := it.LookupMethod(e.Op); ok {
+			resolvedIt := ResolveInterfaceForReceiver(it, it)
+			if m, ok := resolvedIt.LookupMethod(e.Op); ok {
 				if m.MinArity > 1 || (m.MaxArity >= 0 && m.MaxArity < 1) {
 					return nil, inf.nodeErr(e, "operator %s requires 1 argument, but interface method has arity %d..%d", e.Op, m.MinArity, m.MaxArity)
 				}
@@ -2570,7 +2855,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				return m.Ret, nil
 			}
 			if e.Op == "<=" || e.Op == ">" || e.Op == ">=" {
-				if m, ok := it.LookupMethod("<"); ok {
+				if m, ok := resolvedIt.LookupMethod("<"); ok {
 					if pT, ok := getFirstParamType(m); ok && !IsAssignableTo(rightT, pT) {
 						return nil, inf.nodeErr(e.Right, "type mismatch in operator '%s': expected %s, got %s", e.Op, pT, rightT)
 					}
@@ -2580,11 +2865,20 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		}
 		if tp, ok := leftT.(*TypeParamType); ok && tp.Constraint != nil {
 			if it, ok := tp.Constraint.(*InterfaceType); ok {
-				if m, ok := it.LookupMethod(e.Op); ok {
+				resolvedIt := ResolveInterfaceForReceiver(it, tp)
+				if m, ok := resolvedIt.LookupMethod(e.Op); ok {
 					if pT, ok := getFirstParamType(m); ok && !IsAssignableTo(rightT, pT) {
 						return nil, inf.nodeErr(e.Right, "type mismatch in operator '%s': expected %s, got %s", e.Op, pT, rightT)
 					}
 					return m.Ret, nil
+				}
+				if e.Op == "<=" || e.Op == ">" || e.Op == ">=" {
+					if m, ok := resolvedIt.LookupMethod("<"); ok {
+						if pT, ok := getFirstParamType(m); ok && !IsAssignableTo(rightT, pT) {
+							return nil, inf.nodeErr(e.Right, "type mismatch in operator '%s': expected %s, got %s", e.Op, pT, rightT)
+						}
+						return m.Ret, nil
+					}
 				}
 			}
 			switch e.Op {
@@ -2871,14 +3165,59 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			if len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 {
 				bindings := make(map[string]Type)
 				argStartIdx := 0
-				if len(e.Args) > 0 {
+				if len(e.Args) >= 2 {
 					if _, isNamed := e.Args[0].(*ast.NamedArgExpr); !isNamed {
 						if firstT, err := inf.inferExpr(e.Args[0]); err == nil {
 							if firstSt, ok := firstT.(*StructType); ok && firstSt.Name == st.Name && len(firstSt.TypeArgs) == len(st.TypeParams) {
-								for i, tp := range st.TypeParams {
-									bindings[tp.Name] = firstSt.TypeArgs[i]
+								hasNamedInRest := false
+								for _, a := range e.Args[1:] {
+									if _, ok := a.(*ast.NamedArgExpr); ok {
+										hasNamedInRest = true
+										break
+									}
 								}
-								argStartIdx = 1
+								isCopy := hasNamedInRest
+								if !isCopy {
+									var firstExpectedT Type
+									maxPositional := 0
+									if initFn, hasInit := st.Methods["init"]; hasInit {
+										maxPositional = initFn.MaxArity
+										if tup, ok := initFn.Arg.(*TupleType); ok && len(tup.Elems) > 0 {
+											firstExpectedT = tup.Elems[0]
+										}
+									} else {
+										maxPositional = len(st.FieldOrder)
+										if len(st.FieldOrder) > 0 {
+											firstExpectedT = st.Fields[st.FieldOrder[0]]
+										}
+									}
+									if maxPositional >= 0 && len(e.Args) > maxPositional {
+										isCopy = true
+									} else if firstExpectedT != nil && firstExpectedT != TypeUnknown {
+										testBindings := make(map[string]Type)
+										unifyTypeParams(firstExpectedT, firstT, testBindings)
+										subExpected := Substitute(firstExpectedT, testBindings)
+										if !IsAssignableTo(firstT, subExpected) {
+											isCopy = true
+										} else {
+											for _, tp := range st.TypeParams {
+												if bound, hasB := testBindings[tp.Name]; hasB && tp.Constraint != nil {
+													subC := Substitute(tp.Constraint, testBindings)
+													if !IsAssignableTo(bound, subC) {
+														isCopy = true
+														break
+													}
+												}
+											}
+										}
+									}
+								}
+								if isCopy {
+									for i, tp := range st.TypeParams {
+										bindings[tp.Name] = firstSt.TypeArgs[i]
+									}
+									argStartIdx = 1
+								}
 							}
 						}
 					}
@@ -2922,6 +3261,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				for i, tp := range st.TypeParams {
 					if bound, ok := bindings[tp.Name]; ok {
 						typeArgs[i] = bound
+					} else if tp.Default != nil {
+						typeArgs[i] = Substitute(tp.Default, bindings)
+						bindings[tp.Name] = typeArgs[i]
 					} else {
 						typeArgs[i] = TypeUnknown
 					}
@@ -2933,14 +3275,75 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				calleeT = st
 			}
 			isCopyUpdate := false
-			if len(e.Args) > 0 {
+			if len(e.Args) >= 2 {
 				if _, isNamed := e.Args[0].(*ast.NamedArgExpr); !isNamed {
 					if firstT, err := inf.inferExpr(e.Args[0]); err == nil && firstT.Equals(st) {
-						isCopyUpdate = true
+						hasNamedInRest := false
+						for _, a := range e.Args[1:] {
+							if _, ok := a.(*ast.NamedArgExpr); ok {
+								hasNamedInRest = true
+								break
+							}
+						}
+						if hasNamedInRest {
+							isCopyUpdate = true
+						} else {
+							var firstExpectedT Type
+							maxPositional := 0
+							if initFn, hasInit := st.Methods["init"]; hasInit {
+								maxPositional = initFn.MaxArity
+								if tup, ok := initFn.Arg.(*TupleType); ok && len(tup.Elems) > 0 {
+									firstExpectedT = tup.Elems[0]
+								}
+							} else {
+								maxPositional = len(st.FieldOrder)
+								if len(st.FieldOrder) > 0 {
+									firstExpectedT = st.Fields[st.FieldOrder[0]]
+								}
+							}
+							if maxPositional >= 0 && len(e.Args) > maxPositional {
+								isCopyUpdate = true
+							} else if firstExpectedT != nil && firstExpectedT != TypeUnknown && !IsAssignableTo(firstT, firstExpectedT) {
+								isCopyUpdate = true
+							}
+						}
 					}
 				}
 			}
-			if !isCopyUpdate {
+			if isCopyUpdate {
+				posIdx := 0
+				for i := 1; i < len(e.Args); i++ {
+					arg := e.Args[i]
+					if named, isNamed := arg.(*ast.NamedArgExpr); isNamed {
+						if expectedFieldT, hasField := st.Fields[named.Name]; hasField {
+							valT, err := inf.inferExpr(named.Value)
+							if err != nil {
+								return nil, err
+							}
+							if !IsAssignableTo(valT, expectedFieldT) {
+								return nil, inf.nodeErr(named.Value, "type mismatch for field '%s' in struct '%s': expected %s, got %s", named.Name, st.Name, expectedFieldT, valT)
+							}
+						} else {
+							return nil, inf.nodeErr(named, "unknown field '%s' in struct '%s'", named.Name, st.Name)
+						}
+					} else {
+						if posIdx < len(st.FieldOrder) {
+							fName := st.FieldOrder[posIdx]
+							expectedFieldT := st.Fields[fName]
+							valT, err := inf.inferExpr(arg)
+							if err != nil {
+								return nil, err
+							}
+							if !IsAssignableTo(valT, expectedFieldT) {
+								return nil, inf.nodeErr(arg, "type mismatch for field '%s' in struct '%s': expected %s, got %s", fName, st.Name, expectedFieldT, valT)
+							}
+							posIdx++
+						} else {
+							return nil, inf.nodeErr(arg, "too many arguments for struct '%s' update", st.Name)
+						}
+					}
+				}
+			} else {
 				if initFn, hasInit := st.Methods["init"]; hasInit {
 					if argTuple, ok := initFn.Arg.(*TupleType); ok {
 						var posArgs []ast.Expr
@@ -3088,6 +3491,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				for i, tp := range fnT.TypeParams {
 					if bound, ok := bindings[tp.Name]; ok {
 						typeArgs[i] = bound
+					} else if tp.Default != nil {
+						typeArgs[i] = Substitute(tp.Default, bindings)
+						bindings[tp.Name] = typeArgs[i]
 					} else {
 						typeArgs[i] = TypeUnknown
 					}
@@ -3101,11 +3507,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				instFn.TypeArgs = typeArgs
 				fnT = instFn
 				calleeT = instFn
-				if inf.funcCtx != nil && (inf.funcCtx.fnType == origFnT || inf.funcCtx.fnType == fnT) {
+				if inf.funcCtx != nil && (inf.funcCtx.fnType == origFnT || inf.funcCtx.fnType == fnT || (inf.funcCtx.mirrorFnType != nil && (inf.funcCtx.mirrorFnType == origFnT || inf.funcCtx.mirrorFnType == fnT))) {
 					inf.funcCtx.selfCalled = true
 				}
 			}
-			if inf.funcCtx != nil && inf.funcCtx.fnType == fnT {
+			if inf.funcCtx != nil && (inf.funcCtx.fnType == fnT || (inf.funcCtx.mirrorFnType != nil && inf.funcCtx.mirrorFnType == fnT)) {
 				inf.funcCtx.selfCalled = true
 			}
 			args := e.Args
@@ -3244,7 +3650,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return st.LookupMember(e.Member)
 		}
 		if it, ok := effTargetT.(*InterfaceType); ok {
-			if mSig, ok := it.LookupMethod(e.Member); ok {
+			resolvedIt := ResolveInterfaceForReceiver(it, targetT)
+			if mSig, ok := resolvedIt.LookupMethod(e.Member); ok {
 				return mSig, nil
 			}
 			return nil, inf.nodeErr(e, "interface %s has no method '%s'", it.Name, e.Member)
@@ -3280,29 +3687,45 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			args[i] = t
 		}
 		if st, ok := targetT.(*StructType); ok {
-			if err := ValidateTypeConstraints(st.TypeParams, args); err != nil {
+			origin := st
+			if origin.GenericOrigin != nil {
+				origin = origin.GenericOrigin
+			}
+			if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
 				return nil, inf.nodeErr(e, "%s", err.Error())
 			}
-			return InstantiateStruct(st, args), nil
+			return InstantiateStruct(origin, args), nil
 		}
 		if fnT, ok := targetT.(*FuncType); ok {
 			if err := ValidateTypeConstraints(fnT.TypeParams, args); err != nil {
 				return nil, inf.nodeErr(e, "%s", err.Error())
 			}
 			bindings := make(map[string]Type)
+			fullArgs := make([]Type, len(fnT.TypeParams))
 			for i, tp := range fnT.TypeParams {
-				bindings[tp.Name] = args[i]
+				if i < len(args) {
+					fullArgs[i] = args[i]
+				} else if tp.Default != nil {
+					fullArgs[i] = Substitute(tp.Default, bindings)
+				} else {
+					fullArgs[i] = TypeUnknown
+				}
+				bindings[tp.Name] = fullArgs[i]
 			}
 			instFn := Substitute(fnT, bindings).(*FuncType)
 			instFn.TypeParams = nil
-			instFn.TypeArgs = args
+			instFn.TypeArgs = fullArgs
 			return instFn, nil
 		}
 		if iface, ok := targetT.(*InterfaceType); ok {
-			if err := ValidateTypeConstraints(iface.TypeParams, args); err != nil {
+			origin := iface
+			if origin.GenericOrigin != nil {
+				origin = origin.GenericOrigin
+			}
+			if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
 				return nil, inf.nodeErr(e, "%s", err.Error())
 			}
-			return InstantiateInterface(iface, args), nil
+			return InstantiateInterface(origin, args), nil
 		}
 		return nil, inf.nodeErr(e, "cannot instantiate type arguments on %s", targetT.String())
 
@@ -3312,13 +3735,19 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			return nil, err
 		}
 		if e.TypeArg != "" {
-			if st, ok := targetT.(*StructType); ok && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 {
-				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
-					args := []Type{argT}
-					if err := ValidateTypeConstraints(st.TypeParams, args); err != nil {
-						return nil, inf.nodeErr(e, "%s", err.Error())
+			if st, ok := targetT.(*StructType); ok {
+				origin := st
+				if origin.GenericOrigin != nil {
+					origin = origin.GenericOrigin
+				}
+				if len(origin.TypeParams) > 0 {
+					if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+						args := []Type{argT}
+						if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
+							return nil, inf.nodeErr(e, "%s", err.Error())
+						}
+						return InstantiateStruct(origin, args), nil
 					}
-					return InstantiateStruct(st, args), nil
 				}
 			}
 			if fnT, ok := targetT.(*FuncType); ok && len(fnT.TypeParams) > 0 && len(fnT.TypeArgs) == 0 {
@@ -3327,20 +3756,37 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 					if err := ValidateTypeConstraints(fnT.TypeParams, args); err != nil {
 						return nil, inf.nodeErr(e, "%s", err.Error())
 					}
-					bindings := map[string]Type{fnT.TypeParams[0].Name: argT}
+					bindings := make(map[string]Type)
+					fullArgs := make([]Type, len(fnT.TypeParams))
+					for i, tp := range fnT.TypeParams {
+						if i < len(args) {
+							fullArgs[i] = args[i]
+						} else if tp.Default != nil {
+							fullArgs[i] = Substitute(tp.Default, bindings)
+						} else {
+							fullArgs[i] = TypeUnknown
+						}
+						bindings[tp.Name] = fullArgs[i]
+					}
 					instFn := Substitute(fnT, bindings).(*FuncType)
 					instFn.TypeParams = nil
-					instFn.TypeArgs = args
+					instFn.TypeArgs = fullArgs
 					return instFn, nil
 				}
 			}
-			if iface, ok := targetT.(*InterfaceType); ok && len(iface.TypeParams) > 0 && len(iface.TypeArgs) == 0 {
-				if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
-					args := []Type{argT}
-					if err := ValidateTypeConstraints(iface.TypeParams, args); err != nil {
-						return nil, inf.nodeErr(e, "%s", err.Error())
+			if iface, ok := targetT.(*InterfaceType); ok {
+				origin := iface
+				if origin.GenericOrigin != nil {
+					origin = origin.GenericOrigin
+				}
+				if len(origin.TypeParams) > 0 {
+					if argT, err := inf.parseTypeAnnot(e.TypeArg); err == nil {
+						args := []Type{argT}
+						if err := ValidateTypeConstraints(origin.TypeParams, args); err != nil {
+							return nil, inf.nodeErr(e, "%s", err.Error())
+						}
+						return InstantiateInterface(origin, args), nil
 					}
-					return InstantiateInterface(iface, args), nil
 				}
 			}
 		}
@@ -3359,7 +3805,8 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 			}
 		}
 		if it, ok := effTargetT.(*InterfaceType); ok {
-			if m, ok := it.LookupMethod("[]"); ok {
+			resolvedIt := ResolveInterfaceForReceiver(it, targetT)
+			if m, ok := resolvedIt.LookupMethod("[]"); ok {
 				return m.Ret, nil
 			}
 		}
@@ -3534,6 +3981,39 @@ func ParseTypeAnnot(annot string) (Type, error) {
 	return (*Inferencer)(nil).parseTypeAnnot(annot)
 }
 
+// ParseTypeAnnotWithParams parses a type annotation string with known type parameters and optional selfType.
+func ParseTypeAnnotWithParams(annot string, typeParams []ast.TypeParam, selfType ...Type) (Type, error) {
+	inf := &Inferencer{scope: NewScope(nil)}
+	for _, tp := range typeParams {
+		_ = inf.scope.Declare(tp.Name, &TypeParamType{Name: tp.Name})
+	}
+	if len(selfType) > 0 && selfType[0] != nil {
+		inf.selfType = selfType[0]
+	}
+	return inf.parseTypeAnnot(annot)
+}
+
+// ParseTypeAnnotWithEnv parses a type annotation string using baseInf (or new Inferencer) with additional known types.
+func ParseTypeAnnotWithEnv(annot string, baseInf *Inferencer, extraTypes map[string]Type, selfType ...Type) (Type, error) {
+	var parentScope *Scope
+	var modules map[string]*ModuleType
+	if baseInf != nil {
+		parentScope = baseInf.scope
+		modules = baseInf.modules
+	}
+	inf := &Inferencer{
+		scope:   NewScope(parentScope),
+		modules: modules,
+	}
+	for name, typ := range extraTypes {
+		_ = inf.scope.Declare(name, typ)
+	}
+	if len(selfType) > 0 && selfType[0] != nil {
+		inf.selfType = selfType[0]
+	}
+	return inf.parseTypeAnnot(annot)
+}
+
 func (inf *Inferencer) ParseTypeAnnot(annot string) (Type, error) {
 	return inf.parseTypeAnnot(annot)
 }
@@ -3689,6 +4169,23 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}, nil
 	case "Dict":
 		return &DictType{Key: TypeUnknown, Value: TypeUnknown}, nil
+	case "Self":
+		if inf != nil && inf.selfType != nil {
+			return inf.selfType, nil
+		}
+		return nil, fmt.Errorf("'Self' type is only valid inside struct or interface definitions")
+	case "Error":
+		return BuiltinErrorIface, nil
+	case "Show":
+		return BuiltinShowIface, nil
+	case "Equatable":
+		return BuiltinEquatableIface, nil
+	case "Comparable":
+		return BuiltinComparableIface, nil
+	case "Numeric":
+		return BuiltinNumericIface, nil
+	case "Indexable":
+		return BuiltinIndexableIface, nil
 	}
 
 	// Tuple annotation or grouping: (...) or (Int, ...) or (Int, String) or ((Int) -> String)
@@ -3826,20 +4323,82 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 					return nil, err
 				}
 				if st, ok := baseType.(*StructType); ok {
-					if err := ValidateTypeConstraints(st.TypeParams, argTypes); err != nil {
+					origin := st
+					if origin.GenericOrigin != nil {
+						origin = origin.GenericOrigin
+					}
+					if err := ValidateTypeConstraints(origin.TypeParams, argTypes); err != nil {
 						return nil, err
 					}
-					return InstantiateStruct(st, argTypes), nil
+					return InstantiateStruct(origin, argTypes), nil
 				}
 				if iface, ok := baseType.(*InterfaceType); ok {
-					if err := ValidateTypeConstraints(iface.TypeParams, argTypes); err != nil {
+					origin := iface
+					if origin.GenericOrigin != nil {
+						origin = origin.GenericOrigin
+					}
+					if err := ValidateTypeConstraints(origin.TypeParams, argTypes); err != nil {
 						return nil, err
 					}
-					return InstantiateInterface(iface, argTypes), nil
+					return InstantiateInterface(origin, argTypes), nil
 				}
 				return nil, fmt.Errorf("type '%s' does not take type arguments", baseStr)
 			}
 		}
+	}
+
+	maybeInstantiateDefaultType := func(t Type) Type {
+		if st, isSt := t.(*StructType); isSt && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 && (inf == nil || inf.selfType == nil || st != inf.selfType) {
+			allHaveDefault := true
+			defaultArgs := make([]Type, len(st.TypeParams))
+			bindings := make(map[string]Type)
+			for i, tp := range st.TypeParams {
+				if tp.Default != nil {
+					defT := Substitute(tp.Default, bindings)
+					if !ContainsSelfOrParam(defT) {
+						defaultArgs[i] = defT
+						bindings[tp.Name] = defaultArgs[i]
+					} else {
+						allHaveDefault = false
+						break
+					}
+				} else {
+					allHaveDefault = false
+					break
+				}
+			}
+			if allHaveDefault {
+				if err := ValidateTypeConstraints(st.TypeParams, defaultArgs); err == nil {
+					return InstantiateStruct(st, defaultArgs)
+				}
+			}
+		}
+		if it, isIt := t.(*InterfaceType); isIt && len(it.TypeParams) > 0 && len(it.TypeArgs) == 0 {
+			allHaveDefault := true
+			defaultArgs := make([]Type, len(it.TypeParams))
+			bindings := make(map[string]Type)
+			for i, tp := range it.TypeParams {
+				if tp.Default != nil {
+					defT := Substitute(tp.Default, bindings)
+					if !ContainsSelfOrParam(defT) {
+						defaultArgs[i] = defT
+						bindings[tp.Name] = defaultArgs[i]
+					} else {
+						allHaveDefault = false
+						break
+					}
+				} else {
+					allHaveDefault = false
+					break
+				}
+			}
+			if allHaveDefault {
+				if err := ValidateTypeConstraints(it.TypeParams, defaultArgs); err == nil {
+					return InstantiateInterface(it, defaultArgs)
+				}
+			}
+		}
+		return t
 	}
 
 	if strings.Contains(annot, "::") {
@@ -3857,18 +4416,18 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			if mod != nil {
 				if mod.Types != nil {
 					if t, ok := mod.Types[typeName]; ok {
-						return t, nil
+						return maybeInstantiateDefaultType(t), nil
 					}
 				}
 				if t, ok := mod.Exports[typeName]; ok {
-					return t, nil
+					return maybeInstantiateDefaultType(t), nil
 				}
 			}
 		}
 	}
 	if inf != nil && inf.scope != nil {
 		if t, ok := inf.scope.Lookup(annot); ok {
-			return t, nil
+			return maybeInstantiateDefaultType(t), nil
 		}
 	}
 

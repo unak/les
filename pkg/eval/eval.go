@@ -371,7 +371,7 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("Equatable", &InterfaceDefValue{
 		Name: "Equatable",
 		TypeParams: []ast.TypeParam{
-			{Name: "T"},
+			{Name: "T", Default: "Self"},
 		},
 		Methods: map[string]ast.MethodSig{
 			"==": {
@@ -388,7 +388,7 @@ func (ev *Evaluator) registerBuiltins() {
 	ev.builtinsEnv.Set("Comparable", &InterfaceDefValue{
 		Name: "Comparable",
 		TypeParams: []ast.TypeParam{
-			{Name: "T"},
+			{Name: "T", Default: "Self"},
 		},
 		Embedded: []string{"Equatable[T]"},
 		Methods: map[string]ast.MethodSig{
@@ -432,11 +432,11 @@ func (ev *Evaluator) registerBuiltins() {
 		},
 	})
 
-	// Built-in Numeric interface definition: Int(): Int, Float(): Float, Abs(): T, +: T, -: T, *: T, /: T
+	// Built-in Numeric interface definition: Int(): Int, Float(): Float, Abs(): Self, +: Self, -: Self, *: Self, /: Self
 	ev.builtinsEnv.Set("Numeric", &InterfaceDefValue{
 		Name: "Numeric",
 		TypeParams: []ast.TypeParam{
-			{Name: "T"},
+			{Name: "T", Default: "Self"},
 		},
 		Embedded: []string{"Comparable[T]"},
 		Methods: map[string]ast.MethodSig{
@@ -467,35 +467,35 @@ func (ev *Evaluator) registerBuiltins() {
 			"Abs": {
 				Name:       "Abs",
 				Params:     []ast.FuncParam{},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"+": {
 				Name: "+",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"-": {
 				Name: "-",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"*": {
 				Name: "*",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 			"/": {
 				Name: "/",
 				Params: []ast.FuncParam{
 					{Name: "other", TypeAnnot: "T"},
 				},
-				ReturnType: "T",
+				ReturnType: "Self",
 			},
 		},
 	})
@@ -542,7 +542,7 @@ func valueOrThunkTypeNameWithDepth(val Value, depth int) string {
 	}
 	if thunk, ok := val.(*Thunk); ok {
 		if thunk.InferredType != nil {
-			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown {
+			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown && !types.ContainsSelfOrParam(t) {
 				return t.String()
 			}
 		}
@@ -662,19 +662,147 @@ func typeNameWithDepth(val Value, depth int) string {
 	}
 }
 
+func parseTypeAnnotInEnv(annot string, env *Environment) (types.Type, error) {
+	annot = strings.TrimSpace(annot)
+	if annot == "" {
+		return types.TypeUnknown, nil
+	}
+	var inf *types.Inferencer
+	if env != nil && env.Inferencer != nil {
+		if i, ok := env.Inferencer.(*types.Inferencer); ok {
+			inf = i
+		}
+	}
+	if inf != nil {
+		if t, err := inf.ParseTypeAnnot(annot); err == nil {
+			return t, nil
+		}
+	} else {
+		if t, err := types.ParseTypeAnnot(annot); err == nil {
+			return t, nil
+		}
+	}
+	if env != nil {
+		extraTypes := make(map[string]types.Type)
+		for cur := env; cur != nil; cur = cur.parent {
+			for name, val := range cur.store {
+				if _, exists := extraTypes[name]; exists {
+					continue
+				}
+				v := val
+				if evaluated, isEval := PeekEvaluated(val); isEval {
+					v = evaluated
+				}
+				if sDef, ok := v.(*StructDefValue); ok {
+					if sDef.StructType != nil {
+						if st, ok := sDef.StructType.(types.Type); ok {
+							extraTypes[name] = st
+							continue
+						}
+					}
+					extraTypes[name] = &types.StructType{Name: sDef.Name}
+				} else if iDef, ok := v.(*InterfaceDefValue); ok {
+					extraTypes[name] = &types.InterfaceType{Name: iDef.Name}
+				}
+			}
+		}
+		if len(extraTypes) > 0 {
+			return types.ParseTypeAnnotWithEnv(annot, inf, extraTypes)
+		}
+	}
+	if inf != nil {
+		return inf.ParseTypeAnnot(annot)
+	}
+	return types.ParseTypeAnnot(annot)
+}
+
+func resolveTypeParamFromEnv(t types.Type, env *Environment, inf *types.Inferencer) types.Type {
+	if t == nil || !types.ContainsSelfOrParam(t) || env == nil {
+		return t
+	}
+	if selfVal, found := env.Get("self"); found && selfVal != nil {
+		selfToUse := selfVal
+		if evaluated, isEval := PeekEvaluated(selfVal); isEval {
+			selfToUse = evaluated
+		}
+		if si, ok := selfToUse.(*StructInstance); ok && len(si.TypeArgs) > 0 && si.Def != nil {
+			bindings := make(map[string]types.Type)
+			for i, tp := range si.Def.TypeParams {
+				if i < len(si.TypeArgs) {
+					if argT, err := parseTypeAnnotInEnv(si.TypeArgs[i], env); err == nil && argT != nil {
+						bindings[tp.Name] = argT
+					}
+				}
+			}
+			selfTypeName := fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+			if selfT, err := parseTypeAnnotInEnv(selfTypeName, env); err == nil && selfT != nil {
+				bindings["Self"] = selfT
+			}
+			if len(bindings) > 0 {
+				subT := types.Substitute(t, bindings)
+				if selfT, ok := bindings["Self"]; ok {
+					subT = types.SubstituteSelf(subT, selfT)
+				}
+				return subT
+			}
+		}
+	}
+	return t
+}
+
 func safeFieldTypeName(val Value) string {
+	return safeFieldTypeNameWithDepth(val, 0)
+}
+
+func safeFieldTypeNameWithDepth(val Value, depth int) string {
+	if depth > 16 {
+		return ""
+	}
 	if evaluated, ok := PeekEvaluated(val); ok {
 		return typeNameWithDepth(evaluated, 0)
 	}
 	if thunk, ok := val.(*Thunk); ok {
 		if thunk.InferredType != nil {
 			if t, ok := thunk.InferredType.(types.Type); ok && t != types.TypeUnknown {
-				return t.String()
+				if types.ContainsSelfOrParam(t) {
+					var inf *types.Inferencer
+					if thunk.Env != nil && thunk.Env.Inferencer != nil {
+						if i, ok := thunk.Env.Inferencer.(*types.Inferencer); ok {
+							inf = i
+						}
+					}
+					t = resolveTypeParamFromEnv(t, thunk.Env, inf)
+				}
+				if t != nil && t != types.TypeUnknown && !types.ContainsSelfOrParam(t) {
+					return t.String()
+				}
 			}
 		}
 		if thunk.Expr != nil {
 			if litVal, ok := evalLiteral(thunk.Expr); ok {
 				return typeNameWithDepth(litVal, 0)
+			}
+			if id, ok := thunk.Expr.(*ast.Identifier); ok && thunk.Env != nil {
+				if v, found := thunk.Env.Get(id.Name); found && v != nil && v != val {
+					if tName := safeFieldTypeNameWithDepth(v, depth+1); tName != "" && tName != "Unknown" {
+						return tName
+					}
+				}
+			}
+			if mem, ok := thunk.Expr.(*ast.MemberAccessExpr); ok && thunk.Env != nil {
+				if id, ok := mem.Target.(*ast.Identifier); ok {
+					if objVal, found := thunk.Env.Get(id.Name); found && objVal != nil {
+						if evaluated, ok := PeekEvaluated(objVal); ok {
+							if si, ok := evaluated.(*StructInstance); ok {
+								if fv, ok := si.Fields[mem.Member]; ok {
+									if tName := safeFieldTypeNameWithDepth(fv, depth+1); tName != "" && tName != "Unknown" {
+										return tName
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 			if tup, ok := thunk.Expr.(*ast.TupleLit); ok {
 				if len(tup.Elements) == 0 {
@@ -809,12 +937,33 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 				}
 			}
 		}
+	} else if len(inst.Def.FieldTypes) > 0 {
+		var selfType types.Type
+		if inst.Def != nil && inst.Def.Name != "" {
+			selfType = &types.StructType{Name: inst.Def.Name}
+		}
+		for fName, fAnnot := range inst.Def.FieldTypes {
+			if fVal, ok := inst.Fields[fName]; ok {
+				tName := safeFieldTypeName(fVal)
+				if tName != "" && tName != "Unknown" {
+					if parsedT, err := types.ParseTypeAnnotWithParams(fAnnot, inst.Def.TypeParams, selfType); err == nil {
+						matchTypeStringToField(parsedT, tName, bindings)
+					}
+				}
+			}
+		}
 	}
 	res := make([]string, len(inst.Def.TypeParams))
 	allFound := true
 	for i, tp := range inst.Def.TypeParams {
+		if inst.Def != nil && inst.Def.Name != "" {
+			bindings["Self"] = inst.Def.Name
+		}
 		if b, ok := bindings[tp.Name]; ok {
 			res[i] = b
+		} else if tp.Default != "" {
+			res[i] = substituteTypeString(tp.Default, bindings)
+			bindings[tp.Name] = res[i]
 		} else {
 			allFound = false
 			break
@@ -826,23 +975,36 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 }
 
 func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Value, error) {
-	var inf *types.Inferencer
-	if env != nil && env.Inferencer != nil {
-		if i, ok := env.Inferencer.(*types.Inferencer); ok {
-			inf = i
-		}
-	}
-
 	parseArgType := func(s string) types.Type {
-		if inf != nil {
-			if t, err := inf.ParseTypeAnnot(s); err == nil {
+		if env != nil {
+			if t, err := parseTypeAnnotInEnv(s, env); err == nil && t != nil {
 				return t
 			}
 		}
-		if t, err := types.ParseTypeAnnot(s); err == nil {
-			return t
+		if cl, ok := val.(*Closure); ok && cl.Env != nil && cl.Env != env {
+			if t, err := parseTypeAnnotInEnv(s, cl.Env); err == nil && t != nil {
+				return t
+			}
 		}
 		return types.TypeUnknown
+	}
+
+	var selfTypeName string
+	if env != nil {
+		if selfVal, found := env.Get("self"); found && selfVal != nil {
+			forcedSelf := Force(selfVal)
+			selfTypeName = typeNameOf(forcedSelf)
+			if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+				selfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+			}
+			if selfTypeName != "" && selfTypeName != "Unknown" && len(typeArgs) > 0 {
+				resolvedArgs := make([]string, len(typeArgs))
+				for i, a := range typeArgs {
+					resolvedArgs[i] = substituteTypeString(a, map[string]string{"Self": selfTypeName})
+				}
+				typeArgs = resolvedArgs
+			}
+		}
 	}
 
 	switch v := val.(type) {
@@ -853,12 +1015,25 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		} else {
 			newDef.Origin = v
 		}
-		newDef.TypeArgs = append([]string(nil), typeArgs...)
+		fullArgs := make([]string, len(v.TypeParams))
+		strBindings := make(map[string]string)
+		strBindings["Self"] = v.Name
+		for i, tp := range v.TypeParams {
+			if i < len(typeArgs) {
+				fullArgs[i] = typeArgs[i]
+			} else if tp.Default != "" {
+				fullArgs[i] = substituteTypeString(tp.Default, strBindings)
+			} else {
+				fullArgs[i] = "Unknown"
+			}
+			strBindings[tp.Name] = fullArgs[i]
+		}
+		newDef.TypeArgs = fullArgs
 		if v.StructType != nil {
 			if st, ok := v.StructType.(*types.StructType); ok && len(st.TypeParams) > 0 {
-				argTypes := make([]types.Type, len(typeArgs))
+				argTypes := make([]types.Type, len(fullArgs))
 				bindings := make(map[string]types.Type)
-				for i, argStr := range typeArgs {
+				for i, argStr := range fullArgs {
 					argT := parseArgType(argStr)
 					argTypes[i] = argT
 					if i < len(st.TypeParams) {
@@ -876,26 +1051,63 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 
 	case *Closure:
 		newClosure := *v
-		newClosure.TypeArgs = append([]string(nil), typeArgs...)
+		fullArgs := make([]string, len(v.TypeParams))
+		strBindings := make(map[string]string)
+		closureSelfTypeName := selfTypeName
+		if closureSelfTypeName == "" && v.Env != nil {
+			if selfVal, found := v.Env.Get("self"); found && selfVal != nil {
+				forcedSelf := Force(selfVal)
+				closureSelfTypeName = typeNameOf(forcedSelf)
+				if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+					closureSelfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+				}
+			}
+		}
+		if closureSelfTypeName != "" && closureSelfTypeName != "Unknown" {
+			strBindings["Self"] = closureSelfTypeName
+		}
+		for i, tp := range v.TypeParams {
+			if i < len(typeArgs) {
+				fullArgs[i] = typeArgs[i]
+			} else if tp.Default != "" {
+				fullArgs[i] = substituteTypeString(tp.Default, strBindings)
+			} else {
+				fullArgs[i] = "Unknown"
+			}
+			strBindings[tp.Name] = fullArgs[i]
+		}
+		newClosure.TypeArgs = fullArgs
 		if v.FuncType != nil {
 			if ft, ok := v.FuncType.(*types.FuncType); ok && len(ft.TypeParams) > 0 {
+				argTypes := make([]types.Type, len(fullArgs))
 				bindings := make(map[string]types.Type)
-				for i, argStr := range typeArgs {
+				for i, argStr := range fullArgs {
+					argT := parseArgType(argStr)
+					argTypes[i] = argT
 					if i < len(ft.TypeParams) {
-						bindings[ft.TypeParams[i].Name] = parseArgType(argStr)
+						bindings[ft.TypeParams[i].Name] = argT
 					}
 				}
 				if len(bindings) > 0 {
-					newClosure.FuncType = types.Substitute(ft, bindings)
+					instFn := types.Substitute(ft, bindings)
+					if ifn, ok := instFn.(*types.FuncType); ok {
+						if len(fullArgs) == len(ft.TypeParams) {
+							ifn.TypeParams = nil
+							ifn.TypeArgs = argTypes
+						}
+						newClosure.FuncType = ifn
+					}
 				}
 			}
 		}
 		return &newClosure, nil
 
 	case *InterfaceDefValue:
-		newIDef := *v
-		newIDef.TypeArgs = append([]string(nil), typeArgs...)
-		return &newIDef, nil
+		strBindings := make(map[string]string)
+		if selfTypeName != "" && selfTypeName != "Unknown" {
+			strBindings["Self"] = selfTypeName
+		}
+		return substituteInterfaceDef(v, typeArgs, strBindings), nil
 
 	case *BuiltinFunc:
 		if v.TypeDef != nil {
@@ -971,11 +1183,22 @@ func parseGenericTypeAnnot(annot string) (string, []string, bool) {
 	return base, args, true
 }
 
-func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string) *InterfaceDefValue {
+func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string, initialMap ...map[string]string) *InterfaceDefValue {
 	substMap := make(map[string]string)
+	if len(initialMap) > 0 && initialMap[0] != nil {
+		for k, v := range initialMap[0] {
+			substMap[k] = v
+		}
+	}
+	fullArgs := make([]string, len(iface.TypeParams))
 	for i, tp := range iface.TypeParams {
 		if i < len(typeArgs) {
-			substMap[tp.Name] = typeArgs[i]
+			fullArgs[i] = typeArgs[i]
+		} else if tp.Default != "" {
+			fullArgs[i] = substituteTypeString(tp.Default, substMap)
+		}
+		if fullArgs[i] != "" {
+			substMap[tp.Name] = fullArgs[i]
 		}
 	}
 	var newEmbedded []string
@@ -986,7 +1209,7 @@ func substituteInterfaceDef(iface *InterfaceDefValue, typeArgs []string) *Interf
 		Name:       iface.Name,
 		ModuleName: iface.ModuleName,
 		TypeParams: iface.TypeParams,
-		TypeArgs:   append([]string(nil), typeArgs...),
+		TypeArgs:   fullArgs,
 		Embedded:   newEmbedded,
 		Methods:    make(map[string]ast.MethodSig),
 	}
@@ -1290,6 +1513,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			TypeParams:      s.TypeParams,
 			FieldOrder:      make([]string, 0),
 			FieldDefaults:   make(map[string]ast.Expr),
+			FieldTypes:      make(map[string]string),
 			EmbeddedNames:   make([]string, 0),
 			DirectFields:    make(map[string]bool),
 			AmbiguousFields: make(map[string]bool),
@@ -1314,6 +1538,9 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 			} else {
 				sDef.DirectFields[f.Name] = true
 				sDef.FieldOrder = append(sDef.FieldOrder, f.Name)
+				if f.TypeAnnot != "" {
+					sDef.FieldTypes[f.Name] = f.TypeAnnot
+				}
 				if f.DefaultValue != nil {
 					sDef.FieldDefaults[f.Name] = f.DefaultValue
 				}
@@ -1832,7 +2059,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		if e.TypeArg != "" {
 			targetVal := Force(NewThunk(e.Target, env))
 			switch targetVal.(type) {
-			case *StructDefValue, *Closure, *InterfaceDefValue:
+			case *StructDefValue, *Closure, *InterfaceDefValue, *BuiltinFunc:
 				return specializeGenericValue(targetVal, []string{e.TypeArg}, env)
 			}
 		}
@@ -2117,11 +2344,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 							typeArgs := make([]string, len(st.TypeArgs))
 							allKnown := true
 							for i, a := range st.TypeArgs {
-								if a == types.TypeUnknown {
+								resolvedA := a
+								if types.ContainsSelfOrParam(resolvedA) {
+									resolvedA = resolveTypeParamFromEnv(resolvedA, env, inf)
+								}
+								if resolvedA == nil || resolvedA == types.TypeUnknown || types.ContainsSelfOrParam(resolvedA) {
 									allKnown = false
 									break
 								}
-								typeArgs[i] = a.String()
+								typeArgs[i] = resolvedA.String()
 							}
 							if allKnown {
 								if sp, err := specializeGenericValue(targetDef, typeArgs, env); err == nil {
@@ -2295,47 +2526,137 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	argStartIdx := 0
 
 	// Check if 1st argument is a copy-update base instance (e.g. Person(p, x: 30))
-	if len(args) > 0 {
+	if len(args) >= 2 {
 		if _, isNamed := args[0].(*ast.NamedArgExpr); !isNamed {
-			th0 := env.newThunk(args[0])
-			isPotentialBase := false
-			if th0.InferredType != nil {
-				if st, ok := th0.InferredType.(*types.StructType); ok && st.Name == sDef.Name {
-					isPotentialBase = true
+			hasNamedInRest := false
+			for _, a := range args[1:] {
+				if _, ok := a.(*ast.NamedArgExpr); ok {
+					hasNamedInRest = true
+					break
 				}
-			} else if ident, isIdent := args[0].(*ast.Identifier); isIdent {
-				if v, ok := env.Get(ident.Name); ok {
-					if evaluated, isEval := PeekEvaluated(v); isEval {
-						if si, ok := evaluated.(*StructInstance); ok && si.Def != nil {
-							siRoot := si.Def
-							if siRoot.Origin != nil {
-								siRoot = siRoot.Origin
+			}
+			canBeFirstPositional := false
+			if !hasNamedInRest {
+				var firstExpectedT types.Type
+				firstAnnot := ""
+				maxArity := 0
+				if st, ok := sDef.StructType.(*types.StructType); ok && st != nil {
+					if initFn, hasInit := st.Methods["init"]; hasInit && initFn != nil {
+						maxArity = initFn.MaxArity
+						if tup, ok := initFn.Arg.(*types.TupleType); ok && len(tup.Elems) > 0 {
+							firstExpectedT = tup.Elems[0]
+						}
+					} else {
+						maxArity = len(st.FieldOrder)
+						if len(st.FieldOrder) > 0 {
+							firstExpectedT = st.Fields[st.FieldOrder[0]]
+						}
+					}
+				} else if initDef, hasInit := sDef.Methods["init"]; hasInit && initDef != nil {
+					params := initDef.Params
+					if len(params) > 0 && params[0].Name == "self" {
+						params = params[1:]
+					}
+					isVariadic := false
+					for _, p := range params {
+						if p.IsVariadic {
+							isVariadic = true
+							break
+						}
+					}
+					if isVariadic {
+						maxArity = -1
+					} else {
+						maxArity = len(params)
+					}
+					if len(params) > 0 {
+						firstAnnot = params[0].TypeAnnot
+					}
+				} else {
+					maxArity = len(sDef.FieldOrder)
+					if len(sDef.FieldOrder) > 0 && sDef.FieldTypes != nil {
+						firstAnnot = sDef.FieldTypes[sDef.FieldOrder[0]]
+					}
+				}
+
+				if maxArity < 0 || (maxArity > 0 && len(args) <= maxArity) {
+					if firstExpectedT != nil {
+						if firstExpectedT == types.TypeUnknown || types.ContainsSelfOrParam(firstExpectedT) {
+							canBeFirstPositional = true
+						} else {
+							tStr := firstExpectedT.String()
+							if strings.Contains(tStr, sDef.Name) || strings.Contains(tStr, "Self") || tStr == "Any" {
+								canBeFirstPositional = true
 							}
-							sDefRoot := sDef
-							if sDefRoot.Origin != nil {
-								sDefRoot = sDefRoot.Origin
+						}
+					} else {
+						if firstAnnot != "" {
+							if firstAnnot == "Any" || firstAnnot == "Unknown" || strings.Contains(firstAnnot, sDef.Name) || strings.Contains(firstAnnot, "Self") {
+								canBeFirstPositional = true
+							} else {
+								for _, tp := range sDef.TypeParams {
+									if strings.Contains(firstAnnot, tp.Name) {
+										canBeFirstPositional = true
+										break
+									}
+								}
 							}
-							if siRoot == sDefRoot {
-								isPotentialBase = true
+						} else if initDef, hasInit := sDef.Methods["init"]; hasInit && initDef != nil {
+							// Init has no type annotations on first param, so can be positional unless it explicitly has 0 params
+							if len(initDef.Params) > 0 {
+								canBeFirstPositional = true
+							}
+						} else {
+							// Struct without init and without type annotations on first field:
+							// if args count matches field count, it is positional; otherwise can be copy-update
+							if len(args) == len(sDef.FieldOrder) {
+								canBeFirstPositional = true
+							} else {
+								canBeFirstPositional = false
 							}
 						}
 					}
 				}
 			}
-			if isPotentialBase {
-				val := Force(th0)
-				if si, ok := val.(*StructInstance); ok && si.Def != nil {
-					siRoot := si.Def
-					if siRoot.Origin != nil {
-						siRoot = siRoot.Origin
+			if hasNamedInRest || !canBeFirstPositional {
+				th0 := env.newThunk(args[0])
+				isPotentialBase := false
+				if th0.InferredType != nil {
+					if st, ok := th0.InferredType.(*types.StructType); ok && st.Name == sDef.Name {
+						isPotentialBase = true
 					}
-					sDefRoot := sDef
-					if sDefRoot.Origin != nil {
-						sDefRoot = sDefRoot.Origin
+				}
+				if !isPotentialBase {
+					val := Force(th0)
+					if si, ok := val.(*StructInstance); ok && si.Def != nil {
+						siRoot := si.Def
+						if siRoot.Origin != nil {
+							siRoot = siRoot.Origin
+						}
+						sDefRoot := sDef
+						if sDefRoot.Origin != nil {
+							sDefRoot = sDefRoot.Origin
+						}
+						if siRoot == sDefRoot {
+							isPotentialBase = true
+						}
 					}
-					if siRoot == sDefRoot {
-						baseInstance = si
-						argStartIdx = 1
+				}
+				if isPotentialBase {
+					val := Force(th0)
+					if si, ok := val.(*StructInstance); ok && si.Def != nil {
+						siRoot := si.Def
+						if siRoot.Origin != nil {
+							siRoot = siRoot.Origin
+						}
+						sDefRoot := sDef
+						if sDefRoot.Origin != nil {
+							sDefRoot = sDefRoot.Origin
+						}
+						if siRoot == sDefRoot {
+							baseInstance = si
+							argStartIdx = 1
+						}
 					}
 				}
 			}
@@ -2399,8 +2720,36 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			Fields:   fields,
 			Embedded: embedded,
 		}
+		if len(inst.TypeArgs) == 0 && baseInstance != nil && len(baseInstance.TypeArgs) > 0 {
+			inst.TypeArgs = append([]string(nil), baseInstance.TypeArgs...)
+		}
 		if len(inst.TypeArgs) == 0 && len(sDef.TypeParams) > 0 {
 			inferStructInstanceTypeArgs(inst)
+		}
+		if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
+			substMap := make(map[string]string)
+			selfName := sDef.Name
+			if len(inst.TypeArgs) > 0 {
+				selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(inst.TypeArgs, ", "))
+			}
+			substMap["Self"] = selfName
+			for i, tp := range sDef.TypeParams {
+				if i < len(inst.TypeArgs) {
+					substMap[tp.Name] = inst.TypeArgs[i]
+				}
+			}
+			for _, embName := range sDef.EmbeddedNames {
+				if base, args, isGen := parseGenericTypeAnnot(embName); isGen {
+					lookupName := base
+					embTypeArgs := make([]string, len(args))
+					for i, a := range args {
+						embTypeArgs[i] = substituteTypeString(a, substMap)
+					}
+					if subInst, ok := inst.Embedded[lookupName]; ok && subInst != nil {
+						subInst.TypeArgs = embTypeArgs
+					}
+				}
+			}
 		}
 		return inst, nil
 	}
@@ -2462,6 +2811,11 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 			lookupName = base
 			embTypeArgs = make([]string, len(args))
 			substMap := make(map[string]string)
+			selfName := sDef.Name
+			if len(sDef.TypeArgs) > 0 {
+				selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(sDef.TypeArgs, ", "))
+			}
+			substMap["Self"] = selfName
 			for i, tp := range sDef.TypeParams {
 				if i < len(sDef.TypeArgs) {
 					substMap[tp.Name] = sDef.TypeArgs[i]
@@ -2577,6 +2931,11 @@ func (env *Environment) instantiateStruct(sDef *StructDefValue, args []ast.Expr)
 	// Re-specialize embedded generic structs if type args were inferred
 	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 		substMap := make(map[string]string)
+		selfName := sDef.Name
+		if len(inst.TypeArgs) > 0 {
+			selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(inst.TypeArgs, ", "))
+		}
+		substMap["Self"] = selfName
 		for i, tp := range sDef.TypeParams {
 			if i < len(inst.TypeArgs) {
 				substMap[tp.Name] = inst.TypeArgs[i]
@@ -2636,6 +2995,11 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			lookupName = base
 			embTypeArgs = make([]string, len(args))
 			substMap := make(map[string]string)
+			selfName := sDef.Name
+			if len(sDef.TypeArgs) > 0 {
+				selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(sDef.TypeArgs, ", "))
+			}
+			substMap["Self"] = selfName
 			for i, tp := range sDef.TypeParams {
 				if i < len(sDef.TypeArgs) {
 					substMap[tp.Name] = sDef.TypeArgs[i]
@@ -2713,7 +3077,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	}
 
 	// 5. Match arguments to init parameters and perform auto-binding for matching fields
-	argValues := make([]Value, len(initParams))
+	var argValues []Value
 	posIdx := 0
 
 	namedArgs := make(map[string]ast.Expr)
@@ -2726,20 +3090,28 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 		}
 	}
 
-	for i, param := range initParams {
+	for _, param := range initParams {
 		if param.IsVariadic {
 			var rest []Value
 			for p := posIdx; p < len(posArgs); p++ {
-				rest = append(rest, env.newThunk(posArgs[p]))
+				var val Value
+				if env.isForceDemand(posArgs[p]) {
+					val = Force(env.newThunk(posArgs[p]))
+				} else if lit, ok := evalLiteral(posArgs[p]); ok {
+					val = lit
+				} else {
+					val = env.newThunk(posArgs[p])
+				}
+				rest = append(rest, val)
 			}
 			tup := &TupleValue{Elements: rest}
-			argValues[i] = tup
 			for _, fName := range sDef.FieldOrder {
 				if fName == param.Name {
 					fields[param.Name] = tup
 					break
 				}
 			}
+			argValues = append(argValues, rest...)
 			break
 		}
 
@@ -2760,7 +3132,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			} else {
 				val = env.newThunk(argExpr)
 			}
-			argValues[i] = val
+			argValues = append(argValues, val)
 
 			// Auto-bind: if param name matches struct field, assign to fields
 			for _, fName := range sDef.FieldOrder {
@@ -2771,7 +3143,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			}
 		} else if param.DefaultValue != nil {
 			val := env.newThunk(param.DefaultValue)
-			argValues[i] = val
+			argValues = append(argValues, val)
 			for _, fName := range sDef.FieldOrder {
 				if fName == param.Name {
 					fields[param.Name] = val
@@ -2779,7 +3151,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 				}
 			}
 		} else {
-			argValues[i] = &TupleValue{Elements: []Value{}}
+			argValues = append(argValues, &TupleValue{Elements: []Value{}})
 		}
 	}
 
@@ -2843,6 +3215,11 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 	// Re-specialize embedded generic structs if type args were inferred
 	if len(inst.TypeArgs) > 0 && len(sDef.TypeParams) > 0 {
 		substMap := make(map[string]string)
+		selfName := sDef.Name
+		if len(inst.TypeArgs) > 0 {
+			selfName = fmt.Sprintf("%s[%s]", sDef.Name, strings.Join(inst.TypeArgs, ", "))
+		}
+		substMap["Self"] = selfName
 		for i, tp := range sDef.TypeParams {
 			if i < len(inst.TypeArgs) {
 				substMap[tp.Name] = inst.TypeArgs[i]
@@ -3714,7 +4091,7 @@ func lookupBuiltinMember(val Value, member string) (Value, error) {
 			if evaluated, isEval := PeekEvaluated(thunk); isEval {
 				v = evaluated
 			} else if thunk.InferredType != nil {
-				if t, ok := thunk.InferredType.(types.Type); ok && t != nil && t != types.TypeUnknown {
+				if t, ok := thunk.InferredType.(types.Type); ok && t != nil && t != types.TypeUnknown && !types.ContainsSelfOrParam(t) {
 					return t
 				}
 			}
@@ -4950,6 +5327,19 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 		return true
 	}
 
+	if strings.Contains(typeAnnot, "Self") && len(optEnv) > 0 && optEnv[0] != nil {
+		if selfVal, found := optEnv[0].Get("self"); found && selfVal != nil {
+			forcedSelf := Force(selfVal)
+			selfTypeName := typeNameOf(forcedSelf)
+			if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+				selfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+			}
+			if selfTypeName != "" && selfTypeName != "Unknown" {
+				typeAnnot = substituteTypeString(typeAnnot, map[string]string{"Self": selfTypeName})
+			}
+		}
+	}
+
 	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
 	for ast.HasEnclosingDelims(typeAnnot, '(', ')') {
 		inner := strings.TrimSpace(typeAnnot[1 : len(typeAnnot)-1])
@@ -5318,27 +5708,37 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 					if len(si.TypeArgs) == 0 && len(si.Def.TypeParams) > 0 {
 						inferStructInstanceTypeArgs(si)
 					}
-					if len(si.TypeArgs) == len(typeArgs) {
-						allMatch := true
-						var sInf *types.Inferencer
-						if sEnv != nil && sEnv.Inferencer != nil {
-							if inf, ok := sEnv.Inferencer.(*types.Inferencer); ok {
-								sInf = inf
-							}
+					targetTypeArgs := typeArgs
+					if len(targetTypeArgs) < len(si.Def.TypeParams) {
+						paddedArgs := make([]string, len(si.Def.TypeParams))
+						strBindings := make(map[string]string)
+						if si.Def != nil && si.Def.Name != "" {
+							strBindings["Self"] = si.Def.Name
 						}
-						for i, ta := range typeArgs {
+						allPadded := true
+						for i, tp := range si.Def.TypeParams {
+							if i < len(targetTypeArgs) {
+								paddedArgs[i] = targetTypeArgs[i]
+							} else if tp.Default != "" {
+								paddedArgs[i] = substituteTypeString(tp.Default, strBindings)
+							} else {
+								allPadded = false
+								break
+							}
+							strBindings[tp.Name] = paddedArgs[i]
+						}
+						if allPadded {
+							targetTypeArgs = paddedArgs
+						}
+					}
+					if len(si.TypeArgs) == len(targetTypeArgs) {
+						allMatch := true
+						for i, ta := range targetTypeArgs {
 							if si.TypeArgs[i] == ta {
 								continue
 							}
-							var actualT, targetT types.Type
-							var err1, err2 error
-							if sInf != nil {
-								actualT, err1 = sInf.ParseTypeAnnot(si.TypeArgs[i])
-								targetT, err2 = sInf.ParseTypeAnnot(ta)
-							} else {
-								actualT, err1 = types.ParseTypeAnnot(si.TypeArgs[i])
-								targetT, err2 = types.ParseTypeAnnot(ta)
-							}
+							actualT, err1 := parseTypeAnnotInEnv(si.TypeArgs[i], sEnv)
+							targetT, err2 := parseTypeAnnotInEnv(ta, sEnv)
 							if err1 == nil && err2 == nil && types.IsAssignableTo(actualT, targetT) {
 								continue
 							}
@@ -5379,12 +5779,25 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						}
 					}
 				} else if ifaceVal, found := searchEnv.Get(baseName); found {
-					if id, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
+					forced := Force(ifaceVal)
+					if bf, isBF := forced.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+						forced = Force(bf.TypeDef)
+					}
+					if id, isIface := forced.(*InterfaceDefValue); isIface {
 						ifaceDef = id
 					}
 				}
 				if ifaceDef != nil {
-					substIface := substituteInterfaceDef(ifaceDef, typeArgs)
+					strBindings := make(map[string]string)
+					forcedVal := Force(val)
+					selfName := typeNameOf(forcedVal)
+					if si, ok := forcedVal.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+						selfName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+					}
+					if selfName != "" && selfName != "Unknown" {
+						strBindings["Self"] = selfName
+					}
+					substIface := substituteInterfaceDef(ifaceDef, typeArgs, strBindings)
 					return valueImplementsInterfaceValue(val, substIface, searchEnv)
 				}
 			}
@@ -5442,7 +5855,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 								if siRoot.Origin != nil {
 									siRoot = siRoot.Origin
 								}
-								if siRoot == structDef {
+								structRoot := structDef
+								if structRoot.Origin != nil {
+									structRoot = structRoot.Origin
+								}
+								if siRoot == structRoot {
 									return true
 								}
 								for _, emb := range si.Embedded {
@@ -5450,7 +5867,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 									if embRoot != nil && embRoot.Origin != nil {
 										embRoot = embRoot.Origin
 									}
-									if embRoot == structDef {
+									if embRoot == structRoot {
 										return true
 									}
 								}
@@ -5462,7 +5879,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 
 			// Check if typeAnnot is an Interface in searchEnv
 			if ifaceVal, found := searchEnv.Get(typeAnnot); found {
-				if ifaceDef, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
+				forced := Force(ifaceVal)
+				if bf, isBF := forced.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+					forced = Force(bf.TypeDef)
+				}
+				if ifaceDef, isIface := forced.(*InterfaceDefValue); isIface {
 					return valueImplementsInterfaceValue(val, ifaceDef, searchEnv)
 				}
 			}
@@ -5569,6 +5990,101 @@ func splitTopLevelCommas(s string) []string {
 }
 
 func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Environment) bool {
+	selfTypeName := typeNameOf(Force(val))
+	if len(iface.TypeArgs) == 0 && len(iface.TypeParams) > 0 {
+		allHaveDefault := true
+		for _, tp := range iface.TypeParams {
+			if tp.Default == "" {
+				allHaveDefault = false
+				break
+			}
+		}
+		if allHaveDefault {
+			var initMap map[string]string
+			if selfTypeName != "" && selfTypeName != "Unknown" {
+				initMap = map[string]string{"Self": selfTypeName}
+			}
+			iface = substituteInterfaceDef(iface, nil, initMap)
+		}
+	}
+	if selfTypeName != "" && selfTypeName != "Unknown" {
+		selfMap := map[string]string{"Self": selfTypeName}
+		var newEmbedded []string
+		for _, emb := range iface.Embedded {
+			newEmbedded = append(newEmbedded, substituteTypeString(emb, selfMap))
+		}
+		var newTypeArgs []string
+		if len(iface.TypeArgs) > 0 {
+			newTypeArgs = make([]string, len(iface.TypeArgs))
+			for i, a := range iface.TypeArgs {
+				newTypeArgs[i] = substituteTypeString(a, selfMap)
+			}
+		}
+		newMethods := make(map[string]ast.MethodSig, len(iface.Methods))
+		for mName, sig := range iface.Methods {
+			newSig := sig
+			newSig.ReturnType = substituteTypeString(sig.ReturnType, selfMap)
+			newParams := make([]ast.FuncParam, len(sig.Params))
+			for i, p := range sig.Params {
+				newP := p
+				newP.TypeAnnot = substituteTypeString(p.TypeAnnot, selfMap)
+				newParams[i] = newP
+			}
+			newSig.Params = newParams
+			newMethods[mName] = newSig
+		}
+		iface = &InterfaceDefValue{
+			Name:       iface.Name,
+			ModuleName: iface.ModuleName,
+			TypeParams: iface.TypeParams,
+			TypeArgs:   newTypeArgs,
+			Embedded:   newEmbedded,
+			Methods:    newMethods,
+		}
+	}
+	// Validate constraints for resolved type arguments
+	if len(iface.TypeArgs) > 0 && len(iface.TypeParams) > 0 {
+		strMap := make(map[string]string)
+		if selfTypeName != "" {
+			strMap["Self"] = selfTypeName
+		}
+		for j, tp := range iface.TypeParams {
+			if j < len(iface.TypeArgs) {
+				strMap[tp.Name] = iface.TypeArgs[j]
+			}
+		}
+		for i, tp := range iface.TypeParams {
+			if i < len(iface.TypeArgs) && tp.Constraint != "" {
+				cStr := substituteTypeString(tp.Constraint, strMap)
+				argStr := iface.TypeArgs[i]
+				var inf *types.Inferencer
+				if env != nil && env.Inferencer != nil {
+					if i, ok := env.Inferencer.(*types.Inferencer); ok {
+						inf = i
+					}
+				}
+				var argT, cT types.Type
+				if inf != nil {
+					argT, _ = inf.ParseTypeAnnot(argStr)
+					cT, _ = inf.ParseTypeAnnot(cStr)
+				}
+				if argT == nil {
+					argT, _ = types.ParseTypeAnnot(argStr)
+				}
+				if cT == nil {
+					cT, _ = types.ParseTypeAnnot(cStr)
+				}
+				if argT != nil && cT != nil && !types.IsAssignableTo(argT, cT) {
+					return false
+				}
+				if (argT == nil || cT == nil) && argStr == selfTypeName {
+					if !checkValueMatchesType(val, cStr, env) {
+						return false
+					}
+				}
+			}
+		}
+	}
 	hasUnboundTypeParam := func(annot string) bool {
 		if len(iface.TypeArgs) > 0 || len(iface.TypeParams) == 0 {
 			return false
@@ -5679,8 +6195,51 @@ func valueImplementsInterfaceValue(val Value, iface *InterfaceDefValue, env *Env
 						return false
 					}
 				} else {
-					if _, err := si.LookupMethod(mName, expectedCount); err != nil {
+					targetClosure, err := si.LookupMethod(mName, expectedCount)
+					if err != nil {
 						return false
+					}
+					if ft, ok := targetClosure.FuncType.(*types.FuncType); ok && ft != nil {
+						if sig.ReturnType != "" && sig.ReturnType != "Unknown" && ft.Ret != nil && !hasUnboundTypeParam(sig.ReturnType) {
+							var inf *types.Inferencer
+							if env != nil && env.Inferencer != nil {
+								if i, ok := env.Inferencer.(*types.Inferencer); ok {
+									inf = i
+								}
+							}
+							var expectedRetT types.Type
+							if inf != nil {
+								expectedRetT, _ = inf.ParseTypeAnnot(sig.ReturnType)
+							}
+							if expectedRetT == nil {
+								expectedRetT, _ = types.ParseTypeAnnot(sig.ReturnType)
+							}
+							if expectedRetT != nil && !types.IsAssignableTo(ft.Ret, expectedRetT) {
+								return false
+							}
+						}
+						if env != nil && env.Inferencer != nil {
+							if inf, ok := env.Inferencer.(*types.Inferencer); ok {
+								if srcTup, ok := ft.Arg.(*types.TupleType); ok {
+									paramIdx := 0
+									for _, p := range sig.Params {
+										if p.Name == "self" {
+											continue
+										}
+										if p.TypeAnnot != "" && p.TypeAnnot != "Unknown" && !hasUnboundTypeParam(p.TypeAnnot) {
+											if expectedParamT, err := inf.ParseTypeAnnot(p.TypeAnnot); err == nil {
+												if paramIdx < len(srcTup.Elems) {
+													if !types.IsAssignableTo(expectedParamT, srcTup.Elems[paramIdx]) {
+														return false
+													}
+												}
+											}
+										}
+										paramIdx++
+									}
+								}
+							}
+						}
 					}
 				}
 			} else {

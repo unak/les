@@ -87,6 +87,11 @@ func TestParseTrailingDefaultsErrors(t *testing.T) {
 			input:  "def f(&b1, &b2):\n    pass\n",
 			errSub: "must be the last parameter",
 		},
+		{
+			name:   "required type param after default type param",
+			input:  "struct Foo[T = Int, U]:\n    x: T\n",
+			errSub: "cannot follow type parameter with default",
+		},
 	}
 
 	for _, tt := range tests {
@@ -108,5 +113,49 @@ func TestParseTrailingDefaultsErrors(t *testing.T) {
 				t.Fatalf("expected error containing %q, got errors: %v", tt.errSub, p.Errors())
 			}
 		})
+	}
+}
+
+func TestParseBlockEndedExprStatementSeparation(t *testing.T) {
+	input := `
+res = b.transform() do |x|:
+    x
+print("res.val=", res.val, "\n")
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(prog.Body))
+	}
+	decl, ok := prog.Body[0].(*ast.VarDecl)
+	if !ok {
+		t.Fatalf("expected first statement to be VarDecl, got %T", prog.Body[0])
+	}
+	if decl.Name != "res" {
+		t.Fatalf("expected VarDecl name 'res', got %q", decl.Name)
+	}
+	call, ok := decl.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected VarDecl Value to be CallExpr, got %T", decl.Value)
+	}
+	if call.Block == nil {
+		t.Fatalf("expected CallExpr to have trailing block")
+	}
+
+	exprStmt, ok := prog.Body[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected second statement to be ExprStmt, got %T", prog.Body[1])
+	}
+	printCall, ok := exprStmt.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected second statement value to be CallExpr, got %T", exprStmt.Value)
+	}
+	calleeIdent, ok := printCall.Callee.(*ast.Identifier)
+	if !ok || calleeIdent.Name != "print" {
+		t.Fatalf("expected callee to be identifier 'print', got %+v", printCall.Callee)
 	}
 }

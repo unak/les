@@ -422,11 +422,12 @@ func (e *ExprStmt) node()         {}
 func (e *ExprStmt) stmt()         {}
 func (e *ExprStmt) Pos() Position { return e.Position }
 
-// TypeParam represents a type parameter with optional constraint, e.g. T or T: Constraint.
+// TypeParam represents a type parameter with optional constraint and default type, e.g. T, T: Constraint, or T = Default.
 type TypeParam struct {
 	Position   Position
 	Name       string
 	Constraint string // Empty if unconstrained; otherwise type annotation (e.g. "io::ReadCloser", "Int | Float")
+	Default    string // Empty if no default; otherwise default type annotation (e.g. "Self", "Int")
 }
 
 func (tp TypeParam) Pos() Position { return tp.Position }
