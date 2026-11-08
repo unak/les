@@ -976,20 +976,28 @@ func inferStructInstanceTypeArgs(inst *StructInstance) {
 
 func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Value, error) {
 	parseArgType := func(s string) types.Type {
-		if t, err := parseTypeAnnotInEnv(s, env); err == nil && t != nil {
-			return t
+		if env != nil {
+			if t, err := parseTypeAnnotInEnv(s, env); err == nil && t != nil {
+				return t
+			}
+		}
+		if cl, ok := val.(*Closure); ok && cl.Env != nil && cl.Env != env {
+			if t, err := parseTypeAnnotInEnv(s, cl.Env); err == nil && t != nil {
+				return t
+			}
 		}
 		return types.TypeUnknown
 	}
 
-	if len(typeArgs) > 0 && env != nil {
+	var selfTypeName string
+	if env != nil {
 		if selfVal, found := env.Get("self"); found && selfVal != nil {
 			forcedSelf := Force(selfVal)
-			selfTypeName := typeNameOf(forcedSelf)
+			selfTypeName = typeNameOf(forcedSelf)
 			if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
 				selfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
 			}
-			if selfTypeName != "" && selfTypeName != "Unknown" {
+			if selfTypeName != "" && selfTypeName != "Unknown" && len(typeArgs) > 0 {
 				resolvedArgs := make([]string, len(typeArgs))
 				for i, a := range typeArgs {
 					resolvedArgs[i] = substituteTypeString(a, map[string]string{"Self": selfTypeName})
@@ -1045,6 +1053,19 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		newClosure := *v
 		fullArgs := make([]string, len(v.TypeParams))
 		strBindings := make(map[string]string)
+		closureSelfTypeName := selfTypeName
+		if closureSelfTypeName == "" && v.Env != nil {
+			if selfVal, found := v.Env.Get("self"); found && selfVal != nil {
+				forcedSelf := Force(selfVal)
+				closureSelfTypeName = typeNameOf(forcedSelf)
+				if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+					closureSelfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+				}
+			}
+		}
+		if closureSelfTypeName != "" && closureSelfTypeName != "Unknown" {
+			strBindings["Self"] = closureSelfTypeName
+		}
 		for i, tp := range v.TypeParams {
 			if i < len(typeArgs) {
 				fullArgs[i] = typeArgs[i]
@@ -1058,14 +1079,24 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 		newClosure.TypeArgs = fullArgs
 		if v.FuncType != nil {
 			if ft, ok := v.FuncType.(*types.FuncType); ok && len(ft.TypeParams) > 0 {
+				argTypes := make([]types.Type, len(fullArgs))
 				bindings := make(map[string]types.Type)
 				for i, argStr := range fullArgs {
+					argT := parseArgType(argStr)
+					argTypes[i] = argT
 					if i < len(ft.TypeParams) {
-						bindings[ft.TypeParams[i].Name] = parseArgType(argStr)
+						bindings[ft.TypeParams[i].Name] = argT
 					}
 				}
 				if len(bindings) > 0 {
-					newClosure.FuncType = types.Substitute(ft, bindings)
+					instFn := types.Substitute(ft, bindings)
+					if ifn, ok := instFn.(*types.FuncType); ok {
+						if len(fullArgs) == len(ft.TypeParams) {
+							ifn.TypeParams = nil
+							ifn.TypeArgs = argTypes
+						}
+						newClosure.FuncType = ifn
+					}
 				}
 			}
 		}
@@ -1073,17 +1104,8 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 
 	case *InterfaceDefValue:
 		strBindings := make(map[string]string)
-		if len(typeArgs) > 0 && env != nil {
-			if selfVal, found := env.Get("self"); found && selfVal != nil {
-				forcedSelf := Force(selfVal)
-				selfTypeName := typeNameOf(forcedSelf)
-				if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
-					selfTypeName = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
-				}
-				if selfTypeName != "" && selfTypeName != "Unknown" {
-					strBindings["Self"] = selfTypeName
-				}
-			}
+		if selfTypeName != "" && selfTypeName != "Unknown" {
+			strBindings["Self"] = selfTypeName
 		}
 		return substituteInterfaceDef(v, typeArgs, strBindings), nil
 

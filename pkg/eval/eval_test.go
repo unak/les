@@ -13,6 +13,7 @@ import (
 	"les/pkg/ast"
 	"les/pkg/lexer"
 	"les/pkg/parser"
+	"les/pkg/types"
 )
 
 func runLesCode(code string) (string, error) {
@@ -7559,6 +7560,105 @@ res_is_adv = n3 is Advanced
 	}
 	assertInt(ev2, "res_val", 30)
 	assertBool(ev2, "res_is_adv", true)
+}
+
+func TestSelfPseudoTypePass12Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Generic method closure specialization with Self default (pair[A, B = Self])
+	code1 := `
+struct Node[T]:
+    val: T
+    def pair[A, B = Self](a: A, b: B):
+        return (a, b)
+
+n = Node(10)
+m = n.pair[Int]
+m_type = m.Type()
+p = m(42, n)
+p_a = p[0]
+p_b_val = p[1].val
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "m_type", "(Int, Node[Int]) -> (Int, Node[Int])")
+	assertInt(ev1, "p_a", 42)
+	assertInt(ev1, "p_b_val", 10)
+
+	// Check that m's FuncType.TypeArgs is properly populated (not nils)
+	mV, _ := ev1.globalEnv.Get("m")
+	cl, ok := Force(mV).(*Closure)
+	if !ok {
+		t.Fatalf("expected m to be *Closure, got %T", Force(mV))
+	}
+	ft, ok := cl.FuncType.(*types.FuncType)
+	if !ok || ft == nil {
+		t.Fatalf("expected cl.FuncType to be *types.FuncType, got %T", cl.FuncType)
+	}
+	if len(ft.TypeArgs) != 2 {
+		t.Fatalf("expected 2 TypeArgs, got %d", len(ft.TypeArgs))
+	}
+	if ft.TypeArgs[0] == nil || ft.TypeArgs[1] == nil {
+		t.Fatalf("expected non-nil TypeArgs in cl.FuncType, got %v", ft.TypeArgs)
+	}
+	if ft.TypeArgs[0].String() != "Int" {
+		t.Errorf("expected TypeArgs[0] == Int, got %s", ft.TypeArgs[0].String())
+	}
+	if ft.TypeArgs[1].String() != "Node[Int]" {
+		t.Errorf("expected TypeArgs[1] == Node[Int], got %s", ft.TypeArgs[1].String())
+	}
+
+	// 2. Interface specialization with Self when instantiated inside method
+	code2 := `
+interface Transformer[T = Self]:
+    transform(x: T): Self
+
+struct Box[T]:
+    val: T
+    def transform(x: Self) -> Self:
+        return x
+
+    def check_transformer():
+        return self is Transformer
+
+b = Box(100)
+is_tr = b.check_transformer()
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertBool(ev2, "is_tr", true)
 }
 
 
