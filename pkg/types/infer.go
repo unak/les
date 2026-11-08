@@ -964,6 +964,52 @@ func isExitCall(expr ast.Expr) bool {
 	return false
 }
 
+func (inf *Inferencer) setupIfScopes(cond ast.Expr) (thenScope, elseScope *Scope) {
+	thenScope = NewScope(inf.scope)
+	elseScope = NewScope(inf.scope)
+	if cond != nil {
+		if bin, ok := cond.(*ast.BinaryExpr); ok {
+			if bin.Op == "!=" {
+				if id, ok := bin.Left.(*ast.Identifier); ok {
+					if _, isNil := bin.Right.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				} else if id, ok := bin.Right.(*ast.Identifier); ok {
+					if _, isNil := bin.Left.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = thenScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				}
+			} else if bin.Op == "==" {
+				if id, ok := bin.Left.(*ast.Identifier); ok {
+					if _, isNil := bin.Right.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				} else if id, ok := bin.Right.(*ast.Identifier); ok {
+					if _, isNil := bin.Left.(*ast.NilLit); isNil {
+						if origT, ok := inf.scope.Lookup(id.Name); ok {
+							_ = elseScope.Declare(id.Name, removeNilFromType(origT))
+						}
+					}
+				}
+			}
+		} else if isExpr, ok := cond.(*ast.IsExpr); ok {
+			if id, ok := isExpr.Expr.(*ast.Identifier); ok {
+				if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
+					origT, _ := inf.scope.Lookup(id.Name)
+					_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
+				}
+			}
+		}
+	}
+	return thenScope, elseScope
+}
+
 func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, canFallthrough bool, err error) {
 	emptyTuple := &TupleType{Elems: []Type{}}
 	if len(stmts) == 0 {
@@ -1056,48 +1102,7 @@ func (inf *Inferencer) inferBlock(stmts []ast.Stmt) (fallthroughTypes []Type, ca
 					return nil, false, err
 				}
 			}
-			thenScope := NewScope(inf.scope)
-			elseScope := NewScope(inf.scope)
-			if s.Cond != nil {
-				if bin, ok := s.Cond.(*ast.BinaryExpr); ok {
-					if bin.Op == "!=" {
-						if id, ok := bin.Left.(*ast.Identifier); ok {
-							if _, isNil := bin.Right.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						} else if id, ok := bin.Right.(*ast.Identifier); ok {
-							if _, isNil := bin.Left.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = thenScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						}
-					} else if bin.Op == "==" {
-						if id, ok := bin.Left.(*ast.Identifier); ok {
-							if _, isNil := bin.Right.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						} else if id, ok := bin.Right.(*ast.Identifier); ok {
-							if _, isNil := bin.Left.(*ast.NilLit); isNil {
-								if origT, ok := inf.scope.Lookup(id.Name); ok {
-									_ = elseScope.Declare(id.Name, removeNilFromType(origT))
-								}
-							}
-						}
-					}
-				} else if isExpr, ok := s.Cond.(*ast.IsExpr); ok {
-					if id, ok := isExpr.Expr.(*ast.Identifier); ok {
-						if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
-							origT, _ := inf.scope.Lookup(id.Name)
-							_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
-						}
-					}
-				}
-			}
+			thenScope, elseScope := inf.setupIfScopes(s.Cond)
 			prevScope := inf.scope
 			inf.scope = thenScope
 			thenFT, thenCanFT, err := inf.inferBlock(s.ThenBody)
@@ -1647,7 +1652,7 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				return err
 			}
 		}
-		thenScope := NewScope(inf.scope)
+		thenScope, elseScope := inf.setupIfScopes(s.Cond)
 		prevScope := inf.scope
 		inf.scope = thenScope
 		for _, bStmt := range s.ThenBody {
@@ -1658,7 +1663,6 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		}
 		inf.scope = prevScope
 		if len(s.ElseBody) > 0 {
-			elseScope := NewScope(inf.scope)
 			inf.scope = elseScope
 			for _, bStmt := range s.ElseBody {
 				if err := inf.inferStmt(bStmt); err != nil {

@@ -3091,6 +3091,63 @@ def log_msg(p: Printable, s: String) -> Nil:
 	}
 }
 
+func TestTopLevelIfNarrowing(t *testing.T) {
+	// 1. Top-level != nil narrowing
+	codeNilNarrow := `
+x: Int | Nil = 10
+if x != nil:
+    v: Int = x
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeNilNarrow)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected top-level != nil narrowing to succeed, got %v", err)
+	}
+
+	// 2. Top-level == nil else narrowing
+	codeElseNarrow := `
+x: Int | Nil = 10
+if x == nil:
+    pass
+else:
+    v: Int = x
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeElseNarrow)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected top-level == nil else narrowing to succeed, got %v", err)
+	}
+
+	// 3. Top-level is pattern narrowing
+	codeIsNarrow := `
+x: Int | String = 10
+if x is Int:
+    v: Int = x
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeIsNarrow)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err != nil {
+		t.Fatalf("expected top-level is pattern narrowing to succeed, got %v", err)
+	}
+
+	// 4. Generic self-referential struct traversed at top level
+	codeSelfRef := `
+struct Node[T]:
+    val: T
+    next: Self | Nil
+
+n = Node[Int](10, nil)
+nxt = n.next
+if nxt != nil:
+    v: Int = nxt.val
+`
+	p4 := parser.NewParser(lexer.NewLexer(codeSelfRef)).ParseProgram()
+	inf4 := NewInferencer()
+	if err := inf4.InferProgram(p4); err != nil {
+		t.Fatalf("expected top-level self-referential struct traversal to succeed, got %v", err)
+	}
+}
+
 
 
 
