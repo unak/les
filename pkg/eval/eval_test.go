@@ -7477,6 +7477,90 @@ c = Consumer(lazy_bad)
 	}
 }
 
+func TestSelfPseudoTypePass11Eval(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertString := func(ev *Evaluator, varName string, expected string) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("expected %s == %q, got %v", varName, expected, v)
+		}
+	}
+	assertInt := func(ev *Evaluator, varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+
+	// 1. Runtime dispatch and typecheck on interface embedding with default type arguments
+	code1 := `
+interface Base[T = String]:
+    get(): T
+
+interface Derived:
+    Base
+
+struct Foo:
+    def get() -> String:
+        return "hello"
+
+def test_derived(d: Derived) -> String:
+    return d.get()
+
+f = Foo()
+res_msg = test_derived(f)
+res_is = f is Derived
+`
+	ev1 := NewEvaluator()
+	prog1 := parser.NewParser(lexer.NewLexer(code1)).ParseProgram()
+	if _, err := ev1.EvalProgram(prog1); err != nil {
+		t.Fatalf("unexpected eval error in prog1: %v", err)
+	}
+	assertString(ev1, "res_msg", "hello")
+	assertBool(ev1, "res_is", true)
+
+	// 2. Runtime dispatch on interface embedding generic interface with T = Self
+	code2 := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+interface Advanced:
+    Addable
+
+struct Number:
+    val: Int
+    def +(other: Self) -> Self:
+        return Number(self.val + other.val)
+
+n1 = Number(10)
+n2 = Number(20)
+n3 = n1 + n2
+res_val = n3.val
+res_is_adv = n3 is Advanced
+`
+	ev2 := NewEvaluator()
+	prog2 := parser.NewParser(lexer.NewLexer(code2)).ParseProgram()
+	if _, err := ev2.EvalProgram(prog2); err != nil {
+		t.Fatalf("unexpected eval error in prog2: %v", err)
+	}
+	assertInt(ev2, "res_val", 30)
+	assertBool(ev2, "res_is_adv", true)
+}
+
 
 
 

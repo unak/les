@@ -2313,9 +2313,10 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 				}
 				return inf.nodeErr(s, "cannot embed non-interface type '%s' in interface '%s'", embName, s.Name)
 			}
-			iface.Embedded = append(iface.Embedded, embIface)
+			resolvedEmb := ResolveInterfaceForReceiver(embIface, TypeSelf)
+			iface.Embedded = append(iface.Embedded, resolvedEmb)
 
-			for mName, mSig := range embIface.Methods {
+			for mName, mSig := range resolvedEmb.Methods {
 				if existingSig, exists := iface.Methods[mName]; exists {
 					if !existingSig.Equals(mSig) {
 						if origScope != nil {
@@ -4342,7 +4343,7 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 		}
 	}
 
-	maybeInstantiateDefaultStruct := func(t Type) Type {
+	maybeInstantiateDefaultType := func(t Type) Type {
 		if st, isSt := t.(*StructType); isSt && len(st.TypeParams) > 0 && len(st.TypeArgs) == 0 && (inf == nil || inf.selfType == nil || st != inf.selfType) {
 			allHaveDefault := true
 			defaultArgs := make([]Type, len(st.TypeParams))
@@ -4368,6 +4369,31 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 				}
 			}
 		}
+		if it, isIt := t.(*InterfaceType); isIt && len(it.TypeParams) > 0 && len(it.TypeArgs) == 0 {
+			allHaveDefault := true
+			defaultArgs := make([]Type, len(it.TypeParams))
+			bindings := make(map[string]Type)
+			for i, tp := range it.TypeParams {
+				if tp.Default != nil {
+					defT := Substitute(tp.Default, bindings)
+					if !ContainsSelfOrParam(defT) {
+						defaultArgs[i] = defT
+						bindings[tp.Name] = defaultArgs[i]
+					} else {
+						allHaveDefault = false
+						break
+					}
+				} else {
+					allHaveDefault = false
+					break
+				}
+			}
+			if allHaveDefault {
+				if err := ValidateTypeConstraints(it.TypeParams, defaultArgs); err == nil {
+					return InstantiateInterface(it, defaultArgs)
+				}
+			}
+		}
 		return t
 	}
 
@@ -4386,18 +4412,18 @@ func (inf *Inferencer) parseTypeAnnot(annot string) (Type, error) {
 			if mod != nil {
 				if mod.Types != nil {
 					if t, ok := mod.Types[typeName]; ok {
-						return maybeInstantiateDefaultStruct(t), nil
+						return maybeInstantiateDefaultType(t), nil
 					}
 				}
 				if t, ok := mod.Exports[typeName]; ok {
-					return maybeInstantiateDefaultStruct(t), nil
+					return maybeInstantiateDefaultType(t), nil
 				}
 			}
 		}
 	}
 	if inf != nil && inf.scope != nil {
 		if t, ok := inf.scope.Lookup(annot); ok {
-			return maybeInstantiateDefaultStruct(t), nil
+			return maybeInstantiateDefaultType(t), nil
 		}
 	}
 

@@ -3025,6 +3025,72 @@ def test_group():
 	}
 }
 
+func TestSelfPseudoTypePass11(t *testing.T) {
+	// 1. Interface embedding generic interface with default type arguments
+	codeEmbeddedDefaults := `
+interface Base[T = String]:
+    get(): T
+
+interface Derived:
+    Base
+
+struct Foo:
+    def get() -> String:
+        return "hello"
+
+def test_derived(d: Derived) -> String:
+    return d.get()
+
+f = Foo()
+res = test_derived(f)
+`
+	p1 := parser.NewParser(lexer.NewLexer(codeEmbeddedDefaults)).ParseProgram()
+	inf1 := NewInferencer()
+	if err := inf1.InferProgram(p1); err != nil {
+		t.Fatalf("expected interface embedding with default type arguments to succeed, got %v", err)
+	}
+
+	// 2. Interface embedding generic interface with T = Self
+	codeEmbeddedSelf := `
+interface Addable[T = Self]:
+    +(other: T): Self
+
+interface Advanced:
+    Addable
+
+struct Number:
+    val: Int
+    def +(other: Self) -> Self:
+        return Number(self.val + other.val)
+
+def add_advanced[T: Advanced](a: T, b: T) -> T:
+    return a + b
+`
+	p2 := parser.NewParser(lexer.NewLexer(codeEmbeddedSelf)).ParseProgram()
+	inf2 := NewInferencer()
+	if err := inf2.InferProgram(p2); err != nil {
+		t.Fatalf("expected interface embedding with Self default to succeed, got %v", err)
+	}
+
+	// 3. Bare interface type annotation with default type parameters
+	codeBareInterfaceDefault := `
+interface Printable[T = String]:
+    print_val(x: T): Nil
+
+struct Printer:
+    def print_val(x: String) -> Nil:
+        nil
+
+def log_msg(p: Printable, s: String) -> Nil:
+    p.print_val(s)
+`
+	p3 := parser.NewParser(lexer.NewLexer(codeBareInterfaceDefault)).ParseProgram()
+	inf3 := NewInferencer()
+	if err := inf3.InferProgram(p3); err != nil {
+		t.Fatalf("expected bare interface type annotation with default to succeed, got %v", err)
+	}
+}
+
 
 
 
