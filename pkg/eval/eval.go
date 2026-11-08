@@ -2059,7 +2059,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		if e.TypeArg != "" {
 			targetVal := Force(NewThunk(e.Target, env))
 			switch targetVal.(type) {
-			case *StructDefValue, *Closure, *InterfaceDefValue:
+			case *StructDefValue, *Closure, *InterfaceDefValue, *BuiltinFunc:
 				return specializeGenericValue(targetVal, []string{e.TypeArg}, env)
 			}
 		}

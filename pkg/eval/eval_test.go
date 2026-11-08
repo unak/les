@@ -7775,6 +7775,35 @@ m5 = b2 is boxmod::Box[Int]
 	assertBool(ev, "m5", false)
 }
 
+func TestIndexExprBuiltinFuncSpecialization(t *testing.T) {
+	code := `
+struct Container[T = Self]:
+    val: T
+
+spec = Container[Int]
+c = spec(42)
+is_container = c is Container
+is_container_int = c is Container[Int]
+`
+	prog := parser.NewParser(lexer.NewLexer(code)).ParseProgram()
+	ev := NewEvaluator()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertBool := func(varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+	assertBool("is_container", true)
+	assertBool("is_container_int", true)
+}
+
 
 
 
