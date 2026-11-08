@@ -5779,7 +5779,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						}
 					}
 				} else if ifaceVal, found := searchEnv.Get(baseName); found {
-					if id, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
+					forced := Force(ifaceVal)
+					if bf, isBF := forced.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+						forced = Force(bf.TypeDef)
+					}
+					if id, isIface := forced.(*InterfaceDefValue); isIface {
 						ifaceDef = id
 					}
 				}
@@ -5851,7 +5855,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 								if siRoot.Origin != nil {
 									siRoot = siRoot.Origin
 								}
-								if siRoot == structDef {
+								structRoot := structDef
+								if structRoot.Origin != nil {
+									structRoot = structRoot.Origin
+								}
+								if siRoot == structRoot {
 									return true
 								}
 								for _, emb := range si.Embedded {
@@ -5859,7 +5867,7 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 									if embRoot != nil && embRoot.Origin != nil {
 										embRoot = embRoot.Origin
 									}
-									if embRoot == structDef {
+									if embRoot == structRoot {
 										return true
 									}
 								}
@@ -5871,7 +5879,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 
 			// Check if typeAnnot is an Interface in searchEnv
 			if ifaceVal, found := searchEnv.Get(typeAnnot); found {
-				if ifaceDef, isIface := Force(ifaceVal).(*InterfaceDefValue); isIface {
+				forced := Force(ifaceVal)
+				if bf, isBF := forced.(*BuiltinFunc); isBF && bf.TypeDef != nil {
+					forced = Force(bf.TypeDef)
+				}
+				if ifaceDef, isIface := forced.(*InterfaceDefValue); isIface {
 					return valueImplementsInterfaceValue(val, ifaceDef, searchEnv)
 				}
 			}

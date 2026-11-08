@@ -7721,6 +7721,60 @@ is_chain = t is Chain
 	assertBool(ev2, "is_chain", true)
 }
 
+func TestModuleExportedStructTypeMatch(t *testing.T) {
+	assertBool := func(ev *Evaluator, varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+
+	tempDir, err := os.MkdirTemp("", "les_eval_mod_type_match_*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	boxCode := `
+struct Box[T = Self]:
+    val: T
+`
+	boxPath := filepath.Join(tempDir, "boxmod.les")
+	if err := os.WriteFile(boxPath, []byte(boxCode), 0644); err != nil {
+		t.Fatalf("failed to write boxmod.les: %v", err)
+	}
+
+	fml := NewFileModuleLoader(tempDir)
+	ev := NewEvaluator()
+	ev.SetModuleLoader(fml.Load)
+
+	mainCode := `
+import boxmod
+
+b1 = boxmod::Box(10)
+m1 = b1 is boxmod::Box
+m2 = b1 is boxmod::Box[Int]
+
+b2 = boxmod::Box(val: "hello")
+m3 = b2 is boxmod::Box
+m4 = b2 is boxmod::Box[String]
+m5 = b2 is boxmod::Box[Int]
+`
+	prog := parser.NewParser(lexer.NewLexer(mainCode)).ParseProgram()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertBool(ev, "m1", true)
+	assertBool(ev, "m2", true)
+	assertBool(ev, "m3", true)
+	assertBool(ev, "m4", true)
+	assertBool(ev, "m5", false)
+}
+
 
 
 
