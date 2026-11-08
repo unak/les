@@ -1166,7 +1166,11 @@ func (p *Parser) parseAtMemberAssignStmt() *ast.MemberAssignStmt {
 	}
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.MemberAssignStmt{
 		Position: pos,
 		Target:   &ast.Identifier{Position: pos, Name: "self"},
@@ -1190,7 +1194,11 @@ func (p *Parser) parseMemberAssignStmt() *ast.MemberAssignStmt {
 	}
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.MemberAssignStmt{
 		Position: pos,
 		Target:   target,
@@ -1241,7 +1249,11 @@ func (p *Parser) parseUnpackDeclWithParen() *ast.UnpackDecl {
 		p.nextToken() // consume '='
 	}
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.UnpackDecl{
 		Position: pos,
 		Pattern:  tuplePat,
@@ -1285,7 +1297,11 @@ func (p *Parser) parseUnpackDeclWithoutParen() *ast.UnpackDecl {
 		p.nextToken() // consume '='
 	}
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.UnpackDecl{
 		Position: pos,
 		Pattern: &ast.TuplePattern{
@@ -1314,7 +1330,11 @@ func (p *Parser) parseVarDecl(typeAnnot string) *ast.VarDecl {
 	p.nextToken() // consume ident
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.VarDecl{
 		Position:  pos,
 		Name:      name,
@@ -1336,7 +1356,11 @@ func (p *Parser) parseAnnotatedVarDecl() *ast.VarDecl {
 	}
 	p.nextToken() // consume '='
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.VarDecl{
 		Position:  pos,
 		Name:      name,
@@ -1355,7 +1379,11 @@ func (p *Parser) parseReturnStmt() *ast.ReturnStmt {
 		return &ast.ReturnStmt{Position: pos, Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.ReturnStmt{Position: pos, Value: val}
 }
 
@@ -1369,7 +1397,11 @@ func (p *Parser) parseBreakStmt() *ast.BreakStmt {
 		return &ast.BreakStmt{Position: pos, Value: nil}
 	}
 	val := p.parseExpr(PREC_LOWEST)
-	p.consumeStmtEnd()
+	if exprEndsWithBlock(val) {
+		p.skipNewlines()
+	} else {
+		p.consumeStmtEnd()
+	}
 	return &ast.BreakStmt{Position: pos, Value: val}
 }
 
@@ -1383,7 +1415,7 @@ func exprEndsWithBlock(expr ast.Expr) bool {
 	case *ast.CallExpr:
 		return e.Block != nil
 	case *ast.LambdaExpr:
-		return len(e.Body) > 0 && e.Expr == nil
+		return e.Expr == nil
 	default:
 		return false
 	}
@@ -1435,13 +1467,16 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 		}
 	}
 
-	if lam, isLam := prefix.(*ast.LambdaExpr); isLam && lam.Expr == nil {
+	if exprEndsWithBlock(prefix) {
 		return prefix
 	}
 
 	for !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenSemicolon) && !p.peekTokenIs(lexer.TokenEOF) && precedence < p.peekPrecedence() {
 		p.nextToken()
 		prefix = p.parseInfix(prefix)
+		if exprEndsWithBlock(prefix) {
+			return prefix
+		}
 	}
 
 	if isStmtStart && precedence == PREC_LOWEST && !p.inParenOmissionCall && p.canStartArgument() {

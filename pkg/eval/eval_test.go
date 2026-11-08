@@ -7804,6 +7804,59 @@ is_container_int = c is Container[Int]
 	assertBool("is_container_int", true)
 }
 
+func TestTrailingBlockSelfInterfaceMethod(t *testing.T) {
+	code := `
+interface BlockTransformable:
+    def transform(&f: (Self) -> Self): Self
+
+struct Box:
+    val: Int
+    def transform(&f: (Box) -> Box): Box:
+        return f(self)
+
+b = Box(10)
+res = b.transform() do |x|:
+    Box(x.val * 2)
+
+res_val = res.val
+is_bt = b is BlockTransformable
+is_res_bt = res is BlockTransformable
+`
+	p := parser.NewParser(lexer.NewLexer(code))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	ev := NewEvaluator()
+	if _, err := ev.EvalProgram(prog); err != nil {
+		t.Fatalf("unexpected eval error: %v", err)
+	}
+
+	assertInt := func(varName string, expected int64) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("expected %s == %d, got %v", varName, expected, v)
+		}
+	}
+	assertBool := func(varName string, expected bool) {
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("missing variable %s", varName)
+		}
+		if b, ok := Force(v).(BoolValue); !ok || bool(b) != expected {
+			t.Errorf("expected %s == %v, got %v", varName, expected, v)
+		}
+	}
+
+	assertInt("res_val", 20)
+	assertBool("is_bt", true)
+	assertBool("is_res_bt", true)
+}
+
+
 
 
 
