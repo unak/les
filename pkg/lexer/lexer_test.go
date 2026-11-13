@@ -391,3 +391,111 @@ func TestLexerColonColon(t *testing.T) {
 		}
 	}
 }
+
+func TestExplicitIndentSemicolons(t *testing.T) {
+	collectTypes := func(input string) []TokenType {
+		l := NewLexer(input)
+		var out []TokenType
+		for {
+			tok := l.NextToken()
+			out = append(out, tok.Type)
+			if tok.Type == TokenEOF {
+				break
+			}
+		}
+		return out
+	}
+
+	assertTypes := func(name, input string, want []TokenType) {
+		t.Helper()
+		got := collectTypes(input)
+		if len(got) != len(want) {
+			t.Fatalf("%s: length mismatch\ngot:  %v\nwant: %v", name, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("%s: [%d] got %v, want %v\nfull got:  %v\nfull want: %v", name, i, got[i], want[i], got, want)
+			}
+		}
+	}
+
+	// 1. +; and -;
+	assertTypes("basic +; and -;", "def f(): +; 1 -;", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon,
+		TokenNewline, TokenIndent,
+		TokenInt,
+		TokenNewline, TokenDedent,
+		TokenEOF,
+	})
+
+	// 2. --; multi-dedent
+	assertTypes("multi-dedent --;", "if a: +; if b: +; 1 --; 2", []TokenType{
+		TokenIf, TokenIdent, TokenColon, TokenNewline, TokenIndent,
+		TokenIf, TokenIdent, TokenColon, TokenNewline, TokenIndent,
+		TokenInt,
+		TokenNewline, TokenDedent, TokenDedent,
+		TokenInt, TokenEOF,
+	})
+
+	// 3. Underflow clamping on ---;
+	assertTypes("underflow ---;", "if a: +; 1 ---; 2", []TokenType{
+		TokenIf, TokenIdent, TokenColon, TokenNewline, TokenIndent,
+		TokenInt,
+		TokenNewline, TokenDedent,
+		TokenInt, TokenEOF,
+	})
+
+	// 4. ;; unwinds all levels to 0
+	assertTypes(";; unwind to 0", "if a: +; if b: +; 1;; 2", []TokenType{
+		TokenIf, TokenIdent, TokenColon, TokenNewline, TokenIndent,
+		TokenIf, TokenIdent, TokenColon, TokenNewline, TokenIndent,
+		TokenInt,
+		TokenNewline, TokenDedent, TokenDedent,
+		TokenInt, TokenEOF,
+	})
+
+	// 5. ;; at level 0 acts as statement separator
+	assertTypes(";; at level 0", "1;; 2", []TokenType{
+		TokenInt, TokenNewline, TokenInt, TokenEOF,
+	})
+
+	// 6. ; ; (whitespace-separated) emits two TokenSemicolon
+	assertTypes("space-separated ; ;", "1; ; 2", []TokenType{
+		TokenInt, TokenSemicolon, TokenSemicolon, TokenInt, TokenEOF,
+	})
+
+	// 7. + ; and - ; (whitespace-separated) emit operator + semicolon
+	assertTypes("space-separated + ; and - ;", "1 + ; 2 - ;", []TokenType{
+		TokenInt, TokenPlus, TokenSemicolon, TokenInt, TokenMinus, TokenSemicolon, TokenEOF,
+	})
+
+	// 8. ->; does not confuse with -;
+	assertTypes("arrow followed by semicolon ->;", "->;", []TokenType{
+		TokenArrow, TokenSemicolon, TokenEOF,
+	})
+
+	// 9. Hybrid multi-line with +; followed by physical 4-space indent does not emit duplicate TokenIndent
+	assertTypes("hybrid +; with physical indent", "def f(): +;\n    x = 1\n    y = 2\nz = 3", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon, TokenNewline, TokenIndent,
+		TokenIdent, TokenAssign, TokenInt, TokenNewline,
+		TokenIdent, TokenAssign, TokenInt, TokenNewline, TokenDedent,
+		TokenIdent, TokenAssign, TokenInt, TokenEOF,
+	})
+
+	// 10. Multi-line without physical spaces does not prematurely dedent on \n
+	assertTypes("multiline without physical spaces", "def f(): +;\na = 1\nb = 2 -;\nc = 3", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon, TokenNewline, TokenIndent,
+		TokenIdent, TokenAssign, TokenInt, TokenNewline,
+		TokenIdent, TokenAssign, TokenInt, TokenNewline, TokenDedent,
+		TokenNewline, TokenIdent, TokenAssign, TokenInt, TokenEOF,
+	})
+
+	// 11. Inside parens: f(|x|: +; x + 1 -;)
+	assertTypes("inside parens", "f(|x|: +; x + 1 -;)", []TokenType{
+		TokenIdent, TokenLParen, TokenPipe, TokenIdent, TokenPipe, TokenColon,
+		TokenNewline, TokenIndent,
+		TokenIdent, TokenPlus, TokenInt,
+		TokenNewline, TokenDedent,
+		TokenRParen, TokenEOF,
+	})
+}

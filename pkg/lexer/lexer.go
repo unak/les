@@ -57,6 +57,32 @@ func isOperandTokenType(t TokenType) bool {
 	}
 }
 
+func (l *Lexer) skipBlankLinesAndMeasureIndent() (indentSize int, reachedEOF bool) {
+	indentSize = 0
+	for l.pos < len(l.source) {
+		curr := l.source[l.pos]
+		if curr == ' ' {
+			indentSize++
+			l.advance()
+		} else if curr == '\t' {
+			indentSize += 4
+			l.advance()
+		} else if curr == '#' {
+			for l.pos < len(l.source) && l.source[l.pos] != '\n' {
+				l.advance()
+			}
+		} else if curr == '\r' {
+			l.advance()
+		} else if curr == '\n' {
+			indentSize = 0
+			l.advance()
+		} else {
+			return indentSize, false
+		}
+	}
+	return 0, true
+}
+
 func (l *Lexer) NextToken() Token {
 	prev := l.lastTokenType
 	tok := l.nextTokenInternal()
@@ -131,38 +157,10 @@ func (l *Lexer) nextTokenInternal() Token {
 			}
 
 			// Gather blank lines and calculate indentation of the next non-empty line
-			indentSize := 0
-			isBlankLine := false
-
-			for l.pos < len(l.source) {
-				curr := l.source[l.pos]
-				if curr == ' ' {
-					indentSize++
-					l.advance()
-				} else if curr == '\t' {
-					indentSize += 4
-					l.advance()
-				} else if curr == '#' {
-					for l.pos < len(l.source) && l.source[l.pos] != '\n' {
-						l.advance()
-					}
-				} else if curr == '\r' {
-					l.advance()
-				} else if curr == '\n' {
-					indentSize = 0
-					l.advance()
-				} else {
-					break
-				}
-			}
-
-			if l.pos >= len(l.source) {
+			indentSize, reachedEOF := l.skipBlankLinesAndMeasureIndent()
+			if reachedEOF {
 				// Reached EOF
 				break
-			}
-
-			if isBlankLine {
-				continue
 			}
 
 			// Emit TokenNewline
@@ -228,6 +226,84 @@ func (l *Lexer) nextTokenInternal() Token {
 		// Identifiers / keywords
 		if unicode.IsLetter(r) || r == '_' {
 			return l.readIdentifier()
+		}
+
+		// Explicit indent semicolons: +;, -;, --;, ;;
+		if r == '+' && l.pos+1 < len(l.source) && l.source[l.pos+1] == ';' {
+			startLine, startCol := l.line, l.col
+			l.advance() // consume '+'
+			l.advance() // consume ';'
+
+			currentIndent := l.indentStack[len(l.indentStack)-1]
+			newIndent := currentIndent
+
+			if l.parenDepth == 0 {
+				// Look ahead on current line for optional spaces/comment followed by newline
+				k := l.pos
+				for k < len(l.source) && (l.source[k] == ' ' || l.source[k] == '\t' || l.source[k] == '\r') {
+					k++
+				}
+				if k < len(l.source) && l.source[k] == '#' {
+					for k < len(l.source) && l.source[k] != '\n' {
+						k++
+					}
+				}
+				if k < len(l.source) && l.source[k] == '\n' {
+					for l.pos <= k {
+						l.advance() // consume up to and including '\n'
+					}
+					if nextIndent, eof := l.skipBlankLinesAndMeasureIndent(); !eof && nextIndent > newIndent {
+						newIndent = nextIndent
+					}
+				}
+			}
+
+			l.indentStack = append(l.indentStack, newIndent)
+			l.pending = append(l.pending,
+				Token{Type: TokenNewline, Literal: "\n", Line: startLine, Col: startCol},
+				Token{Type: TokenIndent, Literal: fmt.Sprintf("%d", newIndent), Line: startLine, Col: startCol},
+			)
+			tok := l.pending[0]
+			l.pending = l.pending[1:]
+			return tok
+		}
+
+		if r == '-' {
+			k := l.pos
+			for k < len(l.source) && l.source[k] == '-' {
+				k++
+			}
+			if k < len(l.source) && l.source[k] == ';' {
+				startLine, startCol := l.line, l.col
+				dedentCount := k - l.pos
+				for i := 0; i <= dedentCount; i++ {
+					l.advance() // consume all '-' and ';'
+				}
+				l.pending = append(l.pending, Token{Type: TokenNewline, Literal: "\n", Line: startLine, Col: startCol})
+				for i := 0; i < dedentCount && len(l.indentStack) > 1; i++ {
+					l.indentStack = l.indentStack[:len(l.indentStack)-1]
+					top := l.indentStack[len(l.indentStack)-1]
+					l.pending = append(l.pending, Token{Type: TokenDedent, Literal: fmt.Sprintf("%d", top), Line: startLine, Col: startCol})
+				}
+				tok := l.pending[0]
+				l.pending = l.pending[1:]
+				return tok
+			}
+		}
+
+		if r == ';' && l.pos+1 < len(l.source) && l.source[l.pos+1] == ';' {
+			startLine, startCol := l.line, l.col
+			l.advance() // consume first ';'
+			l.advance() // consume second ';'
+			l.pending = append(l.pending, Token{Type: TokenNewline, Literal: "\n", Line: startLine, Col: startCol})
+			for len(l.indentStack) > 1 {
+				l.indentStack = l.indentStack[:len(l.indentStack)-1]
+				top := l.indentStack[len(l.indentStack)-1]
+				l.pending = append(l.pending, Token{Type: TokenDedent, Literal: fmt.Sprintf("%d", top), Line: startLine, Col: startCol})
+			}
+			tok := l.pending[0]
+			l.pending = l.pending[1:]
+			return tok
 		}
 
 		// Two-character operators
