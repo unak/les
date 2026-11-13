@@ -141,6 +141,15 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   def sum[N: Numeric](a: N, b: N) -> N:
       a + b
   ```
+- **Type Argument Inference with Union Parameters**: Type arguments of a generic function call are inferred from the argument types. When a parameter is a union such as `T | Error` or `T | Nil`, the argument type is treated as a set of members: members assignable to a union member without type parameters (here `Error` or `Nil`, including structs satisfying `Error`) are taken by that member, and only the remaining members bind `T`. An argument fully taken this way does not bind anything, and a type parameter bound by no argument is inferred as `Unknown`:
+  ```python
+  def or_else[T](x: T | Error, fallback: T) -> T:
+      fallback
+
+  or_else(Error("e"), 1)   # T = Int
+  v: Int | String | Error = 1
+  or_else(v, 2)            # T = Int | String
+  ```
 - **`Self` Pseudo-Type & Default Type Parameters (`[T = Default]`)**:
   - Within `interface` and `struct` definitions, `Self` dynamically represents the receiver type in method parameter and return type annotations:
     ```python
