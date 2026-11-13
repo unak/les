@@ -3148,6 +3148,92 @@ if nxt != nil:
 	}
 }
 
+func TestTernaryAndIsElseNarrowing(t *testing.T) {
+	const prelude = `
+def f(x: String) -> String:
+    x + "!"
+
+def k(n: Int) -> Int:
+    n + 1
+
+struct Foo:
+    n: Int
+
+struct A:
+    a: Int
+
+struct B:
+    A
+    b: Int
+
+struct Box[T]:
+    v: T
+
+struct MyErr:
+    msg: String
+    def Error() -> String:
+        @msg
+
+`
+	tests := []struct {
+		name    string
+		code    string
+		wantErr string // empty means inference must succeed
+	}{
+		// if statements
+		{"if is then", "def g(s: String | Nil) -> String:\n    if s is String:\n        f(s)\n    else:\n        \"\"\n", ""},
+		{"if != nil then", "def g(s: String | Nil) -> String:\n    if s != nil:\n        f(s)\n    else:\n        \"\"\n", ""},
+		{"if == nil else", "def g(s: String | Nil) -> String:\n    if s == nil:\n        \"\"\n    else:\n        f(s)\n", ""},
+		{"if is else", "def g(s: String | Nil) -> String:\n    if s is Nil:\n        \"\"\n    else:\n        f(s)\n", ""},
+
+		// ternary expressions
+		{"ternary is then", "def g(s: String | Nil) -> String:\n    s is String ? f(s) : \"\"\n", ""},
+		{"ternary is else", "def g(s: String | Nil) -> String:\n    s is Nil ? \"\" : f(s)\n", ""},
+		{"ternary != nil then", "def g(s: String | Nil) -> String:\n    s != nil ? f(s) : \"\"\n", ""},
+		{"ternary == nil else", "def g(s: String | Nil) -> String:\n    s == nil ? \"\" : f(s)\n", ""},
+		{"ternary nested", "def g(a: String | Nil, b: String | Nil) -> String:\n    a is Nil ? (b is Nil ? \"\" : f(b)) : f(a)\n", ""},
+		{"ternary top level", "s: String | Nil = \"x\"\nr: String = s is Nil ? \"\" : f(s)\n", ""},
+
+		// is-else removes members identical to the covered pattern type
+		{"is else union pattern", "def g(x: Int | String | Nil) -> Int:\n    x is String | Nil ? 0 : k(x)\n", ""},
+		{"is else struct", "def g(x: Foo | Int) -> Int:\n    x is Foo ? x.n : k(x)\n", ""},
+		{"is else true | false", "def g(x: Bool | Int) -> Int:\n    x is true | false ? 0 : k(x)\n", ""},
+
+		// narrowing must not go too far
+		{"ternary else not narrowed by then pattern", "def g(s: String | Nil) -> String:\n    s is String ? f(s) : f(s)\n", "expected String, got Nil"},
+		{"if else not narrowed by then pattern", "def g(s: String | Nil) -> String:\n    if s is String:\n        f(s)\n    else:\n        f(s)\n", "expected String, got Nil"},
+		{"narrowing does not leak past ternary", "def g(s: String | Nil) -> String:\n    r = s is Nil ? \"\" : f(s)\n    f(s)\n", "expected String, got String | Nil"},
+		{"regex pattern does not cover String", "def g(s: String | Nil) -> String:\n    s is /foo/ ? \"\" : f(s)\n", "expected String, got String | Nil"},
+		{"true alone does not cover Bool", "def g(b: Bool | Int) -> Int:\n    b is true ? 1 : k(b)\n", "expected Int, got Bool | Int"},
+		{"interface member kept", "def g(x: Int | Error) -> Int:\n    x is Error ? 0 : k(x)\n", "expected Int, got Int | Error"},
+		{"embedding struct member kept", "def g(x: B | Int) -> Int:\n    x is A ? 0 : k(x)\n", "expected Int, got B | Int"},
+		{"generic struct member kept", "def g(x: Box[Int] | Int) -> Int:\n    x is Box[Int] ? 0 : k(x)\n", "expected Int, got Box[Int] | Int"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := parser.NewParser(lexer.NewLexer(prelude + tt.code))
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			err := NewInferencer().InferProgram(prog)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected inference to succeed, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got none", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
 
 
 

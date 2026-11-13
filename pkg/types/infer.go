@@ -8,22 +8,59 @@ import (
 )
 
 func removeNilFromType(t Type) Type {
-	if t == TypeNil {
-		return TypeNil
+	return removeCoveredMembers(t, TypeNil)
+}
+
+// removeCoveredMembers returns the type left for a value of type t after an
+// `is` test against a pattern that fully covers `covered` has failed: union
+// members of t that the pattern certainly matches are removed.
+//
+// A member is removed only when it is identical to a covered type and its
+// runtime `is` check is nominal (primitive types and non-generic structs).
+// Members that might satisfy the pattern structurally or through lazy element
+// checks (interfaces, generic structs, tuples, dicts, functions, type
+// parameters) are kept, so the result is conservative. If t is not a union,
+// covered is nil, or no member would be left, t is returned unchanged.
+func removeCoveredMembers(t, covered Type) Type {
+	u, ok := t.(*UnionType)
+	if !ok || covered == nil {
+		return t
 	}
-	if u, ok := t.(*UnionType); ok {
-		var nonNil []Type
-		for _, m := range u.Members {
-			if m != TypeNil {
-				nonNil = append(nonNil, m)
-			}
-		}
-		if len(nonNil) == 0 {
-			return TypeNil
-		}
-		return NewUnionType(nonNil...)
+	coveredMembers := []Type{covered}
+	if cu, ok := covered.(*UnionType); ok {
+		coveredMembers = cu.Members
 	}
-	return t
+	var kept []Type
+	for _, m := range u.Members {
+		if !isNominallyCoveredBy(m, coveredMembers) {
+			kept = append(kept, m)
+		}
+	}
+	if len(kept) == 0 || len(kept) == len(u.Members) {
+		return t
+	}
+	return NewUnionType(kept...)
+}
+
+func isNominallyCoveredBy(m Type, covered []Type) bool {
+	switch mt := m.(type) {
+	case PrimType:
+		if mt == TypeUnknown {
+			return false
+		}
+	case *StructType:
+		if len(mt.TypeParams) > 0 || len(mt.TypeArgs) > 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	for _, c := range covered {
+		if m.Equals(c) {
+			return true
+		}
+	}
+	return false
 }
 
 func splitTopLevelUnionParts(s string) []string {
@@ -1000,9 +1037,14 @@ func (inf *Inferencer) setupIfScopes(cond ast.Expr) (thenScope, elseScope *Scope
 			}
 		} else if isExpr, ok := cond.(*ast.IsExpr); ok {
 			if id, ok := isExpr.Expr.(*ast.Identifier); ok {
-				if narrowT, _, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
-					origT, _ := inf.scope.Lookup(id.Name)
+				if narrowT, coveredT, err := inf.parsePatternTypeAnnot(isExpr.TypeAnnot); err == nil {
+					origT, found := inf.scope.Lookup(id.Name)
 					_ = thenScope.Declare(id.Name, narrowTypeByPattern(origT, narrowT))
+					if found {
+						if elseT := removeCoveredMembers(origT, coveredT); elseT != origT {
+							_ = elseScope.Declare(id.Name, elseT)
+						}
+					}
 				}
 			}
 		}
@@ -3023,11 +3065,17 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 		if err != nil {
 			return nil, err
 		}
+		thenScope, elseScope := inf.setupIfScopes(e.Cond)
+		prevScope := inf.scope
+		inf.scope = thenScope
 		thenT, err := inf.inferExpr(e.Then)
+		inf.scope = prevScope
 		if err != nil {
 			return nil, err
 		}
+		inf.scope = elseScope
 		elseT, err := inf.inferExpr(e.Else)
+		inf.scope = prevScope
 		if err != nil {
 			return nil, err
 		}
