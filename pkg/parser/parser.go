@@ -1411,9 +1411,9 @@ func exprEndsWithBlock(expr ast.Expr) bool {
 	}
 	switch e := expr.(type) {
 	case *ast.MatchExpr:
-		return true
+		return !e.WrappedInParens
 	case *ast.CallExpr:
-		return e.Block != nil
+		return e.Block != nil && !e.WrappedInParens
 	case *ast.LambdaExpr:
 		return e.Expr == nil && !e.WrappedInParens
 	case *ast.NamedArgExpr:
@@ -1823,16 +1823,27 @@ func (p *Parser) hasNextComma(lastExpr ast.Expr) bool {
 	return false
 }
 
-func (p *Parser) expectDelimitedRParen(lastExpr ast.Expr) bool {
+func (p *Parser) expectDelimitedClose(lastExpr ast.Expr, closing lexer.TokenType, expectedLit string) bool {
 	if exprEndsWithBlock(lastExpr) {
 		p.skipNewlines()
-		if p.curTokenIs(lexer.TokenRParen) {
+		if p.curTokenIs(closing) {
 			return true
 		}
-		p.addError(p.curToken.Line, p.curToken.Col, "expected ')', got %s", lexer.FormatToken(p.curToken))
+		p.addError(p.curToken.Line, p.curToken.Col, "expected '%s', got %s", expectedLit, lexer.FormatToken(p.curToken))
 		return false
 	}
-	return p.expectPeek(lexer.TokenRParen)
+	return p.expectPeek(closing)
+}
+
+func markWrappedInParens(expr ast.Expr) {
+	switch e := expr.(type) {
+	case *ast.LambdaExpr:
+		e.WrappedInParens = true
+	case *ast.MatchExpr:
+		e.WrappedInParens = true
+	case *ast.CallExpr:
+		e.WrappedInParens = true
+	}
 }
 
 func (p *Parser) parseGroupOrTuple() ast.Expr {
@@ -1874,15 +1885,13 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 	}
 
 	if isSpread || len(elems) > 1 {
-		p.expectDelimitedRParen(lastElem)
+		p.expectDelimitedClose(lastElem, lexer.TokenRParen, ")")
 		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 
 	// Single element without comma: (expr) -> grouped expression
-	p.expectDelimitedRParen(first)
-	if lam, ok := first.(*ast.LambdaExpr); ok {
-		lam.WrappedInParens = true
-	}
+	p.expectDelimitedClose(first, lexer.TokenRParen, ")")
+	markWrappedInParens(first)
 	return first
 }
 
@@ -1899,8 +1908,8 @@ func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
 		return &ast.TupleLit{Position: pos, Elements: elems, IsVariadic: true}
 	}
 	elems = append(elems, first)
-	for p.peekTokenIs(lexer.TokenComma) {
-		p.nextToken()
+	lastElem := first
+	for p.hasNextComma(lastElem) {
 		if p.peekTokenIs(closing) {
 			p.nextToken()
 			return &ast.TupleLit{Position: pos, Elements: elems}
@@ -1911,8 +1920,13 @@ func (p *Parser) parseTuple(closing lexer.TokenType) ast.Expr {
 			return &ast.TupleLit{Position: pos, Elements: elems, IsVariadic: true}
 		}
 		elems = append(elems, nextItem)
+		lastElem = nextItem
 	}
-	p.expectPeek(closing)
+	closingLit := ")"
+	if closing == lexer.TokenRBracket {
+		closingLit = "]"
+	}
+	p.expectDelimitedClose(lastElem, closing, closingLit)
 	return &ast.TupleLit{Position: pos, Elements: elems}
 }
 
@@ -1925,6 +1939,7 @@ func (p *Parser) parseDict() ast.Expr {
 	}
 
 	p.nextToken()
+	var lastVal ast.Expr
 	for {
 		ePos := p.curPos()
 		key := p.parseExpr(PREC_LOWEST)
@@ -1934,18 +1949,19 @@ func (p *Parser) parseDict() ast.Expr {
 		p.nextToken()
 		val := p.parseExpr(PREC_LOWEST)
 		entries = append(entries, ast.DictEntry{Position: ePos, Key: key, Value: val})
+		lastVal = val
 
-		if p.peekTokenIs(lexer.TokenComma) {
-			p.nextToken()
+		if p.hasNextComma(val) {
 			if p.peekTokenIs(lexer.TokenRBrace) {
-				break
+				p.nextToken()
+				return &ast.DictLit{Position: pos, Entries: entries}
 			}
 			p.nextToken()
 		} else {
 			break
 		}
 	}
-	p.expectPeek(lexer.TokenRBrace)
+	p.expectDelimitedClose(lastVal, lexer.TokenRBrace, "}")
 	return &ast.DictLit{Position: pos, Entries: entries}
 }
 
@@ -2353,7 +2369,7 @@ func (p *Parser) parseCallArguments() []ast.Expr {
 		args = append(args, lastArg)
 	}
 
-	p.expectDelimitedRParen(lastArg)
+	p.expectDelimitedClose(lastArg, lexer.TokenRParen, ")")
 	return args
 }
 

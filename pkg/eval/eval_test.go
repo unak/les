@@ -7961,6 +7961,27 @@ func TestExplicitIndentSemicolonsEval(t *testing.T) {
 		"res",
 		11,
 	)
+
+	evalCheckInt(
+		"match wrapped in parens",
+		"n = 5; x = (match n: +; case Int: +; 1;;); res = x + 10",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		"do-block call wrapped in parens",
+		"def apply(v, &block): +; block(v);; x = (apply(5) do |v|: +; v + 1;;); res = x * 2",
+		"res",
+		12,
+	)
+
+	evalCheckInt(
+		"block lambdas inside brackets and dict braces",
+		"arr = [|x|: +; x + 1;;]; d = {\"f\": |x|: +; x * 2;;}; res = arr[0](3) + d[\"f\"](4)",
+		"res",
+		12,
+	)
 }
 
 

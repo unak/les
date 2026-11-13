@@ -305,9 +305,10 @@ type MatchCase struct {
 
 // MatchExpr represents pattern match expression: match expr: case ...
 type MatchExpr struct {
-	Position Position
-	Target   Expr
-	Cases    []MatchCase
+	Position        Position
+	Target          Expr
+	Cases           []MatchCase
+	WrappedInParens bool // true when enclosed in (...) so outer stmts treat ')' as end
 }
 
 func (m *MatchExpr) node()         {}
@@ -316,10 +317,11 @@ func (m *MatchExpr) Pos() Position { return m.Position }
 
 // CallExpr represents function call. Arg is always a TupleLit expression (or single expr desugared).
 type CallExpr struct {
-	Position Position
-	Callee   Expr
-	Args     []Expr
-	Block    *BlockLiteral // optional trailing do |x|: block
+	Position        Position
+	Callee          Expr
+	Args            []Expr
+	Block           *BlockLiteral // optional trailing do |x|: block
+	WrappedInParens bool          // true when enclosed in (...) so outer stmts treat ')' as end
 }
 
 func (c *CallExpr) node()         {}
