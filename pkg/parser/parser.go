@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"math/big"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
@@ -690,7 +691,18 @@ func (p *Parser) parseFuncParams() ([]ast.FuncParam, *ast.FuncParam) {
 }
 
 func (p *Parser) parseTypeAnnotString() string {
+	annot, _ := p.parseTypeAnnotStringWithLiteral()
+	return annot
+}
+
+// parseTypeAnnotStringWithLiteral reads a type annotation like
+// parseTypeAnnotString and additionally returns the first string or numeric
+// literal token it consumed, or nil if there was none. The literal's quotes
+// are not kept in the returned annotation, so callers that must tell a literal
+// apart from an identifier (such as case patterns) check the token instead.
+func (p *Parser) parseTypeAnnotStringWithLiteral() (string, *lexer.Token) {
 	tok := p.curToken
+	var literalTok *lexer.Token
 	var parts []string
 	parenDepth := 0
 	bracketDepth := 0
@@ -714,6 +726,10 @@ func (p *Parser) parseTypeAnnotString() string {
 		} else if p.curTokenIs(lexer.TokenRBrace) {
 			braceDepth--
 		}
+		if literalTok == nil && (p.curTokenIs(lexer.TokenString) || p.curTokenIs(lexer.TokenInt) || p.curTokenIs(lexer.TokenFloat)) {
+			t := p.curToken
+			literalTok = &t
+		}
 		parts = append(parts, p.curToken.Literal)
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
 			if p.peekTokenIs(lexer.TokenComma) || p.peekTokenIs(lexer.TokenRParen) || p.peekTokenIs(lexer.TokenRBracket) || p.peekTokenIs(lexer.TokenRBrace) || p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenEOF) || p.peekTokenIs(lexer.TokenAssign) || p.peekTokenIs(lexer.TokenColon) || (p.peekTokenIs(lexer.TokenIdent) && p.peekToken.Literal == "as") {
@@ -730,7 +746,7 @@ func (p *Parser) parseTypeAnnotString() string {
 	}
 	annot := normalizeTypeAnnot(parts)
 	p.validateTypeAnnotation(annot, tok.Line, tok.Col)
-	return annot
+	return annot, literalTok
 }
 
 func (p *Parser) parseBlockBody() []ast.Stmt {
@@ -857,7 +873,11 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 			} else if p.curTokenIs(lexer.TokenLParen) && p.isTupleDestructuringPattern() {
 				tuplePat, pattern = p.parseTuplePattern()
 			} else {
-				pattern = p.parseTypeAnnotString()
+				var literalTok *lexer.Token
+				pattern, literalTok = p.parseTypeAnnotStringWithLiteral()
+				if literalTok != nil {
+					p.addLiteralPatternError(*literalTok)
+				}
 				patCheck := strings.TrimSpace(pattern)
 				for ast.HasEnclosingDelims(patCheck, '(', ')') {
 					inner := strings.TrimSpace(patCheck[1 : len(patCheck)-1])
@@ -934,6 +954,43 @@ func (p *Parser) parseMatchExpr() *ast.MatchExpr {
 		Target:   target,
 		Cases:    cases,
 	}
+}
+
+// addLiteralPatternError reports a string or numeric literal used as a case
+// pattern. Patterns are types, tuples, the singletons nil/true/false, regexes
+// and _; without this check a literal such as "Int" or 42 would lose its quotes
+// and be read as a type name.
+func (p *Parser) addLiteralPatternError(tok lexer.Token) {
+	if tok.Type == lexer.TokenString {
+		p.addError(tok.Line, tok.Col, "string literal patterns are not supported in case; use a regex pattern such as %s", regexHintForString(tok.Literal))
+		return
+	}
+	p.addError(tok.Line, tok.Col, "numeric literal patterns are not supported in case; compare with == instead")
+}
+
+// regexHintForString builds a regex literal that matches exactly s, for use in
+// error messages.
+func regexHintForString(s string) string {
+	var sb strings.Builder
+	sb.WriteString("/^")
+	for _, r := range regexp.QuoteMeta(s) {
+		switch {
+		case r == '/':
+			sb.WriteString(`\/`)
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&sb, `\x{%x}`, r)
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	sb.WriteString("$/")
+	return sb.String()
 }
 
 func (p *Parser) isTupleDestructuringPattern() bool {

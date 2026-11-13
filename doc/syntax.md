@@ -512,7 +512,7 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   >   ```
 
 - **Pattern Match Expression `match ... case`**:
-  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals, regex patterns (with optional `as m` capture binding), and default `_`:
+  Supports type patterns (including `{Key: Value}` and unions `A | B`), tuple patterns, singleton literals (`nil`, `true`, `false`), regex patterns (with optional `as m` capture binding), and default `_`:
   ```python
   def classify(v):
       match v:
@@ -535,6 +535,7 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   classify {"a": 1}
   classify nil
   ```
+  String and numeric literals are not patterns: `case "Int":` or `case 42:` is a syntax error. To match an exact string, use an anchored regex such as `case /^Int$/:`; to compare numbers, use `==`.
 
 ### Special Types: `Nil` and `Unknown`
 - **`Nil`**:
