@@ -498,4 +498,37 @@ func TestExplicitIndentSemicolons(t *testing.T) {
 		TokenNewline, TokenDedent,
 		TokenRParen, TokenEOF,
 	})
+
+	// 12. +; with trailing comment and newline in hybrid multiline
+	assertTypes("hybrid +; with trailing comment", "def f(): +; # body\n    x = 1\ny = 2", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon, TokenNewline, TokenIndent,
+		TokenIdent, TokenAssign, TokenInt, TokenNewline, TokenDedent,
+		TokenIdent, TokenAssign, TokenInt, TokenEOF,
+	})
+
+	// 13. +; with trailing spaces and CRLF in hybrid multiline
+	assertTypes("hybrid +; with CRLF", "def f(): +;  \r\n    x = 1\r\ny = 2", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon, TokenNewline, TokenIndent,
+		TokenIdent, TokenAssign, TokenInt, TokenNewline, TokenDedent,
+		TokenIdent, TokenAssign, TokenInt, TokenEOF,
+	})
+
+	// 14. +; followed by comment-only lines before EOF still closes at EOF
+	assertTypes("+; followed by comment-only EOF", "def f(): +;\n   # only comment\n", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon, TokenNewline, TokenIndent,
+		TokenDedent, TokenEOF,
+	})
+
+	// 15. ;;; splits into ;; (full dedent) + ; (TokenSemicolon)
+	assertTypes("triple semicolon ;;;", "if a: +; 1;;; 2", []TokenType{
+		TokenIf, TokenIdent, TokenColon, TokenNewline, TokenIndent,
+		TokenInt, TokenNewline, TokenDedent, TokenSemicolon, TokenInt, TokenEOF,
+	})
+
+	// 16. ;; inside parens does not unwind outer physical indentation
+	assertTypes(";; inside parens preserves outer indent", "def f():\n    x = (+; 1;;)\n    y = 2", []TokenType{
+		TokenDef, TokenIdent, TokenLParen, TokenRParen, TokenColon, TokenNewline, TokenIndent,
+		TokenIdent, TokenAssign, TokenLParen, TokenNewline, TokenIndent, TokenInt, TokenNewline, TokenDedent, TokenRParen, TokenNewline,
+		TokenIdent, TokenAssign, TokenInt, TokenDedent, TokenEOF,
+	})
 }

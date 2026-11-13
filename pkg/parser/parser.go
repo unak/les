@@ -1415,7 +1415,9 @@ func exprEndsWithBlock(expr ast.Expr) bool {
 	case *ast.CallExpr:
 		return e.Block != nil
 	case *ast.LambdaExpr:
-		return e.Expr == nil
+		return e.Expr == nil && !e.WrappedInParens
+	case *ast.NamedArgExpr:
+		return exprEndsWithBlock(e.Value)
 	default:
 		return false
 	}
@@ -1809,6 +1811,30 @@ func (p *Parser) parseTupleElement() ast.Expr {
 	return expr
 }
 
+func (p *Parser) hasNextComma(lastExpr ast.Expr) bool {
+	if exprEndsWithBlock(lastExpr) {
+		p.skipNewlines()
+		return p.curTokenIs(lexer.TokenComma)
+	}
+	if p.peekTokenIs(lexer.TokenComma) {
+		p.nextToken()
+		return true
+	}
+	return false
+}
+
+func (p *Parser) expectDelimitedRParen(lastExpr ast.Expr) bool {
+	if exprEndsWithBlock(lastExpr) {
+		p.skipNewlines()
+		if p.curTokenIs(lexer.TokenRParen) {
+			return true
+		}
+		p.addError(p.curToken.Line, p.curToken.Col, "expected ')', got %s", lexer.FormatToken(p.curToken))
+		return false
+	}
+	return p.expectPeek(lexer.TokenRParen)
+}
+
 func (p *Parser) parseGroupOrTuple() ast.Expr {
 	pos := p.curPos()
 	// ( ) -> empty tuple
@@ -1830,9 +1856,9 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 	}
 
 	elems := []ast.Expr{first}
+	lastElem := first
 
-	for p.peekTokenIs(lexer.TokenComma) {
-		p.nextToken() // consume ','
+	for p.hasNextComma(lastElem) {
 		if p.peekTokenIs(lexer.TokenRParen) {
 			p.nextToken() // consume trailing ')'
 			return &ast.TupleLit{Position: pos, Elements: elems}
@@ -1844,15 +1870,19 @@ func (p *Parser) parseGroupOrTuple() ast.Expr {
 			return &ast.TupleLit{Position: pos, Elements: elems, IsVariadic: true}
 		}
 		elems = append(elems, nextItem)
+		lastElem = nextItem
 	}
 
 	if isSpread || len(elems) > 1 {
-		p.expectPeek(lexer.TokenRParen)
+		p.expectDelimitedRParen(lastElem)
 		return &ast.TupleLit{Position: pos, Elements: elems}
 	}
 
 	// Single element without comma: (expr) -> grouped expression
-	p.expectPeek(lexer.TokenRParen)
+	p.expectDelimitedRParen(first)
+	if lam, ok := first.(*ast.LambdaExpr); ok {
+		lam.WrappedInParens = true
+	}
 	return first
 }
 
@@ -2310,18 +2340,20 @@ func (p *Parser) parseCallArguments() []ast.Expr {
 	}
 
 	p.nextToken()
-	args = append(args, p.parseCallArgumentItem())
+	lastArg := p.parseCallArgumentItem()
+	args = append(args, lastArg)
 
-	for p.peekTokenIs(lexer.TokenComma) {
-		p.nextToken() // consume ','
+	for p.hasNextComma(lastArg) {
 		if p.peekTokenIs(lexer.TokenRParen) {
-			break
+			p.nextToken()
+			return args
 		}
 		p.nextToken()
-		args = append(args, p.parseCallArgumentItem())
+		lastArg = p.parseCallArgumentItem()
+		args = append(args, lastArg)
 	}
 
-	p.expectPeek(lexer.TokenRParen)
+	p.expectDelimitedRParen(lastArg)
 	return args
 }
 

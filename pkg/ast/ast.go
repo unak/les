@@ -339,10 +339,11 @@ func (b *BlockLiteral) Pos() Position { return b.Position }
 
 // LambdaExpr represents anonymous lambda function: |params|: expr or |params|: block
 type LambdaExpr struct {
-	Position Position
-	Params   []FuncParam
-	Body     []Stmt
-	Expr     Expr // single-line expression if non-nil
+	Position        Position
+	Params          []FuncParam
+	Body            []Stmt
+	Expr            Expr // single-line expression if non-nil
+	WrappedInParens bool // true when enclosed in (...) so outer stmts treat ')' as end
 }
 
 func (l *LambdaExpr) node()         {}

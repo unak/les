@@ -7940,6 +7940,27 @@ func TestExplicitIndentSemicolonsEval(t *testing.T) {
 		"res",
 		11,
 	)
+
+	evalCheckInt(
+		"block lambda inside call parens",
+		"def apply(v, f): +; f(v);; res = apply(5, |x|: +; y = x * 2; y + 1 -;)",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		"block lambda as non-last call arg",
+		"def apply2(f, v): +; f(v);; res = apply2(|x|: +; y = x * 2; y + 1 -;, 5)",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		";; inside parens preserves outer physical indent",
+		"def outer():\n    f = (|x|: +; x + 1;;)\n    f(10)\nres = outer()",
+		"res",
+		11,
+	)
 }
 
 
