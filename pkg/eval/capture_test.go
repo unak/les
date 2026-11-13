@@ -1,6 +1,10 @@
 package eval
 
-import "testing"
+import (
+	"testing"
+
+	"les/pkg/ast"
+)
 
 // Lazy thunks must observe the bindings visible when they were created, not
 // the values that variables are rebound to before the thunk is forced.
@@ -132,6 +136,16 @@ def later(n: Int) -> Int:
 print y`,
 			expected: "200",
 		},
+		{
+			name: "def observes outer variable rebinding dynamically",
+			code: `j = 0
+def g() -> Int:
+    j
+res = g()
+j = 5
+print res`,
+			expected: "5",
+		},
 	}
 
 	for _, tt := range tests {
@@ -145,4 +159,16 @@ print y`,
 			}
 		})
 	}
+
+	t.Run("bare identifier thunk releases env reference immediately", func(t *testing.T) {
+		env := NewEnvironment(nil)
+		env.Set("x", NewIntValue(42))
+		th := newCapturedThunk(&ast.Identifier{Name: "x"}, env)
+		if th.Env != nil {
+			t.Fatalf("expected bare identifier thunk Env to be nil, got %v", th.Env)
+		}
+		if Force(th).(IntValue) != NewIntValue(42) {
+			t.Fatalf("expected 42, got %v", Force(th))
+		}
+	})
 }

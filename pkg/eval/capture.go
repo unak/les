@@ -14,7 +14,7 @@ func newCapturedThunk(expr ast.Expr, env *Environment) *Thunk {
 		// value (possibly an unevaluated thunk itself, which Force follows)
 		// is exactly what has to be observed later.
 		if v, found := env.Get(id.Name); found {
-			return &Thunk{Evaluated: true, Value: v, Expr: expr, Env: env}
+			return &Thunk{Evaluated: true, Value: v, Expr: expr, Env: nil}
 		}
 	}
 	return NewThunk(expr, env.captureEnv(expr))
