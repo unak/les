@@ -7856,6 +7856,134 @@ is_res_bt = res is BlockTransformable
 	assertBool("is_res_bt", true)
 }
 
+func TestExplicitIndentSemicolonsEval(t *testing.T) {
+	evalCheckInt := func(name, code, varName string, expected int64) {
+		t.Helper()
+		p := parser.NewParser(lexer.NewLexer(code))
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("%s parse errors: %v", name, p.Errors())
+		}
+		ev := NewEvaluator()
+		_, err := ev.EvalProgram(prog)
+		if err != nil {
+			t.Fatalf("%s eval error: %v", name, err)
+		}
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("%s missing variable %s", name, varName)
+		}
+		if iv, ok := Force(v).(IntValue); !ok || iv != NewIntValue(expected) {
+			t.Errorf("%s expected %s == %d, got %v", name, varName, expected, v)
+		}
+	}
+
+	evalCheckStr := func(name, code, varName, expected string) {
+		t.Helper()
+		p := parser.NewParser(lexer.NewLexer(code))
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Fatalf("%s parse errors: %v", name, p.Errors())
+		}
+		ev := NewEvaluator()
+		_, err := ev.EvalProgram(prog)
+		if err != nil {
+			t.Fatalf("%s eval error: %v", name, err)
+		}
+		v, ok := ev.globalEnv.Get(varName)
+		if !ok {
+			t.Fatalf("%s missing variable %s", name, varName)
+		}
+		if sv, ok := Force(v).(StringValue); !ok || string(sv) != expected {
+			t.Errorf("%s expected %s == %q, got %v", name, varName, expected, v)
+		}
+	}
+
+	evalCheckInt(
+		"one-liner def abs",
+		"def abs(x): +; if x < 0: +; -x -; else: +; x;; res = abs(-42)",
+		"res",
+		42,
+	)
+
+	evalCheckInt(
+		"one-liner for loop with if and ;;",
+		"sum = 0; i = 1; for i <= 4: +; if i != 4: +; sum = sum + i -; i = i + 1;; res = sum",
+		"res",
+		6,
+	)
+
+	evalCheckInt(
+		"one-liner struct Point",
+		"struct Point: +; x: Int; y: Int;; p = Point(x: 3, y: 4); res = p.x + p.y",
+		"res",
+		7,
+	)
+
+	evalCheckStr(
+		"one-liner match",
+		"def label(v): +; match v: +; case Int: +; \"int\" -; case String: +; \"str\" -; case _: +; \"other\";; res = label(\"hi\")",
+		"res",
+		"str",
+	)
+
+	evalCheckStr(
+		"multiline without physical whitespace",
+		"def classify(n): +;\nif n > 0: +;\n\"pos\"\n-; else: +;\n\"nonpos\"\n;;\nres = classify(5)",
+		"res",
+		"pos",
+	)
+
+	evalCheckInt(
+		"one-liner do block",
+		"def apply(v, &block): +; block(v);; res = apply(5) do |x|: +; y = x * 2; y + 1;;",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		"block lambda inside call parens",
+		"def apply(v, f): +; f(v);; res = apply(5, |x|: +; y = x * 2; y + 1 -;)",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		"block lambda as non-last call arg",
+		"def apply2(f, v): +; f(v);; res = apply2(|x|: +; y = x * 2; y + 1 -;, 5)",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		";; inside parens preserves outer physical indent",
+		"def outer():\n    f = (|x|: +; x + 1;;)\n    f(10)\nres = outer()",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		"match wrapped in parens",
+		"n = 5; x = (match n: +; case Int: +; 1;;); res = x + 10",
+		"res",
+		11,
+	)
+
+	evalCheckInt(
+		"do-block call wrapped in parens",
+		"def apply(v, &block): +; block(v);; x = (apply(5) do |v|: +; v + 1;;); res = x * 2",
+		"res",
+		12,
+	)
+
+	evalCheckInt(
+		"block lambdas inside brackets and dict braces",
+		"arr = [|x|: +; x + 1;;]; d = {\"f\": |x|: +; x * 2;;}; res = arr[0](3) + d[\"f\"](4)",
+		"res",
+		12,
+	)
+}
+
 
 
 

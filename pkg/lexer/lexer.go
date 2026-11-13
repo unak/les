@@ -10,27 +10,29 @@ import (
 
 // Lexer produces tokens from source code with Python-like off-side indentation.
 type Lexer struct {
-	source        []rune
-	pos           int
-	line          int
-	col           int
-	indentStack   []int
-	pending       []Token
-	parenDepth    int // bracket/brace/paren depth disables newlines/indents
-	lastTokenType TokenType
+	source          []rune
+	pos             int
+	line            int
+	col             int
+	indentStack     []int
+	pending         []Token
+	parenDepth      int   // bracket/brace/paren depth disables newlines/indents
+	parenIndentBase []int // indentStack length recorded at each opening bracket/brace/paren
+	lastTokenType   TokenType
 }
 
 // NewLexer creates a new Lexer instance.
 func NewLexer(input string) *Lexer {
 	return &Lexer{
-		source:        []rune(input),
-		pos:           0,
-		line:          1,
-		col:           1,
-		indentStack:   []int{0},
-		pending:       make([]Token, 0),
-		parenDepth:    0,
-		lastTokenType: TokenEOF,
+		source:          []rune(input),
+		pos:             0,
+		line:            1,
+		col:             1,
+		indentStack:     []int{0},
+		pending:         make([]Token, 0),
+		parenDepth:      0,
+		parenIndentBase: make([]int, 0),
+		lastTokenType:   TokenEOF,
 	}
 }
 
@@ -55,6 +57,68 @@ func isOperandTokenType(t TokenType) bool {
 	default:
 		return false
 	}
+}
+
+func (l *Lexer) enterParen() {
+	l.parenDepth++
+	l.parenIndentBase = append(l.parenIndentBase, len(l.indentStack))
+}
+
+func (l *Lexer) exitParen() {
+	if l.parenDepth > 0 {
+		l.parenDepth--
+	}
+	if len(l.parenIndentBase) > 0 {
+		l.parenIndentBase = l.parenIndentBase[:len(l.parenIndentBase)-1]
+	}
+}
+
+func (l *Lexer) minIndentStackLen() int {
+	if len(l.parenIndentBase) > 0 {
+		return l.parenIndentBase[len(l.parenIndentBase)-1]
+	}
+	return 1
+}
+
+// emitDedents appends a TokenNewline followed by up to maxCount TokenDedent tokens,
+// clamped at the active indentation base (level 0 or enclosing bracket base).
+func (l *Lexer) emitDedents(maxCount, startLine, startCol int) Token {
+	minLen := l.minIndentStackLen()
+	l.pending = append(l.pending, Token{Type: TokenNewline, Literal: "\n", Line: startLine, Col: startCol})
+	for i := 0; i < maxCount && len(l.indentStack) > minLen; i++ {
+		l.indentStack = l.indentStack[:len(l.indentStack)-1]
+		top := l.indentStack[len(l.indentStack)-1]
+		l.pending = append(l.pending, Token{Type: TokenDedent, Literal: fmt.Sprintf("%d", top), Line: startLine, Col: startCol})
+	}
+	tok := l.pending[0]
+	l.pending = l.pending[1:]
+	return tok
+}
+
+func (l *Lexer) skipBlankLinesAndMeasureIndent() (indentSize int, reachedEOF bool) {
+	indentSize = 0
+	for l.pos < len(l.source) {
+		curr := l.source[l.pos]
+		if curr == ' ' {
+			indentSize++
+			l.advance()
+		} else if curr == '\t' {
+			indentSize += 4
+			l.advance()
+		} else if curr == '#' {
+			for l.pos < len(l.source) && l.source[l.pos] != '\n' {
+				l.advance()
+			}
+		} else if curr == '\r' {
+			l.advance()
+		} else if curr == '\n' {
+			indentSize = 0
+			l.advance()
+		} else {
+			return indentSize, false
+		}
+	}
+	return 0, true
 }
 
 func (l *Lexer) NextToken() Token {
@@ -131,38 +195,10 @@ func (l *Lexer) nextTokenInternal() Token {
 			}
 
 			// Gather blank lines and calculate indentation of the next non-empty line
-			indentSize := 0
-			isBlankLine := false
-
-			for l.pos < len(l.source) {
-				curr := l.source[l.pos]
-				if curr == ' ' {
-					indentSize++
-					l.advance()
-				} else if curr == '\t' {
-					indentSize += 4
-					l.advance()
-				} else if curr == '#' {
-					for l.pos < len(l.source) && l.source[l.pos] != '\n' {
-						l.advance()
-					}
-				} else if curr == '\r' {
-					l.advance()
-				} else if curr == '\n' {
-					indentSize = 0
-					l.advance()
-				} else {
-					break
-				}
-			}
-
-			if l.pos >= len(l.source) {
+			indentSize, reachedEOF := l.skipBlankLinesAndMeasureIndent()
+			if reachedEOF {
 				// Reached EOF
 				break
-			}
-
-			if isBlankLine {
-				continue
 			}
 
 			// Emit TokenNewline
@@ -228,6 +264,68 @@ func (l *Lexer) nextTokenInternal() Token {
 		// Identifiers / keywords
 		if unicode.IsLetter(r) || r == '_' {
 			return l.readIdentifier()
+		}
+
+		// Explicit indent semicolons: +;, -;, --;, ;;
+		if r == '+' && l.pos+1 < len(l.source) && l.source[l.pos+1] == ';' {
+			startLine, startCol := l.line, l.col
+			l.advance() // consume '+'
+			l.advance() // consume ';'
+
+			currentIndent := l.indentStack[len(l.indentStack)-1]
+			newIndent := currentIndent
+
+			if l.parenDepth == 0 {
+				// Look ahead on current line for optional spaces/comment followed by newline
+				k := l.pos
+				for k < len(l.source) && (l.source[k] == ' ' || l.source[k] == '\t' || l.source[k] == '\r') {
+					k++
+				}
+				if k < len(l.source) && l.source[k] == '#' {
+					for k < len(l.source) && l.source[k] != '\n' {
+						k++
+					}
+				}
+				if k < len(l.source) && l.source[k] == '\n' {
+					for l.pos <= k {
+						l.advance() // consume up to and including '\n'
+					}
+					if nextIndent, eof := l.skipBlankLinesAndMeasureIndent(); !eof && nextIndent > newIndent {
+						newIndent = nextIndent
+					}
+				}
+			}
+
+			l.indentStack = append(l.indentStack, newIndent)
+			l.pending = append(l.pending,
+				Token{Type: TokenNewline, Literal: "\n", Line: startLine, Col: startCol},
+				Token{Type: TokenIndent, Literal: fmt.Sprintf("%d", newIndent), Line: startLine, Col: startCol},
+			)
+			tok := l.pending[0]
+			l.pending = l.pending[1:]
+			return tok
+		}
+
+		if r == '-' {
+			k := l.pos
+			for k < len(l.source) && l.source[k] == '-' {
+				k++
+			}
+			if k < len(l.source) && l.source[k] == ';' {
+				startLine, startCol := l.line, l.col
+				dedentCount := k - l.pos
+				for i := 0; i <= dedentCount; i++ {
+					l.advance() // consume all '-' and ';'
+				}
+				return l.emitDedents(dedentCount, startLine, startCol)
+			}
+		}
+
+		if r == ';' && l.pos+1 < len(l.source) && l.source[l.pos+1] == ';' {
+			startLine, startCol := l.line, l.col
+			l.advance() // consume first ';'
+			l.advance() // consume second ';'
+			return l.emitDedents(len(l.indentStack), startLine, startCol)
 		}
 
 		// Two-character operators
@@ -330,33 +428,27 @@ func (l *Lexer) nextTokenInternal() Token {
 		case '(':
 			tok.Type = TokenLParen
 			tok.Literal = "("
-			l.parenDepth++
+			l.enterParen()
 		case ')':
 			tok.Type = TokenRParen
 			tok.Literal = ")"
-			if l.parenDepth > 0 {
-				l.parenDepth--
-			}
+			l.exitParen()
 		case '[':
 			tok.Type = TokenLBracket
 			tok.Literal = "["
-			l.parenDepth++
+			l.enterParen()
 		case ']':
 			tok.Type = TokenRBracket
 			tok.Literal = "]"
-			if l.parenDepth > 0 {
-				l.parenDepth--
-			}
+			l.exitParen()
 		case '{':
 			tok.Type = TokenLBrace
 			tok.Literal = "{"
-			l.parenDepth++
+			l.enterParen()
 		case '}':
 			tok.Type = TokenRBrace
 			tok.Literal = "}"
-			if l.parenDepth > 0 {
-				l.parenDepth--
-			}
+			l.exitParen()
 		case '+':
 			tok.Type = TokenPlus
 			tok.Literal = "+"

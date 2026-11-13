@@ -385,13 +385,21 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
 - Tuples: `()`, `(1,)`, `(1, 2)`.
 - Dicts: `{"a": 1}`.
 
-### Statement Separator (`;`) & Line Continuation (`\`)
+### Statement Separator (`;`), Explicit Indentation (`+;`, `-;`, `;;`), & Line Continuation (`\`)
 - **Statement Separator (`;`)**:
   Allows writing multiple statements on the same line:
   ```python
   x = 10; y = 20; print x + y
   ```
-  Trailing semicolons (e.g. `x = 10;`), multiple consecutive semicolons, and semicolons inside blocks or struct declarations are fully supported.
+  Trailing semicolons (e.g. `x = 10;`), space-separated empty statements (`; ;`), and semicolons inside blocks or struct declarations are fully supported. Note that two consecutive semicolons without whitespace (`;;`) act as an explicit reset to top-level indentation (see below).
+- **Explicit Indentation Semicolons (`+;`, `-;`, `--;`, `;;`)**:
+  Allow writing indented blocks on a single line or without physical leading whitespace:
+  - `+;`: Emits an `INDENT` token (pushes a virtual indent level). Also supports hybrid multiline blocks by syncing with the next line's physical indentation. Virtual levels opened without physical indentation increase are closed with `-;` or `;;`.
+  - `-;` / `--;` / `---;` ...: Emits one `DEDENT` token per leading `-` (clamped at top-level 0 or the enclosing bracket/paren base).
+  - `;;`: Emits `DEDENT` tokens to unwind all active indentation levels back to top-level 0 (or to the enclosing bracket/paren base when used inside `()`, `[]`, `{}`). When already at the base level, acts as a statement separator.
+  ```python
+  def abs(x): +; if x < 0: +; -x -; else: +; x;;
+  ```
 - **Line Continuation (`\`)**:
   Allows a statement to span multiple physical lines. The backslash `\` can optionally be followed by trailing whitespace and an inline comment (`# ...`) before the newline:
   ```python
