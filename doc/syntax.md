@@ -379,6 +379,13 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
       i = i + 1
   print acc   # => (0, 1, 2)
   ```
+  Note that functions defined with `def` look up outer-scope variables dynamically when called (current specification), so calling or lazily forcing a `def` function after an outer variable is rebound observes the rebound value:
+  ```python
+  j = 0
+  def g(): j
+  j = 5
+  print g()   # => 5
+  ```
 - **Pipeline Operator (`|>`)**:
   Functional pipelining to cleanly express transformation chains without nested parentheses.
   `expr |> fn` evaluates as `fn(expr)`, and `expr |> fn(arg2)` evaluates as `fn(expr, arg2)`:
