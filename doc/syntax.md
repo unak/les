@@ -133,6 +133,19 @@ header_stream: (String, Int, ...) = ("data", 1, 2, 3, ...)
   def identity[T](val: T) -> T:
       val
   ```
+- **Runtime type tests on type parameters**: Inside a generic function, `x is T` and `case T:` test against the type argument of the current call: the explicit one (`describe[Int](3)`) or, when omitted, the one the type checker inferred for that call (`describe("hi")` binds `T` to `String`). In methods of a generic struct, the struct's type parameters take the receiver's type arguments. A type argument that cannot be determined is `Unknown`, so a test against it matches any value.
+  ```python
+  def describe[T](x: T | Error) -> String:
+      match x:
+          case Error:
+              "error"
+          case T:
+              "value"
+
+  describe[Int](3)            # "value"
+  describe("hi")              # "value" (T is inferred as String)
+  describe[Int](Error("e"))   # "error"
+  ```
 - **Type Constraints (`[T: Constraint]`)**: Constrain generic type variables by interfaces or union constraints:
   ```python
   def display[T: Show](item: T):

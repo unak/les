@@ -720,14 +720,24 @@ func resolveTypeParamFromEnv(t types.Type, env *Environment, inf *types.Inferenc
 	if t == nil || !types.ContainsSelfOrParam(t) || env == nil {
 		return t
 	}
+	// Type parameters bound by enclosing generic function calls and methods of
+	// generic structs; inner scopes shadow outer ones.
+	bindings := make(map[string]types.Type)
+	for name, arg := range env.visibleTypeArgs() {
+		if argT, err := parseTypeAnnotInEnv(arg, env); err == nil && argT != nil {
+			bindings[name] = argT
+		}
+	}
 	if selfVal, found := env.Get("self"); found && selfVal != nil {
 		selfToUse := selfVal
 		if evaluated, isEval := PeekEvaluated(selfVal); isEval {
 			selfToUse = evaluated
 		}
 		if si, ok := selfToUse.(*StructInstance); ok && len(si.TypeArgs) > 0 && si.Def != nil {
-			bindings := make(map[string]types.Type)
 			for i, tp := range si.Def.TypeParams {
+				if _, bound := bindings[tp.Name]; bound {
+					continue
+				}
 				if i < len(si.TypeArgs) {
 					if argT, err := parseTypeAnnotInEnv(si.TypeArgs[i], env); err == nil && argT != nil {
 						bindings[tp.Name] = argT
@@ -738,14 +748,14 @@ func resolveTypeParamFromEnv(t types.Type, env *Environment, inf *types.Inferenc
 			if selfT, err := parseTypeAnnotInEnv(selfTypeName, env); err == nil && selfT != nil {
 				bindings["Self"] = selfT
 			}
-			if len(bindings) > 0 {
-				subT := types.Substitute(t, bindings)
-				if selfT, ok := bindings["Self"]; ok {
-					subT = types.SubstituteSelf(subT, selfT)
-				}
-				return subT
-			}
 		}
+	}
+	if len(bindings) > 0 {
+		subT := types.Substitute(t, bindings)
+		if selfT, ok := bindings["Self"]; ok {
+			subT = types.SubstituteSelf(subT, selfT)
+		}
+		return subT
 	}
 	return t
 }
@@ -1005,6 +1015,15 @@ func specializeGenericValue(val Value, typeArgs []string, env *Environment) (Val
 				typeArgs = resolvedArgs
 			}
 		}
+		// Type arguments may refer to type parameters of the enclosing generic
+		// function or struct (e.g. inner[T](x) inside def outer[T]).
+		if len(typeArgs) > 0 && env.hasTypeArgs() {
+			resolvedArgs := make([]string, len(typeArgs))
+			for i, a := range typeArgs {
+				resolvedArgs[i] = env.substituteTypeParams(a)
+			}
+			typeArgs = resolvedArgs
+		}
 	}
 
 	switch v := val.(type) {
@@ -1262,6 +1281,168 @@ func substituteTypeString(annot string, substMap map[string]string) string {
 	return b.String()
 }
 
+// selfTypeNameInEnv returns the type name of the receiver bound to self in
+// env (e.g. "Box[Int]"), or "" if there is none.
+func selfTypeNameInEnv(env *Environment) string {
+	if env == nil {
+		return ""
+	}
+	selfVal, found := env.Get("self")
+	if !found || selfVal == nil {
+		return ""
+	}
+	forcedSelf := Force(selfVal)
+	name := typeNameOf(forcedSelf)
+	if si, ok := forcedSelf.(*StructInstance); ok && len(si.TypeArgs) > 0 {
+		name = fmt.Sprintf("%s[%s]", si.Def.Name, strings.Join(si.TypeArgs, ", "))
+	}
+	if name == "Unknown" {
+		return ""
+	}
+	return name
+}
+
+// typeParamBindings pairs typeParams with their runtime type arguments:
+// args[i] when given, otherwise the parameter's default (with earlier
+// parameters and Self substituted), otherwise "Unknown", the same fallback
+// the type checker uses for a type argument it cannot infer.
+func typeParamBindings(typeParams []ast.TypeParam, args []string, env *Environment) map[string]string {
+	res := make(map[string]string, len(typeParams))
+	strBindings := make(map[string]string, len(typeParams)+1)
+	if selfName := selfTypeNameInEnv(env); selfName != "" {
+		strBindings["Self"] = selfName
+	}
+	for i, tp := range typeParams {
+		arg := ""
+		if i < len(args) {
+			arg = strings.TrimSpace(args[i])
+		}
+		if arg == "" {
+			if tp.Default != "" {
+				arg = substituteTypeString(tp.Default, strBindings)
+			} else {
+				arg = "Unknown"
+			}
+		}
+		strBindings[tp.Name] = arg
+		res[tp.Name] = arg
+	}
+	return res
+}
+
+// substituteTypeParams replaces the type parameters bound in env occurring in
+// the type annotation annot with their runtime type arguments. Regex literals
+// and module-qualified names are left untouched. A type argument with a
+// top-level union or function arrow is parenthesized when it replaces part of
+// a larger annotation.
+func (env *Environment) substituteTypeParams(annot string) string {
+	if env == nil || annot == "" || !env.hasTypeArgs() {
+		return annot
+	}
+	if arg, ok := env.lookupTypeArg(strings.TrimSpace(annot)); ok {
+		return arg
+	}
+	runes := []rune(annot)
+	var b strings.Builder
+	changed := false
+	for i := 0; i < len(runes); {
+		r := runes[i]
+		if r == '/' {
+			if next := ast.SkipRegexInTypeAnnot(runes, i); next > i {
+				b.WriteString(string(runes[i:next]))
+				i = next
+				continue
+			}
+		}
+		if !isIdentStart(r) {
+			b.WriteRune(r)
+			i++
+			continue
+		}
+		start := i
+		for i < len(runes) && isIdentPart(runes[i]) {
+			i++
+		}
+		word := string(runes[start:i])
+		qualified := (start >= 2 && runes[start-1] == ':' && runes[start-2] == ':') ||
+			(i+1 < len(runes) && runes[i] == ':' && runes[i+1] == ':')
+		if !qualified {
+			if arg, ok := env.lookupTypeArg(word); ok {
+				if hasTopLevelUnionOrArrow(arg) {
+					arg = "(" + arg + ")"
+				}
+				b.WriteString(arg)
+				changed = true
+				continue
+			}
+		}
+		b.WriteString(word)
+	}
+	if !changed {
+		return annot
+	}
+	return b.String()
+}
+
+// hasTopLevelUnionOrArrow reports whether the type annotation contains a '|'
+// or '->' outside of parentheses, brackets, braces and regex literals.
+func hasTopLevelUnionOrArrow(annot string) bool {
+	runes := []rune(annot)
+	depth := 0
+	for i := 0; i < len(runes); i++ {
+		switch r := runes[i]; r {
+		case '/':
+			if next := ast.SkipRegexInTypeAnnot(runes, i); next > i {
+				i = next - 1
+			}
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			depth--
+		case '|':
+			if depth == 0 {
+				return true
+			}
+		case '-':
+			if depth == 0 && i+1 < len(runes) && runes[i+1] == '>' {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// inferredCallTypeArgs returns the type arguments the type checker inferred
+// for call, a call of a generic function written without explicit type
+// arguments, as type annotation strings. Type parameters and Self occurring
+// in them are resolved against env; whatever stays unresolved becomes
+// "Unknown". It returns nil when no inferred type arguments are recorded.
+func (env *Environment) inferredCallTypeArgs(call *ast.CallExpr, n int) []string {
+	if env == nil || env.Inferencer == nil {
+		return nil
+	}
+	inf, ok := env.Inferencer.(*types.Inferencer)
+	if !ok || inf.CallTypeArgs == nil {
+		return nil
+	}
+	staticArgs, ok := inf.CallTypeArgs[call]
+	if !ok || len(staticArgs) != n {
+		return nil
+	}
+	res := make([]string, n)
+	for i, t := range staticArgs {
+		if t != nil && types.ContainsSelfOrParam(t) {
+			t = resolveTypeParamFromEnv(t, env, inf)
+		}
+		if t == nil || t == types.TypeUnknown || types.ContainsSelfOrParam(t) {
+			res[i] = "Unknown"
+		} else {
+			res[i] = t.String()
+		}
+	}
+	return res
+}
+
 func (ev *Evaluator) EvalProgram(prog *ast.Program) (val Value, err error) {
 	if prog != nil && prog.Filename != "" {
 		if ev.globalEnv != nil {
@@ -1396,6 +1577,11 @@ func (env *Environment) newThunk(expr ast.Expr) *Thunk {
 	if expr != nil && env != nil && env.Inferencer != nil {
 		if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
 			if t, ok := inf.ExprTypes[expr]; ok {
+				if env.hasTypeArgs() && types.ContainsSelfOrParam(t) {
+					// Static types in a generic body mention its type
+					// parameters; resolve them with this call's type arguments.
+					t = resolveTypeParamFromEnv(t, env, inf)
+				}
 				thunk.InferredType = t
 			}
 		}
@@ -1840,6 +2026,12 @@ func (env *Environment) invokeClosure(fn *Closure, argValues []Value, optBlock .
 		myCallID = nextCallID()
 		callEnv.EnclosingFuncID = fn.EnclosingFuncID
 		callEnv.ActiveClosureID = myCallID
+	}
+
+	// Bind the function's own type parameters so that runtime type tests in
+	// the body (`x is T`, `case T:`) see the type arguments of this call.
+	if len(fn.TypeParams) > 0 {
+		callEnv.typeArgs = typeParamBindings(fn.TypeParams, fn.TypeArgs, fn.Env)
 	}
 
 	for i, p := range fn.Params {
@@ -2324,6 +2516,15 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			return fn.Fn(argValues)
 
 		case *Closure:
+			// A generic function called without explicit type arguments gets
+			// the type arguments the type checker inferred for this call.
+			if len(fn.TypeParams) > 0 && len(fn.TypeArgs) == 0 {
+				if typeArgs := env.inferredCallTypeArgs(e, len(fn.TypeParams)); typeArgs != nil {
+					specialized := *fn
+					specialized.TypeArgs = typeArgs
+					fn = &specialized
+				}
+			}
 			if fn.BlockParam != nil {
 				if blockClosure != nil {
 					return env.invokeClosure(fn, argValues, blockClosure)
@@ -5338,6 +5539,11 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 				typeAnnot = substituteTypeString(typeAnnot, map[string]string{"Self": selfTypeName})
 			}
 		}
+	}
+	// Replace type parameters of the enclosing generic function or struct
+	// with the type arguments bound at runtime.
+	if len(optEnv) > 0 && optEnv[0] != nil {
+		typeAnnot = strings.TrimSpace(optEnv[0].substituteTypeParams(typeAnnot))
 	}
 
 	// Unwrap enclosing grouping parens if no top-level comma (e.g. (Int | /foo/))
