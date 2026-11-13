@@ -1392,7 +1392,7 @@ func evalLiteral(expr ast.Expr) (Value, bool) {
 }
 
 func (env *Environment) newThunk(expr ast.Expr) *Thunk {
-	thunk := NewThunk(expr, env)
+	thunk := newCapturedThunk(expr, env)
 	if expr != nil && env != nil && env.Inferencer != nil {
 		if inf, ok := env.Inferencer.(*types.Inferencer); ok && inf.ExprTypes != nil {
 			if t, ok := inf.ExprTypes[expr]; ok {
@@ -1409,7 +1409,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		if _, ok := env.store[s.Name]; ok {
 			// Re-binding existing variable in current environment:
 			// Force RHS immediately to avoid circular reference in lazy thunk
-			newVal := Force(env.newThunk(s.Value))
+			newVal := env.forceExpr(s.Value)
 			env.store[s.Name] = newVal
 			return nil, nil
 		}
@@ -1429,7 +1429,7 @@ func (env *Environment) evalStmt(stmt ast.Stmt) (Value, error) {
 		}
 		// If RHS is a force demand point, force immediately instead of creating lazy thunk!
 		if env.isForceDemand(s.Value) {
-			val := Force(env.newThunk(s.Value))
+			val := env.forceExpr(s.Value)
 			env.Set(s.Name, val)
 			return nil, nil
 		}
@@ -1854,7 +1854,7 @@ func (env *Environment) invokeClosure(fn *Closure, argValues []Value, optBlock .
 		if i < len(argValues) {
 			callEnv.Set(p.Name, argValues[i])
 		} else if p.DefaultValue != nil {
-			callEnv.Set(p.Name, NewThunk(p.DefaultValue, callEnv))
+			callEnv.Set(p.Name, newCapturedThunk(p.DefaultValue, callEnv))
 		} else {
 			callEnv.Set(p.Name, &TupleValue{Elements: []Value{}})
 		}
@@ -1868,7 +1868,7 @@ func (env *Environment) invokeClosure(fn *Closure, argValues []Value, optBlock .
 		if blockVal != nil {
 			callEnv.Set(fn.BlockParam.Name, blockVal)
 		} else if fn.BlockParam.DefaultValue != nil {
-			callEnv.Set(fn.BlockParam.Name, NewThunk(fn.BlockParam.DefaultValue, callEnv))
+			callEnv.Set(fn.BlockParam.Name, newCapturedThunk(fn.BlockParam.DefaultValue, callEnv))
 		} else {
 			return nil, fmt.Errorf("missing required block argument &%s", fn.BlockParam.Name)
 		}
@@ -2013,7 +2013,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		isVariadic := e.IsVariadic
 		for _, el := range e.Elements {
 			if sp, ok := el.(*ast.SpreadExpr); ok {
-				spVal := Force(env.newThunk(sp.Expr))
+				spVal := env.forceExpr(sp.Expr)
 				spTuple, ok := spVal.(*TupleValue)
 				if !ok {
 					return nil, fmt.Errorf("cannot spread non-tuple value of type %s", typeNameOf(spVal))
@@ -2024,7 +2024,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 				}
 			} else {
 				if env.isForceDemand(el) {
-					elems = append(elems, Force(env.newThunk(el)))
+					elems = append(elems, env.forceExpr(el))
 				} else if val, ok := evalLiteral(el); ok {
 					elems = append(elems, val)
 				} else {
@@ -2038,11 +2038,11 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		entries := make(map[DictKey]Value)
 		keyValues := make(map[DictKey]Value)
 		for _, entry := range e.Entries {
-			kVal := Force(env.newThunk(entry.Key))
+			kVal := env.forceExpr(entry.Key)
 			dk := MakeDictKey(kVal)
 			keyValues[dk] = kVal
 			if env.isForceDemand(entry.Value) {
-				entries[dk] = Force(env.newThunk(entry.Value))
+				entries[dk] = env.forceExpr(entry.Value)
 			} else if val, ok := evalLiteral(entry.Value); ok {
 				entries[dk] = val
 			} else {
@@ -2208,7 +2208,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 			if lt, ok := leftVal.(*TupleValue); ok {
 				var rightVal Value
 				if env.isForceDemand(e.Right) {
-					rightVal = Force(env.newThunk(e.Right))
+					rightVal = env.forceExpr(e.Right)
 				} else if val, ok := evalLiteral(e.Right); ok {
 					rightVal = val
 				} else {
@@ -2289,7 +2289,7 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 		argValues := make([]Value, len(e.Args))
 		for i, a := range e.Args {
 			if env.isForceDemand(a) {
-				argValues[i] = Force(env.newThunk(a))
+				argValues[i] = env.forceExpr(a)
 			} else if val, ok := evalLiteral(a); ok {
 				argValues[i] = val
 			} else {
@@ -2981,7 +2981,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			continue
 		}
 		if defExpr, hasDef := sDef.FieldDefaults[fName]; hasDef {
-			fields[fName] = NewThunk(defExpr, sDef.Env)
+			fields[fName] = newCapturedThunk(defExpr, sDef.Env)
 		} else {
 			fields[fName] = &TupleValue{Elements: []Value{}}
 		}
@@ -3096,7 +3096,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 			for p := posIdx; p < len(posArgs); p++ {
 				var val Value
 				if env.isForceDemand(posArgs[p]) {
-					val = Force(env.newThunk(posArgs[p]))
+					val = env.forceExpr(posArgs[p])
 				} else if lit, ok := evalLiteral(posArgs[p]); ok {
 					val = lit
 				} else {
@@ -3126,7 +3126,7 @@ func (env *Environment) instantiateStructWithInit(sDef *StructDefValue, initDef 
 		if argExpr != nil {
 			var val Value
 			if env.isForceDemand(argExpr) {
-				val = Force(env.newThunk(argExpr))
+				val = env.forceExpr(argExpr)
 			} else if lit, ok := evalLiteral(argExpr); ok {
 				val = lit
 			} else {

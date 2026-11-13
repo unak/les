@@ -1338,6 +1338,7 @@ func Force(v Value) Value {
 		thunk.Value = val // do not force lazily wrapped container elements
 		thunk.Evaluated = true
 		thunk.Evaluating = false
+		thunk.Env = nil // release the captured scope (and the old bindings it holds)
 		v = thunk.Value
 	}
 }

@@ -370,7 +370,15 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
       i = i + 1
   ```
 - **Same-Type Variable Rebinding**:
-  Re-binding an existing variable in the current scope is allowed as long as the new value has the same (or compatible) type. Type-mismatched assignments (e.g. `x = 10` followed by `x = "hello"`) are caught as static type errors. When rebinding an existing variable, the right-hand side is strictly evaluated (forced) immediately to prevent lazy evaluation cycles.
+  Re-binding an existing variable in the current scope is allowed as long as the new value has the same (or compatible) type. Type-mismatched assignments (e.g. `x = 10` followed by `x = "hello"`) are caught as static type errors. When rebinding an existing variable, the right-hand side is strictly evaluated (forced) immediately to prevent lazy evaluation cycles. Deferred expressions (lazy variables, tuple elements, arguments, etc.) keep the bindings that were visible when they were created, so rebinding a variable later does not change values already built from it:
+  ```python
+  i = 0
+  acc: (Int, ...) = ()
+  for i < 3:
+      acc = acc << i
+      i = i + 1
+  print acc   # => (0, 1, 2)
+  ```
 - **Pipeline Operator (`|>`)**:
   Functional pipelining to cleanly express transformation chains without nested parentheses.
   `expr |> fn` evaluates as `fn(expr)`, and `expr |> fn(arg2)` evaluates as `fn(expr, arg2)`:
