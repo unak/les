@@ -325,6 +325,106 @@ func (u *UnionType) Equals(other Type) bool {
 	return true
 }
 
+// sameStructAssignable reports whether sSrc is sTarget, respecting type arguments.
+func sameStructAssignable(sSrc, sTarget *StructType) bool {
+	if sTarget.Name != sSrc.Name {
+		return false
+	}
+	if len(sTarget.TypeArgs) == 0 {
+		return true
+	}
+	if len(sSrc.TypeArgs) == len(sTarget.TypeArgs) {
+		for i := range sSrc.TypeArgs {
+			if !IsAssignableTo(sSrc.TypeArgs[i], sTarget.TypeArgs[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	if len(sSrc.TypeArgs) == 0 && len(sSrc.TypeParams) == len(sTarget.TypeArgs) {
+		for i, tp := range sSrc.TypeParams {
+			tpType := &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
+			if !IsAssignableTo(tpType, sTarget.TypeArgs[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// structAssignActive holds the (src, target) pairs whose member compatibility
+// is being checked, so that self-referential member types (a method returning
+// its own struct) terminate; a pair met again is assumed compatible.
+var structAssignActive = map[[2]*StructType]bool{}
+
+// embeddedStructAssignable reports whether sSrc, which embeds (directly or
+// transitively) a struct assignable to sTarget, may be used where sTarget is
+// expected. The value is not converted, so member access on it still sees the
+// members of sSrc: every member that sTarget exposes must therefore resolve on
+// sSrc, without ambiguity, to a type assignable to the one it has on sTarget.
+func embeddedStructAssignable(sSrc, sTarget *StructType) bool {
+	if !embedsAssignable(sSrc, sTarget, map[*StructType]bool{sSrc: true}) {
+		return false
+	}
+	key := [2]*StructType{sSrc, sTarget}
+	if structAssignActive[key] {
+		return true
+	}
+	structAssignActive[key] = true
+	defer delete(structAssignActive, key)
+
+	names := make(map[string]bool)
+	collectMemberNames(sTarget, names, make(map[*StructType]bool))
+	for name := range names {
+		if name == "init" {
+			continue // constructor, not a member of an instance at run time
+		}
+		tt, err := sTarget.LookupMember(name)
+		if err != nil {
+			continue // not accessible on the target either
+		}
+		st, err := sSrc.LookupMember(name)
+		if err != nil || !IsAssignableTo(st, tt) {
+			return false
+		}
+	}
+	return true
+}
+
+// embedsAssignable reports whether s embeds, directly or transitively, a
+// struct that is the same as target by sameStructAssignable.
+func embedsAssignable(s, target *StructType, visited map[*StructType]bool) bool {
+	for _, emb := range s.Embedded {
+		if visited[emb] {
+			continue
+		}
+		visited[emb] = true
+		if sameStructAssignable(emb, target) || embedsAssignable(emb, target, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// collectMemberNames adds the names of the fields and methods of s and of the
+// structs it embeds, transitively, to names.
+func collectMemberNames(s *StructType, names map[string]bool, visited map[*StructType]bool) {
+	if visited[s] {
+		return
+	}
+	visited[s] = true
+	for n := range s.Fields {
+		names[n] = true
+	}
+	for n := range s.Methods {
+		names[n] = true
+	}
+	for _, emb := range s.Embedded {
+		collectMemberNames(emb, names, visited)
+	}
+}
+
 // IsAssignableTo checks if source type can be assigned to target type (handling subtyping and unions).
 func IsAssignableTo(src, target Type) bool {
 	if src == TypeUnknown || target == TypeUnknown {
@@ -388,25 +488,8 @@ func IsAssignableTo(src, target Type) bool {
 
 	// If target is StructType and src is StructType
 	if sTarget, ok := target.(*StructType); ok {
-		if sSrc, ok := src.(*StructType); ok && sTarget.Name == sSrc.Name {
-			if len(sTarget.TypeArgs) == 0 {
-				return true
-			}
-			if len(sSrc.TypeArgs) == len(sTarget.TypeArgs) {
-				for i := range sSrc.TypeArgs {
-					if !IsAssignableTo(sSrc.TypeArgs[i], sTarget.TypeArgs[i]) {
-						return false
-					}
-				}
-				return true
-			}
-			if len(sSrc.TypeArgs) == 0 && len(sSrc.TypeParams) == len(sTarget.TypeArgs) {
-				for i, tp := range sSrc.TypeParams {
-					tpType := &TypeParamType{Name: tp.Name, Constraint: tp.Constraint}
-					if !IsAssignableTo(tpType, sTarget.TypeArgs[i]) {
-						return false
-					}
-				}
+		if sSrc, ok := src.(*StructType); ok {
+			if sameStructAssignable(sSrc, sTarget) || embeddedStructAssignable(sSrc, sTarget) {
 				return true
 			}
 		}
