@@ -402,6 +402,95 @@ res = match x:
 	}
 }
 
+func TestParseMatchLiteralPatternErrors(t *testing.T) {
+	errCases := []struct {
+		pattern     string
+		expectedErr string
+	}{
+		{`"Int"`, "string literal patterns are not supported in case; use a regex pattern such as /^Int$/"},
+		{`'Int'`, "string literal patterns are not supported in case; use a regex pattern such as /^Int$/"},
+		{`"w"`, "use a regex pattern such as /^w$/"},
+		{`"nil"`, "string literal patterns are not supported in case"},
+		{`'_'`, "string literal patterns are not supported in case"},
+		{`"a/b.c"`, `use a regex pattern such as /^a\/b\.c$/`},
+		{`Int | "x"`, "string literal patterns are not supported in case"},
+		{`("x")`, "string literal patterns are not supported in case"},
+		{`42`, "numeric literal patterns are not supported in case"},
+		{`3.5`, "numeric literal patterns are not supported in case"},
+		{`-1`, "numeric literal patterns are not supported in case"},
+		{`String | 0`, "numeric literal patterns are not supported in case"},
+	}
+
+	for _, tt := range errCases {
+		code := "match v:\n    case " + tt.pattern + ":\n        1\n    case _:\n        0\n"
+		p := NewParser(lexer.NewLexer(code))
+		_ = p.ParseProgram()
+		found := false
+		for _, err := range p.Errors() {
+			if strings.Contains(err, tt.expectedErr) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected error containing %q for case %s, got %v", tt.expectedErr, tt.pattern, p.Errors())
+		}
+	}
+}
+
+func TestParseMatchNonLiteralPatterns(t *testing.T) {
+	cases := []struct {
+		pattern string
+		want    string
+		regex   bool
+		tuple   bool
+	}{
+		{`/^Int$/`, "/^Int$/", true, false},
+		{`/^\d+$/ | Int`, `/^\d+$/ | Int`, false, false},
+		{`nil`, "nil", false, false},
+		{`true`, "true", false, false},
+		{`false`, "false", false, false},
+		{`_`, "_", false, false},
+		{`Int`, "Int", false, false},
+		{`Int | Nil`, "Int | Nil", false, false},
+		{`{String: Int}`, "{String: Int}", false, false},
+		{`(Int, String)`, "(Int, String)", false, false},
+		{`()`, "()", false, true},
+		{`(a, b)`, "(a,b)", false, true},
+		{`(h, ...t)`, "(h,...t)", false, true},
+	}
+
+	for _, tt := range cases {
+		code := "match v:\n    case " + tt.pattern + ":\n        1\n    case _:\n        0\n"
+		p := NewParser(lexer.NewLexer(code))
+		prog := p.ParseProgram()
+		if len(p.Errors()) > 0 {
+			t.Errorf("unexpected parser errors for case %s: %v", tt.pattern, p.Errors())
+			continue
+		}
+		stmt, ok := prog.Body[0].(*ast.ExprStmt)
+		if !ok {
+			t.Errorf("expected ExprStmt for case %s, got %T", tt.pattern, prog.Body[0])
+			continue
+		}
+		me, ok := stmt.Value.(*ast.MatchExpr)
+		if !ok || len(me.Cases) != 2 {
+			t.Errorf("expected MatchExpr with 2 cases for case %s, got %+v", tt.pattern, stmt.Value)
+			continue
+		}
+		c := me.Cases[0]
+		if c.Pattern != tt.want {
+			t.Errorf("case %s: expected pattern %q, got %q", tt.pattern, tt.want, c.Pattern)
+		}
+		if (c.RegexPattern != nil) != tt.regex {
+			t.Errorf("case %s: expected regex=%v, got %+v", tt.pattern, tt.regex, c.RegexPattern)
+		}
+		if (c.TuplePattern != nil) != tt.tuple {
+			t.Errorf("case %s: expected tuple pattern=%v, got %+v", tt.pattern, tt.tuple, c.TuplePattern)
+		}
+	}
+}
+
 func TestPutsParser(t *testing.T) {
 	code := `
 def puts_each(items):
