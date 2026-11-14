@@ -7991,3 +7991,39 @@ func TestExplicitIndentSemicolonsEval(t *testing.T) {
 
 
 
+
+func TestEvalInlineFuncBody(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		want string
+	}{
+		{"identity", "def get_val(x): x\nprint get_val(1)", "1"},
+		{"outer variable", "j = 0\ndef g(): j\nprint g()", "0"},
+		{"call", "def g(x): x + 1\ndef f(x): g(x)\nprint f(1)", "2"},
+		{"paren-omitted call", "def f(x): print x\nf(3)", "3"},
+		{"tuple", "def f(x): (x, x)\nprint f(1)", "(1, 1)"},
+		{"ternary", "def f(x): x > 0 ? x : 0\nprint f(5), f(-5)", "50"},
+		{"dict", "def f(x): {\"a\": x}\nprint f(1)", "{\"a\": 1}"},
+		{"lambda", "def f(x): |y|: x + y\nprint f(1)(2)", "3"},
+		{"string", "def f(x): \"s\"\nprint f(1)", "s"},
+		{"negative number", "def f(x): -1\nprint f(1)", "-1"},
+		{"semicolon ends the body", "def f(x): x; print 9\nprint f(1)", "91"},
+		{"arrow return type", "def f() -> Int: 1\nprint f()", "1"},
+		{"colon return type", "def f(): Int: 1\nprint f()", "1"},
+		{"generic", "def id[T](v: T) -> T: v\nprint id(3)", "3"},
+		{"struct methods", "struct V:\n    n: Int\n    +(o: V): V: V(n + o.n)\n    def get(): n\n    def twice() -> Int: n * 2\nv = V(2) + V(5)\nprint v.get(), v.twice()", "714"},
+		{"block bodies", "def f(a: Int, b: Int): Int:\n    a + b\ndef g(a: Int) -> Int:\n    a + 1\ndef h(x):\n    x\nprint f(1, 2), g(1), h(1)", "321"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := runLesCode(tt.code)
+			if err != nil {
+				t.Fatalf("run failed: %v", err)
+			}
+			if out != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, out)
+			}
+		})
+	}
+}

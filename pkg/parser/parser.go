@@ -370,25 +370,7 @@ func (p *Parser) parseStructDef() *ast.StructDef {
 			opName := p.parseOperatorMethodName()
 			if opName != "" && p.expectPeek(lexer.TokenLParen) {
 				params, blockParam := p.parseFuncParams()
-				returnType := ""
-				if p.peekTokenIs(lexer.TokenArrow) {
-					p.nextToken()
-					p.nextToken()
-					returnType = p.parseTypeAnnotString()
-					if p.peekTokenIs(lexer.TokenColon) {
-						p.nextToken()
-					}
-				} else if p.peekTokenIs(lexer.TokenColon) {
-					p.nextToken()
-					if !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenIndent) && !p.peekTokenIs(lexer.TokenEOF) {
-						p.nextToken()
-						returnType = p.parseTypeAnnotString()
-						if p.peekTokenIs(lexer.TokenColon) {
-							p.nextToken()
-						}
-					}
-				}
-				body := p.parseBlockBody()
+				returnType, body := p.parseFuncReturnTypeAndBody()
 				methods = append(methods, &ast.FuncDef{
 					Position:   opPos,
 					Name:       opName,
@@ -560,6 +542,25 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 
 	params, blockParam := p.parseFuncParams()
 
+	returnType, body := p.parseFuncReturnTypeAndBody()
+
+	return &ast.FuncDef{
+		Position:   pos,
+		Name:       name,
+		TypeParams: typeParams,
+		Params:     params,
+		BlockParam: blockParam,
+		ReturnType: strings.TrimSpace(returnType),
+		Body:       body,
+	}
+}
+
+// parseFuncReturnTypeAndBody parses what follows the parameter list of a
+// function: an optional return type (`-> T` or `: T`) and the body. After the
+// header colon, a newline starts an indented block. Otherwise the rest of the
+// line is the return type if it is a type annotation followed by another ':'
+// (see colonStartsReturnType), and else the inline body, a single statement.
+func (p *Parser) parseFuncReturnTypeAndBody() (string, []ast.Stmt) {
 	returnType := ""
 	if p.peekTokenIs(lexer.TokenArrow) {
 		p.nextToken() // advance to '->'
@@ -570,8 +571,7 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 		}
 	} else if p.peekTokenIs(lexer.TokenColon) {
 		p.nextToken() // advance to ':'
-		// If followed by return type annot on same line instead of newline/indent:
-		if !p.peekTokenIs(lexer.TokenNewline) && !p.peekTokenIs(lexer.TokenIndent) && !p.peekTokenIs(lexer.TokenEOF) {
+		if p.colonStartsReturnType() {
 			p.nextToken() // advance to return type
 			returnType = p.parseTypeAnnotString()
 			if p.peekTokenIs(lexer.TokenColon) {
@@ -580,16 +580,63 @@ func (p *Parser) parseFuncDef() *ast.FuncDef {
 		}
 	}
 
-	body := p.parseBlockBody()
+	if p.curTokenIs(lexer.TokenColon) && !p.peekEndsHeader() {
+		p.nextToken() // consume ':', advance to the inline body
+		return returnType, []ast.Stmt{p.parseStmt()}
+	}
+	return returnType, p.parseBlockBody()
+}
 
-	return &ast.FuncDef{
-		Position:   pos,
-		Name:       name,
-		TypeParams: typeParams,
-		Params:     params,
-		BlockParam: blockParam,
-		ReturnType: strings.TrimSpace(returnType),
-		Body:       body,
+// peekEndsHeader reports whether nothing follows the header colon on its line.
+func (p *Parser) peekEndsHeader() bool {
+	return p.peekTokenIs(lexer.TokenNewline) || p.peekTokenIs(lexer.TokenIndent) || p.peekTokenIs(lexer.TokenDedent) || p.peekTokenIs(lexer.TokenSemicolon) || p.peekTokenIs(lexer.TokenEOF)
+}
+
+// colonStartsReturnType is called with the header colon of a def as curToken.
+// It reports whether the tokens that follow on the same line are a return type
+// annotation terminated by another ':' (`def f(): Int: body`). It scans a copy
+// of the lexer and consumes nothing. The tokens must be type-like (identifiers,
+// '::', '|', '->', '...', commas, and balanced (), [] and {} where a ':' may
+// appear inside braces), must start with an identifier, '(' or '{', and must
+// not contain two adjacent identifiers, so a ternary, a call without
+// parentheses, a lambda, a literal or an operator expression is never taken
+// for a return type.
+func (p *Parser) colonStartsReturnType() bool {
+	if p.peekEndsHeader() {
+		return false
+	}
+	l := p.l.Clone()
+	tok := p.peekToken
+	switch tok.Type {
+	case lexer.TokenIdent, lexer.TokenNil, lexer.TokenLParen, lexer.TokenLBrace:
+	default:
+		return false
+	}
+	depth := 0
+	prevIdent := false
+	for ; ; tok = l.NextToken() {
+		isIdent := tok.Type == lexer.TokenIdent
+		switch tok.Type {
+		case lexer.TokenIdent:
+			if prevIdent {
+				return false
+			}
+		case lexer.TokenNil, lexer.TokenColonColon, lexer.TokenComma, lexer.TokenPipe, lexer.TokenDot, lexer.TokenArrow:
+		case lexer.TokenLParen, lexer.TokenLBracket, lexer.TokenLBrace:
+			depth++
+		case lexer.TokenRParen, lexer.TokenRBracket, lexer.TokenRBrace:
+			depth--
+			if depth < 0 {
+				return false
+			}
+		case lexer.TokenColon:
+			if depth == 0 {
+				return true
+			}
+		default:
+			return false
+		}
+		prevIdent = isIdent
 	}
 }
 

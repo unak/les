@@ -502,6 +502,15 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
     def multiplier(factor: Int) -> (Int) -> Int:
         |x: Int|: x * factor
     ```
+  - **One-line function bodies**:
+    After the parameter list (and the optional `->` return type), a `:` that is followed by a newline starts an indented block. If something follows the `:` on the same line, the body is a single statement on that line, and the function has no return type annotation unless the text after the `:` is a type annotation that is itself followed by another `:`. A `;` ends the one-line body; use `+;` and `;;` for several statements on one line.
+    ```python
+    def identity(x): x                      # inline body, no return type
+    def double(x: Int) -> Int: x * 2        # return type with `->`, inline body
+    def add(a: Int, b: Int): Int: a + b     # return type `Int`, then inline body
+    def sign(x: Int): x > 0 ? 1 : 0         # `x > 0 ? 1` is not a type: inline body
+    ```
+    The text after the `:` is read as a return type only if it consists solely of type syntax (names, `::`, `|`, `->`, `...`, commas, and balanced `()`, `[]`, `{}`), starts with a name, `(` or `{`, contains no two adjacent names, and is followed by `:` outside any brackets. Literals, operators, `?`, `|x|` lambdas and calls without parentheses such as `print x` therefore always begin an inline body. The one remaining ambiguity is an inline body that is itself an annotated declaration (`def f(): y: Int = 1`); it is read as return type `y`, so write such a body as an indented block.
 - **Union Types (`A | B`)**:
   - Types can be composed as unions (e.g., `Int | String`, `Int | Nil`).
   - **Branch Type Inference**: When conditional branches (such as `? :` or `if/else`) evaluate to different types, the expression is automatically inferred as their union type (`Int | String`).

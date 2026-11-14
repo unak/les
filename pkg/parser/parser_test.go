@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -2421,3 +2422,147 @@ interface Cloneable:
 }
 
 
+func TestParseFuncDefHeaderForms(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		ret      string // expected return type annotation
+		body     int    // expected number of statements in the body
+		bodyType string // expected %T of the first body expression, or "" when not checked
+		topLevel int    // expected number of top-level statements
+	}{
+		// Block bodies; these forms parsed the same before inline bodies were supported.
+		{"colon return type block", "def f(a: Int, b: Int): Int:\n    a + b", "Int", 1, "*ast.BinaryExpr", 1},
+		{"arrow return type block", "def f(a: Int) -> Int:\n    a + 1", "Int", 1, "*ast.BinaryExpr", 1},
+		{"no return type block", "def f(x):\n    x", "", 1, "*ast.Identifier", 1},
+		{"union return type block", "def f(a: Int, b: Int): Int | Error:\n    a + b", "Int | Error", 1, "*ast.BinaryExpr", 1},
+		{"arrow tuple return type block", "def f() -> (Int, ...):\n    (1, 2)", "(Int,...)", 1, "*ast.TupleLit", 1},
+		{"arrow function return type block", "def m(k: Int) -> (Int) -> Int:\n    |x|: x + k", "(Int) -> Int", 1, "*ast.LambdaExpr", 1},
+		{"colon function return type block", "def m(k: Int): (Int) -> Int:\n    |x|: x + k", "(Int) -> Int", 1, "*ast.LambdaExpr", 1},
+		{"generic return type block", "def f(): Box[Int]:\n    Box[Int](1)", "Box[Int]", 1, "*ast.CallExpr", 1},
+		{"dict return type block", "def f(): {String: Int}:\n    {\"a\": 1}", "{String: Int}", 1, "", 1},
+		{"qualified return type block", "def f(): m::T:\n    1", "m::T", 1, "*ast.IntLit", 1},
+		{"explicit indent block", "def abs(x): +; if x < 0: +; -x -; else: +; x;;", "", 1, "", 1},
+		{"return type explicit indent block", "def f(): Int: +; 1;;", "Int", 1, "*ast.IntLit", 1},
+		{"inline empty tuple after block def", "def f(x):\n    1\ndef g(): ()", "", 1, "", 2},
+
+		// Inline bodies with a return type annotation.
+		{"arrow return type inline", "def f() -> Int: 1", "Int", 1, "*ast.IntLit", 1},
+		{"colon return type inline", "def f(): Int: 1", "Int", 1, "*ast.IntLit", 1},
+		{"generic inline", "def id[T](v: T) -> T: v", "T", 1, "*ast.Identifier", 1},
+		{"union return type inline", "def f(a: Int): Int | Error: a", "Int | Error", 1, "*ast.Identifier", 1},
+		{"tuple return type inline", "def f(): (Int, Int): (1, 2)", "(Int, Int)", 1, "*ast.TupleLit", 1},
+		{"dict return type inline", "def f(): {String: Int}: {\"a\": 1}", "{String: Int}", 1, "", 1},
+		{"function return type inline", "def f(): (Int) -> Int: |x|: x", "(Int) -> Int", 1, "*ast.LambdaExpr", 1},
+
+		// Inline bodies without a return type annotation.
+		{"bare identifier", "def g(): j", "", 1, "*ast.Identifier", 1},
+		{"identity", "def identity(x): x", "", 1, "*ast.Identifier", 1},
+		{"call", "def f(x): g(x)", "", 1, "*ast.CallExpr", 1},
+		{"paren-omitted call", "def f(x): print x", "", 1, "*ast.CallExpr", 1},
+		{"paren expression", "def f(x): (x + 1) * 2", "", 1, "*ast.BinaryExpr", 1},
+		{"tuple literal", "def f(x): (x, x)", "", 1, "*ast.TupleLit", 1},
+		{"singleton tuple literal", "def f(x): (x,)", "", 1, "*ast.TupleLit", 1},
+		{"empty tuple literal", "def f(): ()", "", 1, "", 1},
+		{"ternary", "def f(x): x > 0 ? x : 0", "", 1, "*ast.TernaryExpr", 1},
+		{"ternary on identifier", "def f(x): x ? 1 : 2", "", 1, "*ast.TernaryExpr", 1},
+		{"ternary with is", "def f(x): x is Int ? 1 : 2", "", 1, "*ast.TernaryExpr", 1},
+		{"dict literal", "def f(x): {\"a\": x}", "", 1, "", 1},
+		{"dict literal with identifier key", "def f(x): {a: x}", "", 1, "", 1},
+		{"lambda", "def f(x): |y|: x + y", "", 1, "*ast.LambdaExpr", 1},
+		{"lambda with typed parameter", "def f(x): |y: Int|: x + y", "", 1, "*ast.LambdaExpr", 1},
+		{"string", "def f(x): \"s\"", "", 1, "*ast.StringLit", 1},
+		{"negative number", "def f(x): -1", "", 1, "", 1},
+		{"nil", "def f(x): nil", "", 1, "", 1},
+		{"list-like index", "def f(x): x[0]", "", 1, "*ast.IndexExpr", 1},
+		{"statement", "def f(x): return x", "", 1, "", 1},
+		{"semicolon ends the body", "def f(x): print x; print 9", "", 1, "*ast.CallExpr", 2},
+		{"followed by statement", "def f(x): x\nprint f(1)", "", 1, "*ast.Identifier", 2},
+		{"followed by blank line and comment", "def f(x): x # note\n\nprint f(1)", "", 1, "*ast.Identifier", 2},
+		{"no trailing newline", "def f(x): x", "", 1, "*ast.Identifier", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.input)
+			p := NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			if len(prog.Body) != tt.topLevel {
+				t.Fatalf("expected %d top-level statements, got %d", tt.topLevel, len(prog.Body))
+			}
+			fd, ok := prog.Body[0].(*ast.FuncDef)
+			if !ok {
+				t.Fatalf("expected FuncDef, got %T", prog.Body[0])
+			}
+			if fd.ReturnType != tt.ret {
+				t.Fatalf("expected return type %q, got %q", tt.ret, fd.ReturnType)
+			}
+			if len(fd.Body) != tt.body {
+				t.Fatalf("expected %d body statements, got %d: %+v", tt.body, len(fd.Body), fd.Body)
+			}
+			if tt.bodyType != "" {
+				es, ok := fd.Body[0].(*ast.ExprStmt)
+				if !ok {
+					t.Fatalf("expected ExprStmt as body, got %T", fd.Body[0])
+				}
+				if got := fmt.Sprintf("%T", es.Value); got != tt.bodyType {
+					t.Fatalf("expected body expression %s, got %s", tt.bodyType, got)
+				}
+			}
+		})
+	}
+}
+
+func TestParseInlineFuncBodyInStruct(t *testing.T) {
+	input := `
+struct V:
+    n: Int
+    +(o: V): V: V(n + o.n)
+    -(o: V) -> V: V(n - o.n)
+    def get(): n
+    def twice() -> Int: n * 2
+    def thrice(): Int: n * 3
+    def block():
+        n
+`
+	l := lexer.NewLexer(input)
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	if len(prog.Body) != 1 {
+		t.Fatalf("expected 1 statement, got %d", len(prog.Body))
+	}
+	sd, ok := prog.Body[0].(*ast.StructDef)
+	if !ok {
+		t.Fatalf("expected StructDef, got %T", prog.Body[0])
+	}
+	want := []struct{ name, ret string }{
+		{"+", "V"}, {"-", "V"}, {"get", ""}, {"twice", "Int"}, {"thrice", "Int"}, {"block", ""},
+	}
+	if len(sd.Methods) != len(want) {
+		t.Fatalf("expected %d methods, got %d", len(want), len(sd.Methods))
+	}
+	for i, w := range want {
+		m := sd.Methods[i]
+		if m.Name != w.name || m.ReturnType != w.ret || len(m.Body) != 1 {
+			t.Fatalf("method %d: expected %s returning %q with 1 body statement, got %s returning %q with %d", i, w.name, w.ret, m.Name, m.ReturnType, len(m.Body))
+		}
+	}
+}
+
+// An annotated declaration is read as a return type: a type annotation
+// followed by ':' wins over an inline body.
+func TestParseInlineFuncBodyAmbiguousAnnotation(t *testing.T) {
+	l := lexer.NewLexer("def f(): y: Int")
+	p := NewParser(l)
+	prog := p.ParseProgram()
+	fd, ok := prog.Body[0].(*ast.FuncDef)
+	if !ok || fd.ReturnType != "y" {
+		t.Fatalf("expected return type %q, got %+v", "y", prog.Body[0])
+	}
+}
