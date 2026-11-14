@@ -2656,6 +2656,33 @@ func appendToTuple(base *TupleType, addedElems []Type, addedIsVariadic bool) *Tu
 	return &TupleType{Elems: append(prefix, tail), IsVariadic: true}
 }
 
+// mergeTupleUnion returns the tuple type that every member of a union of
+// tuple types is assignable to: a variadic tuple whose element type is the
+// union of all member element types (Unknown if any is Unknown), or the empty
+// tuple if all members are empty. It returns nil if any member is not a tuple.
+func mergeTupleUnion(u *UnionType) *TupleType {
+	var elems []Type
+	for _, m := range u.Members {
+		tup, ok := m.(*TupleType)
+		if !ok {
+			return nil
+		}
+		if tup.IsVariadic && len(tup.Elems) == 0 {
+			elems = append(elems, TypeUnknown)
+		}
+		elems = append(elems, tup.Elems...)
+	}
+	if len(elems) == 0 {
+		return &TupleType{Elems: []Type{}}
+	}
+	for _, el := range elems {
+		if el == TypeUnknown {
+			return &TupleType{Elems: []Type{TypeUnknown}, IsVariadic: true}
+		}
+	}
+	return &TupleType{Elems: []Type{NewUnionType(elems...)}, IsVariadic: true}
+}
+
 func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 	if expr == nil {
 		return TypeUnknown, nil
@@ -2698,6 +2725,11 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				if effSpT == TypeUnknown {
 					curTuple = appendToTuple(curTuple, []Type{TypeUnknown}, true)
 					continue
+				}
+				if u, ok := effSpT.(*UnionType); ok {
+					if merged := mergeTupleUnion(u); merged != nil {
+						effSpT = merged
+					}
 				}
 				spTuple, ok := effSpT.(*TupleType)
 				if !ok {
