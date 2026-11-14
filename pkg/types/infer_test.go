@@ -3234,7 +3234,88 @@ struct MyErr:
 	}
 }
 
+func TestUnionTypeParamInference(t *testing.T) {
+	const prelude = `
+def oe[T](x: T | Error, fallback: T): T:
+    fallback
 
+def od[T](x: T | Nil, d: T): T:
+    d
 
+def first[T](x: T | Error): T | Error:
+    x
 
+def pick[T, U](x: T | U, y: T, z: U): T:
+    y
 
+def mk[T](n: Int): T | Error:
+    Error("x")
+
+struct ParseError:
+    detail: String
+
+    def Message(): String:
+        detail
+
+    def Inspect(): String:
+        "ParseError(" + detail + ")"
+
+`
+	tests := []struct {
+		name    string
+		code    string
+		varName string // variable whose inferred type is checked
+		want    string // expected type of varName
+		wantErr string // empty means inference must succeed
+	}{
+		// the Error / Nil member takes the matching part of the argument
+		{"Error argument to T | Error", "r = oe(Error(\"e\"), 1)\na: Int = r\n", "r", "Int", ""},
+		{"nil argument to T | Nil", "r = od(nil, 1)\nb: Int = r\n", "r", "Int", ""},
+		{"Error | Int argument", "v1: Error | Int = 1\nr = oe(v1, 2)\nc: Int = r\n", "r", "Int", ""},
+		{"Int | String | Error argument", "v2: Int | String | Error = 1\nr = oe(v2, 2)\nd: Int | String = r\n", "r", "Int | String", ""},
+		{"struct satisfying Error", "r = oe(ParseError(detail: \"x\"), 1)\n", "r", "Int", ""},
+		{"Int | Nil argument to T | Nil", "v: Int | Nil = 1\nr = od(v, 2)\n", "r", "Int", ""},
+
+		// unchanged behavior
+		{"plain Int argument", "r = oe(1, 2)\n", "r", "Int", ""},
+		{"Int | Error argument", "v: Int | Error = 1\nr = oe(v, 2)\n", "r", "Int", ""},
+		{"Error fallback widens T", "r = oe(1, Error(\"e\"))\n", "r", "Int | Error", ""},
+		{"Error fallback still rejected as Int", "g: Int = oe(1, Error(\"e\"))\n", "", "", "expected Int, got Int | Error"},
+		{"ambiguous T | U binds positionally", "x: Int | String = 1\nr = pick(x, 1, \"s\")\n", "r", "Int", ""},
+
+		// T only determined by an argument fully taken by Error stays Unknown
+		{"T undetermined", "r = first(Error(\"e\"))\n", "r", "Unknown", ""},
+		{"T not in arguments", "r = mk(1)\n", "r", "Unknown", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := parser.NewParser(lexer.NewLexer(prelude + tt.code))
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			inf := NewInferencer()
+			err := inf.InferProgram(prog)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got none", tt.wantErr)
+				}
+				if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected inference to succeed, got %v", err)
+			}
+			got, ok := inf.scope.Lookup(tt.varName)
+			if !ok {
+				t.Fatalf("variable %q not found", tt.varName)
+			}
+			if got.String() != tt.want {
+				t.Fatalf("expected %s to be %s, got %s", tt.varName, tt.want, got)
+			}
+		})
+	}
+}

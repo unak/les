@@ -3549,6 +3549,7 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 						bindings[tp.Name] = typeArgs[i]
 					} else {
 						typeArgs[i] = TypeUnknown
+						bindings[tp.Name] = TypeUnknown
 					}
 				}
 				if err := ValidateTypeConstraints(fnT.TypeParams, typeArgs); err != nil {
@@ -4879,17 +4880,7 @@ func unifyTypeParams(paramType, argType Type, bindings map[string]Type) {
 			unifyTypeParams(pt.Ret, at.Ret, bindings)
 		}
 	case *UnionType:
-		if at, ok := argType.(*UnionType); ok {
-			for i := 0; i < len(pt.Members) && i < len(at.Members); i++ {
-				unifyTypeParams(pt.Members[i], at.Members[i], bindings)
-			}
-		} else {
-			for _, m := range pt.Members {
-				if m != TypeNil {
-					unifyTypeParams(m, argType, bindings)
-				}
-			}
-		}
+		unifyUnionTypeParams(pt, argType, bindings)
 	case *StructType:
 		if at, ok := argType.(*StructType); ok && pt.Name == at.Name {
 			for i := 0; i < len(pt.TypeArgs) && i < len(at.TypeArgs); i++ {
@@ -4902,6 +4893,67 @@ func unifyTypeParams(paramType, argType Type, bindings map[string]Type) {
 				unifyTypeParams(pt.TypeArgs[i], at.TypeArgs[i], bindings)
 			}
 		}
+	}
+}
+
+// unifyUnionTypeParams unifies a union parameter type such as `T | Error` or
+// `T | Nil` with an argument type. The argument type is treated as a set of
+// members: members assignable to a parameter member that contains no type
+// parameter (Error, Nil, ...) are taken by that member and do not bind any
+// type parameter. Only the remaining members are unified with the parameter
+// members that contain type parameters. If nothing remains, the argument
+// does not bind anything.
+//
+// When more than one parameter member contains type parameters (e.g. `T | U`),
+// which remaining member belongs to which type parameter is ambiguous. In that
+// case the remaining members are matched positionally if they form a union,
+// and otherwise the single remaining type is unified with every such member,
+// as before.
+func unifyUnionTypeParams(pt *UnionType, argType Type, bindings map[string]Type) {
+	var paramMembers, fixedMembers []Type
+	for _, m := range pt.Members {
+		if ContainsSelfOrParam(m) {
+			paramMembers = append(paramMembers, m)
+		} else {
+			fixedMembers = append(fixedMembers, m)
+		}
+	}
+	if len(paramMembers) == 0 {
+		return
+	}
+	argMembers := []Type{argType}
+	if au, ok := argType.(*UnionType); ok {
+		argMembers = au.Members
+	}
+	var rest []Type
+	for _, am := range argMembers {
+		covered := false
+		for _, fm := range fixedMembers {
+			if IsAssignableTo(am, fm) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			rest = append(rest, am)
+		}
+	}
+	if len(rest) == 0 {
+		return
+	}
+	restT := NewUnionType(rest...)
+	if len(paramMembers) == 1 {
+		unifyTypeParams(paramMembers[0], restT, bindings)
+		return
+	}
+	if ru, ok := restT.(*UnionType); ok {
+		for i := 0; i < len(paramMembers) && i < len(ru.Members); i++ {
+			unifyTypeParams(paramMembers[i], ru.Members[i], bindings)
+		}
+		return
+	}
+	for _, m := range paramMembers {
+		unifyTypeParams(m, restT, bindings)
 	}
 }
 
