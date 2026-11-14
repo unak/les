@@ -3319,3 +3319,41 @@ struct ParseError:
 		})
 	}
 }
+
+func TestInlineFuncBodyInference(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		ret   string
+	}{
+		{"get_val", "def get_val(x): x\nr = get_val(1)", "Unknown"},
+		{"outer variable", "j = 0\ndef g(): j\nr = g()", "Int"},
+		{"arrow return type", "def f() -> Int: 1\nr = f()", "Int"},
+		{"colon return type", "def f(): Int: 1\nr = f()", "Int"},
+		{"union return type", "def f(a: Int): Int | Error: a\nr = f(1)", "Int | Error"},
+		{"generic", "def id[T](v: T) -> T: v\nr = id(3)", "Int"},
+		{"tuple", "def f(x: Int): (x, x)\nr = f(1)", "(Int, Int)"},
+		{"ternary", "def f(x: Int): x > 0 ? x : 0\nr = f(1)", "Int"},
+		{"lambda", "def f(x: Int): |y: Int|: x + y\nr = f(1)(2)", "Int"},
+		{"string", "def f(x: Int): \"s\"\nr = f(1)", "String"},
+		{"negative number", "def f(x: Int): -1\nr = f(1)", "Int"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l := lexer.NewLexer(tt.input)
+			p := parser.NewParser(l)
+			prog := p.ParseProgram()
+			if len(p.Errors()) > 0 {
+				t.Fatalf("parser errors: %v", p.Errors())
+			}
+			inf := NewInferencer()
+			if err := inf.InferProgram(prog); err != nil {
+				t.Fatalf("type inference error: %v", err)
+			}
+			rType, ok := inf.scope.Lookup("r")
+			if !ok || rType.String() != tt.ret {
+				t.Fatalf("expected r to be %s, got %v", tt.ret, rType)
+			}
+		})
+	}
+}

@@ -36,6 +36,16 @@ func NewLexer(input string) *Lexer {
 	}
 }
 
+// Clone returns an independent copy of the lexer at its current position, so
+// that a caller can scan ahead without consuming tokens from l.
+func (l *Lexer) Clone() *Lexer {
+	c := *l
+	c.indentStack = append([]int(nil), l.indentStack...)
+	c.pending = append([]Token(nil), l.pending...)
+	c.parenIndentBase = append([]int(nil), l.parenIndentBase...)
+	return &c
+}
+
 // NextToken returns the next token.
 func (l *Lexer) PeekRestOfLine() string {
 	var sb strings.Builder
