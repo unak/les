@@ -632,6 +632,7 @@ Les provides immutable records with methods, Go-style struct embedding, and stat
 - Defined using `struct <Name>:` followed by an indented block.
 - Closed class: Methods must be defined inside the struct body.
 - Fields can have optional type annotations and default values.
+- Directly declared fields must have distinct names, and methods must have distinct names (except the unary and binary forms of `+` and `-`, which may coexist); embedding the same struct twice is an error. A directly declared field may still share its name with an embedded struct, which it shadows.
 - Identifiers starting with uppercase letters (`[A-Z]`) are public; lowercase (`[a-z_]`) are private.
 - Methods have an implicit receiver `self` (can be omitted in method parameter list, fields directly accessible in scope; or specified explicitly).
 
