@@ -578,6 +578,17 @@ Anonymous functions (lambdas) support both single-line expressions and multi-lin
   ```
 - **Type Representation**: A variadic parameter `*args` corresponds to the union type `() | (Unknown, ...)`.
 
+#### Tuple Spread
+- `(a, ...t, b)` expands the elements of tuple `t` inline into a new tuple literal.
+- The static type of `t` must be a tuple type, `Unknown`, or a union whose members are all tuple types. A union with any non-tuple member (e.g. `(Int, ...) | Nil`) is a type error.
+- Spreading a union of tuples yields a variadic tuple whose element type is the union of the element types of all members (`Unknown` if any is `Unknown`):
+  ```python
+  def pick(b: Bool) -> (Int, ...) | (String, ...):
+      b ? (1,) : ("x",)
+
+  t = (...pick(true), 2)  # type: (Int | String, ...)
+  ```
+
 #### Tuple Destructuring in Pattern Matching
 - Extract head and lazy tail stream elements via `(h, ...t)`:
   ```python

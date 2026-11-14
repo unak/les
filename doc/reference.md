@@ -228,6 +228,7 @@ Primitive types provide predefined instance methods, indexing mechanisms, length
   - `(x,)` creates a single-element tuple (trailing comma required to distinguish from grouping `(x)`). Single-element tuple type annotations are written as `(T,)`.
   - `(x1, x2, ...)` creates a multi-element tuple (e.g. `(1, 2)`).
   - `(a, ...t, b)`: Spread syntax expands elements of tuple `t` inline into a new tuple literal without forcing lazy thunks.
+    - If the static type of `t` is a union, every member must be a tuple type; the spread is then typed as a variadic tuple whose element type is the union of all member element types (`Unknown` if any is `Unknown`). A union with a non-tuple member, such as `(Int, ...) | Nil`, is a type error.
   - Type annotations: `(...)` represents an arbitrary tuple type of any length and element types.
 - **Methods**:
   - `t.Append(elem: T): (...)`: Returns a new tuple with `elem` appended as the final element (does not flatten; passing a tuple nests it).
