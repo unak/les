@@ -888,6 +888,7 @@ func (si *StructInstance) stringWithVisited(visited map[any]bool, depth int) str
 
 func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	methodEnv := NewEnvironment(si.Def.Env)
+	methodEnv.isFieldScope = true
 	methodEnv.Set("self", si)
 	if len(si.Def.TypeParams) > 0 {
 		if len(si.TypeArgs) == 0 {
@@ -1368,6 +1369,7 @@ type Environment struct {
 	ActiveLoopID       uint64                                  // 0 means not inside a loop
 	Filename           string                                  // source file name for error reporting
 	typeArgs           map[string]string                       // type parameters introduced by this scope -> runtime type arguments
+	isFieldScope       bool                                    // holds the fields of a struct instance for its methods (see calleeBeyondFields)
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -1457,6 +1459,39 @@ func (env *Environment) Get(name string) (Value, bool) {
 	}
 	if env.parent != nil {
 		return env.parent.Get(name)
+	}
+	return nil, false
+}
+
+// getWithScope is like Get and also returns the scope that holds the binding.
+func (env *Environment) getWithScope(name string) (Value, *Environment, bool) {
+	for cur := env; cur != nil; cur = cur.parent {
+		if v, ok := cur.store[name]; ok {
+			return v, cur, true
+		}
+	}
+	return nil, nil, false
+}
+
+// calleeBeyondFields resolves the name of a call whose binding is a field of
+// the receiver that is not callable. Such a field does not hide the function
+// or struct of that name in an enclosing scope, so the search continues
+// outwards, skipping non-callable fields, and returns the first callable
+// binding. Any other non-callable binding (parameter, local variable, global)
+// ends the search.
+func (env *Environment) calleeBeyondFields(name string) (Value, bool) {
+	for cur := env; cur != nil; cur = cur.parent {
+		v, ok := cur.store[name]
+		if !ok {
+			continue
+		}
+		switch fv := Force(v).(type) {
+		case *BuiltinFunc, *Closure, *StructDefValue:
+			return fv, true
+		}
+		if !cur.isFieldScope {
+			return nil, false
+		}
 	}
 	return nil, false
 }

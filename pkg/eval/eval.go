@@ -2476,6 +2476,17 @@ func (env *Environment) evalExpr(expr ast.Expr) (Value, error) {
 
 	case *ast.CallExpr:
 		calleeVal := Force(NewThunk(e.Callee, env))
+		if id, ok := e.Callee.(*ast.Identifier); ok {
+			switch calleeVal.(type) {
+			case *BuiltinFunc, *Closure, *StructDefValue:
+			default:
+				// A field that is not callable does not hide the function or
+				// struct of the same name (e.g. an embedded Base and Base(...)).
+				if outer, found := env.calleeBeyondFields(id.Name); found {
+					calleeVal = outer
+				}
+			}
+		}
 
 		// Prepare argument thunks (pass-by-need) unless force-demanded or constant literal
 		argValues := make([]Value, len(e.Args))

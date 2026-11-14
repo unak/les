@@ -40,16 +40,31 @@ func (env *Environment) captureEnv(expr ast.Expr) *Environment {
 	if len(names) == 0 {
 		return env
 	}
-	var snap *Environment
+	var snap, fieldSnap *Environment
 	for _, name := range names {
-		v, ok := env.Get(name)
+		v, scope, ok := env.getWithScope(name)
 		if !ok {
+			continue
+		}
+		if scope.isFieldScope {
+			// Keep the origin of receiver fields, see calleeBeyondFields.
+			if fieldSnap == nil {
+				fieldSnap = NewEnvironment(env)
+				fieldSnap.isFieldScope = true
+			}
+			fieldSnap.store[name] = v
 			continue
 		}
 		if snap == nil {
 			snap = NewEnvironment(env)
 		}
 		snap.store[name] = v
+	}
+	if fieldSnap != nil {
+		if snap != nil {
+			fieldSnap.parent = snap
+		}
+		return fieldSnap
 	}
 	if snap == nil {
 		return env
