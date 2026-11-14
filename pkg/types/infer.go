@@ -1748,6 +1748,9 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 		return nil
 
 	case *ast.StructDef:
+		if err := inf.checkDuplicateStructMembers(s); err != nil {
+			return err
+		}
 		var origScope *Scope
 		prevSelfType := inf.selfType
 		defer func() { inf.selfType = prevSelfType }()
