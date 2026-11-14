@@ -713,6 +713,7 @@ struct Point:
 - Structs can embed other structs anonymously by listing their type name in the struct body.
 - Embedded fields and methods are automatically promoted to the outer struct.
 - An embedded type also participates in subtyping: an outer instance satisfies `is Inner`.
+- The type checker also accepts an outer struct value where an embedded struct type (direct or transitive) is expected, provided that every member of the embedded type that the outer struct shadows has a compatible type and none is ambiguous on the outer struct. The value is not converted, so member access still finds the outer struct's members first.
 
 ```python
 struct Reader:
