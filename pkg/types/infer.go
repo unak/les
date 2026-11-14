@@ -1853,6 +1853,24 @@ func (inf *Inferencer) inferStmt(stmt ast.Stmt) error {
 			}
 		}
 
+		// A field and a method with the same name in one struct are rejected, like in Go.
+		// Promoted members of embedded structs are not affected.
+		for _, m := range s.Methods {
+			for _, f := range s.Fields {
+				if f.Name != m.Name {
+					continue
+				}
+				pos := m.Position
+				if f.Position.Line > pos.Line || (f.Position.Line == pos.Line && f.Position.Col > pos.Col) {
+					pos = f.Position
+				}
+				if origScope != nil {
+					inf.scope = origScope
+				}
+				return inf.posErr(pos, "field and method with the same name '%s' in struct '%s'", m.Name, s.Name)
+			}
+		}
+
 		// Process methods in two passes:
 		// Pass A: Build and register method signatures on st.Methods so self-calls and forward calls work
 		type methodWorkItem struct {

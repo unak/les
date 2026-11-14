@@ -634,6 +634,7 @@ Les provides immutable records with methods, Go-style struct embedding, and stat
 - Fields can have optional type annotations and default values.
 - Identifiers starting with uppercase letters (`[A-Z]`) are public; lowercase (`[a-z_]`) are private.
 - Methods have an implicit receiver `self` (can be omitted in method parameter list, fields directly accessible in scope; or specified explicitly).
+- A field and a method declared in the same struct cannot share a name, as in Go (the name of an embedded struct counts as a field name); the type checker reports an error (`field and method with the same name`). Names that differ only in case (e.g. field `size` and method `Size`) are distinct, and an outer struct may still define a member with the same name as one promoted from an embedded struct.
 
 ```python
 struct Point:
