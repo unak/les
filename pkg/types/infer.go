@@ -427,6 +427,10 @@ type Inferencer struct {
 	moduleLoader func(path string) (*ModuleType, error)
 	ExprTypes    map[ast.Expr]Type
 	StmtTypes    map[ast.Stmt]Type
+	// CallTypeArgs holds the type arguments inferred for calls of generic
+	// functions written without explicit type arguments, keyed by the
+	// *ast.CallExpr, in type parameter order.
+	CallTypeArgs map[ast.Expr][]Type
 	filename     string
 	warnUnknown  bool
 	warnings     []TypeWarning
@@ -716,12 +720,13 @@ func NewInferencer() *Inferencer {
 	fileScope := NewScope(rootScope)
 
 	inf := &Inferencer{
-		nextVarID:   0,
-		scope:       fileScope,
-		modules:     make(map[string]*ModuleType),
-		ExprTypes:   make(map[ast.Expr]Type),
-		StmtTypes:   make(map[ast.Stmt]Type),
-		warnUnknown: true,
+		nextVarID:    0,
+		scope:        fileScope,
+		modules:      make(map[string]*ModuleType),
+		ExprTypes:    make(map[ast.Expr]Type),
+		StmtTypes:    make(map[ast.Stmt]Type),
+		CallTypeArgs: make(map[ast.Expr][]Type),
+		warnUnknown:  true,
 	}
 	inf.modules["io"] = makeIOModuleType("io")
 	inf.modules["bufio"] = makeBufioModuleType("bufio")
@@ -3548,6 +3553,9 @@ func (inf *Inferencer) inferExprInternal(expr ast.Expr) (Type, error) {
 				}
 				if err := ValidateTypeConstraints(fnT.TypeParams, typeArgs); err != nil {
 					return nil, inf.nodeErr(e, "%s", err.Error())
+				}
+				if inf.CallTypeArgs != nil {
+					inf.CallTypeArgs[e] = typeArgs
 				}
 				origFnT := fnT
 				instFn := Substitute(fnT, bindings).(*FuncType)

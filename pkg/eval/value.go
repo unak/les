@@ -889,6 +889,12 @@ func (si *StructInstance) stringWithVisited(visited map[any]bool, depth int) str
 func (si *StructInstance) bindMethod(m *ast.FuncDef) *Closure {
 	methodEnv := NewEnvironment(si.Def.Env)
 	methodEnv.Set("self", si)
+	if len(si.Def.TypeParams) > 0 {
+		if len(si.TypeArgs) == 0 {
+			inferStructInstanceTypeArgs(si)
+		}
+		methodEnv.typeArgs = typeParamBindings(si.Def.TypeParams, si.TypeArgs, methodEnv)
+	}
 
 	// Populate promoted fields from embedded structs
 	var populateEmbeddedFields func(target *StructInstance)
@@ -1361,6 +1367,7 @@ type Environment struct {
 	ActiveClosureID    uint64                                  // 0 means not directly inside a closure call
 	ActiveLoopID       uint64                                  // 0 means not inside a loop
 	Filename           string                                  // source file name for error reporting
+	typeArgs           map[string]string                       // type parameters introduced by this scope -> runtime type arguments
 }
 
 func NewEnvironment(parent *Environment) *Environment {
@@ -1404,6 +1411,44 @@ type ContinueSignal struct {
 	LoopID    uint64
 	Pos       ast.Position
 	Filename  string
+}
+
+// lookupTypeArg returns the runtime type argument bound to the type parameter
+// name in the nearest enclosing scope that introduces it.
+func (env *Environment) lookupTypeArg(name string) (string, bool) {
+	for cur := env; cur != nil; cur = cur.parent {
+		if arg, ok := cur.typeArgs[name]; ok {
+			return arg, true
+		}
+	}
+	return "", false
+}
+
+// hasTypeArgs reports whether any enclosing scope binds type parameters.
+func (env *Environment) hasTypeArgs() bool {
+	for cur := env; cur != nil; cur = cur.parent {
+		if len(cur.typeArgs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// visibleTypeArgs returns all type parameter bindings visible from env; inner
+// scopes shadow outer ones.
+func (env *Environment) visibleTypeArgs() map[string]string {
+	var res map[string]string
+	for cur := env; cur != nil; cur = cur.parent {
+		for name, arg := range cur.typeArgs {
+			if res == nil {
+				res = make(map[string]string)
+			}
+			if _, exists := res[name]; !exists {
+				res[name] = arg
+			}
+		}
+	}
+	return res
 }
 
 func (env *Environment) Get(name string) (Value, bool) {
