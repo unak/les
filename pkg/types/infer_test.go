@@ -3727,3 +3727,45 @@ struct W:
 		})
 	}
 }
+
+func TestVariadicMethodWithDefaultArgMinArgs(t *testing.T) {
+	code := `
+struct Bag:
+    def Foo(x: Int = 0, *rest) -> Int:
+        x
+
+a = Bag().Foo()
+b = Bag().Foo(1)
+c = Bag().Foo(1, 2)
+`
+	p := parser.NewParser(lexer.NewLexer(code))
+	prog := p.ParseProgram()
+	if len(p.Errors()) > 0 {
+		t.Fatalf("parser errors: %v", p.Errors())
+	}
+	inf := NewInferencer()
+	if err := inf.InferProgram(prog); err != nil {
+		t.Fatalf("unexpected type error: %v", err)
+	}
+	bagT, ok := inf.Scope().Lookup("Bag")
+	if !ok {
+		t.Fatalf("Bag is not defined")
+	}
+	fooT, err := bagT.(*StructType).LookupMember("Foo")
+	if err != nil {
+		t.Fatalf("LookupMember(Foo) failed: %v", err)
+	}
+	fnT := fooT.(*FuncType)
+	if got := fnT.MinArgs(); got != 0 {
+		t.Errorf("Foo.MinArgs(): expected 0, got %d", got)
+	}
+	if got := fnT.MaxArgs(); got != -1 {
+		t.Errorf("Foo.MaxArgs(): expected -1, got %d", got)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		got, ok := inf.Scope().Lookup(name)
+		if !ok || got != TypeInt {
+			t.Errorf("%s: expected Int, got %v (found=%v)", name, got, ok)
+		}
+	}
+}

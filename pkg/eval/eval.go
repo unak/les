@@ -6278,11 +6278,6 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 						}
 					}
 				}
-				for _, emb := range si.Embedded {
-					if checkValueMatchesType(emb, typeAnnot, optEnv...) {
-						return true
-					}
-				}
 			}
 			// Check if baseName is an interface
 			var searchEnv *Environment
@@ -6332,15 +6327,10 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 			return false
 		}
 
-		// Check struct type or embedded struct type
+		// Check struct type
 		if si, ok := val.(*StructInstance); ok {
 			if si.Def.Name == typeAnnot {
 				return true
-			}
-			for _, emb := range si.Embedded {
-				if checkValueMatchesType(emb, typeAnnot, optEnv...) {
-					return true
-				}
 			}
 			// Check if typeAnnot is "Error"
 			if typeAnnot == "Error" {
@@ -6393,15 +6383,6 @@ func checkValueMatchesType(val Value, typeAnnot string, optEnv ...*Environment) 
 								}
 								if siRoot == structRoot {
 									return true
-								}
-								for _, emb := range si.Embedded {
-									embRoot := emb.Def
-									if embRoot != nil && embRoot.Origin != nil {
-										embRoot = embRoot.Origin
-									}
-									if embRoot == structRoot {
-										return true
-									}
 								}
 							}
 						}

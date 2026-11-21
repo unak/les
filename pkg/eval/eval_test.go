@@ -1368,7 +1368,7 @@ it = Item(value: 99)
 			wantVal: "(default, 99)",
 		},
 		{
-			name: "struct type test with is operator and subtyping via embedding",
+			name: "struct type test with is operator, no subtyping via embedding",
 			code: `
 struct Animal:
     species: String
@@ -1381,7 +1381,7 @@ a = Animal(species: "Cat")
 d = Dog(Animal(species: "Canine"), bark: "Woof")
 (a is Animal, d is Dog, d is Animal, a is Dog)
 `,
-			wantVal: "(true, true, true, false)",
+			wantVal: "(true, true, false, false)",
 		},
 	}
 

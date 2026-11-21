@@ -2,9 +2,9 @@ package eval
 
 import "testing"
 
-// Passing an outer struct where an embedded struct is expected does not
-// convert the value: it stays an instance of the outer struct, and member
-// access finds the outer struct's members first.
+// An outer struct is not an instance of a struct it embeds, and an unannotated
+// parameter receives the outer value unconverted: member access finds the
+// outer struct's members first.
 func TestEmbeddedStructValueIsNotConverted(t *testing.T) {
 	const defs = `struct Base:
     k: Int
@@ -24,9 +24,9 @@ d = Derived(Base: Base(k: 1))
 		expected string
 	}{
 		{
-			name:     "is on the embedded struct, also transitively",
+			name:     "is on the embedded struct is false, also transitively",
 			code:     defs + `print (d is Base), " ", (Deep(Derived: d) is Base), " ", (Base(k: 1) is Derived)`,
-			expected: "true true false",
+			expected: "false false false",
 		},
 		{
 			name: "unannotated parameter",

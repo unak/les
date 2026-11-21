@@ -737,8 +737,8 @@ struct Point:
 - Structs can embed other structs anonymously by listing their type name in the struct body.
 - Inside a method, a bare field name refers to the field, but in a call a field whose type is not callable (including an embedded struct such as `Base` or `Box[Int]`) does not hide the outer function, generic function, builtin, or struct constructor of the same name: `Base(...)` and `Box[Int](...)` still construct `Base` and `Box[Int]`. Use `@Base` or bare `Base` without a call for the embedded field value.
 - Embedded fields and methods are automatically promoted to the outer struct.
-- An embedded type also participates in subtyping: an outer instance satisfies `is Inner`.
-- The type checker also accepts an outer struct value where an embedded struct type (direct or transitive) is expected, provided that every member of the embedded type that the outer struct shadows has a compatible type and none is ambiguous on the outer struct. The value is not converted, so member access still finds the outer struct's members first.
+- Embedding is composition, not subtyping. An outer struct is not a subtype of the structs it embeds (directly or transitively): an outer value is rejected by the type checker where an embedded struct type is expected, and `outer is Inner` is `false`. Use the embedded field to get the inner value explicitly (`outer.Inner is Inner` is `true`). Interfaces are still satisfied structurally by the members an outer struct has, promoted ones included.
+- An outer struct may shadow a promoted member with a member of any type, as in Go; since no subtype relation exists, this cannot be observed through the embedded type. A method of the embedded struct keeps its own receiver, so `@Name()` inside it never sees an outer member that shadows `Name`.
 
 ```python
 struct Reader:
@@ -750,7 +750,8 @@ struct ReadCloser:
 
 rc = ReadCloser()
 print rc.Read()         # "read data" (promoted method)
-print rc is Reader      # true
+print rc is Reader      # false (embedding gives no subtyping)
+print rc.Reader is Reader  # true (the embedded value, obtained explicitly)
 ```
 
 #### Static Ambiguous Selector Detection

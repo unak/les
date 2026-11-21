@@ -32,9 +32,11 @@ func inferEmbeddedAssignable(t *testing.T, code string) error {
 	return NewInferencer().InferProgram(prog)
 }
 
-// A struct is accepted where a struct it embeds (directly or transitively)
-// is expected, in every position that checks assignability.
-func TestEmbeddedStructAssignable(t *testing.T) {
+// Embedding provides no subtype relation: a struct is rejected where a struct
+// it embeds (directly or transitively) is expected, in every position that
+// checks assignability, even when every member of the embedded struct resolves
+// compatibly on the outer one. The embedded value is reached explicitly (d.Base).
+func TestEmbeddedStructNotAssignableEvenWhenCompatible(t *testing.T) {
 	tests := []struct {
 		name string
 		code string
@@ -250,16 +252,16 @@ f(Derived(Base: Base(k: 1)))
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := inferEmbeddedAssignable(t, tt.code); err != nil {
-				t.Fatalf("expected no type error, got: %v", err)
+			err := inferEmbeddedAssignable(t, tt.code)
+			if err == nil || !strings.Contains(err.Error(), "type mismatch") {
+				t.Fatalf("expected a type mismatch error, got: %v", err)
 			}
 		})
 	}
 }
 
-// Everything that is not a struct embedding the expected struct, or that
-// would let a shadowed or ambiguous member be reached through the embedded
-// type, stays a type mismatch.
+// Unrelated structs, reverse directions, named (non-embedded) fields, and
+// embeddings with shadowed or ambiguous members also remain type mismatches.
 func TestEmbeddedStructNotAssignable(t *testing.T) {
 	tests := []struct {
 		name string
@@ -504,7 +506,7 @@ f(Derived(Base: Base(k: 1)))
 	}
 }
 
-func TestEmbeddedStructAssignableConcurrent(t *testing.T) {
+func TestEmbeddedStructNotAssignableConcurrent(t *testing.T) {
 	code := `struct Base:
     k: Int
     def Clone() -> Base:
@@ -532,8 +534,9 @@ f(Derived(Base: Base(k: 1)))
 					errs <- fmt.Errorf("parse errors: %v", p.Errors())
 					continue
 				}
-				if err := NewInferencer().InferProgram(prog); err != nil {
-					errs <- err
+				err := NewInferencer().InferProgram(prog)
+				if err == nil || !strings.Contains(err.Error(), "type mismatch") {
+					errs <- fmt.Errorf("expected a type mismatch error, got: %v", err)
 				}
 			}
 		}()
@@ -542,7 +545,7 @@ f(Derived(Base: Base(k: 1)))
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Fatalf("unexpected concurrent type error: %v", err)
+			t.Fatalf("concurrent inference: %v", err)
 		}
 	}
 }
